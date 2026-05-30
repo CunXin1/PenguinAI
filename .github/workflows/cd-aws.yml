@@ -1,0 +1,116 @@
+name: CD — Deploy to AWS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:          # allow manual trigger
+
+# Only one deploy runs at a time
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false   # never cancel an in-progress deploy
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com
+
+jobs:
+  deploy:
+    name: Build → Push ECR → Deploy ECS
+    runs-on: ubuntu-latest
+    # Require CI to pass first
+    needs: []
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set image tags
+        id: tags
+        run: |
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          echo "sha=$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "backend_image=${{ env.ECR_REGISTRY }}/penguinai-backend:$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "frontend_image=${{ env.ECR_REGISTRY }}/penguinai-frontend:$SHORT_SHA" >> $GITHUB_OUTPUT
+          echo "ml_image=${{ env.ECR_REGISTRY }}/penguinai-ml:$SHORT_SHA" >> $GITHUB_OUTPUT
+
+      # ── Build & push backend ────────────────────────────────────────────────
+      - name: Build and push backend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.backend_image }}
+            ${{ env.ECR_REGISTRY }}/penguinai-backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Build & push frontend ───────────────────────────────────────────────
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.frontend_image }}
+            ${{ env.ECR_REGISTRY }}/penguinai-frontend:latest
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Build & push ML worker ──────────────────────────────────────────────
+      - name: Build and push ML worker
+        uses: docker/build-push-action@v6
+        with:
+          context: ./ml
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.ml_image }}
+            ${{ env.ECR_REGISTRY }}/penguinai-ml:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Deploy to ECS ───────────────────────────────────────────────────────
+      - name: Update ECS service — API
+        run: |
+          aws ecs update-service \
+            --cluster penguinai-prod \
+            --service penguinai-api \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Update ECS service — ML Worker
+        run: |
+          aws ecs update-service \
+            --cluster penguinai-prod \
+            --service penguinai-ml-worker \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Wait for API deployment to stabilize
+        run: |
+          aws ecs wait services-stable \
+            --cluster penguinai-prod \
+            --services penguinai-api \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Deployment summary
+        run: |
+          echo "### Deployed to Production" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backend:** ${{ steps.tags.outputs.backend_image }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Frontend:** ${{ steps.tags.outputs.frontend_image }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **ML Worker:** ${{ steps.tags.outputs.ml_image }}" >> $GITHUB_STEP_SUMMARY

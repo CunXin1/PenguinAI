@@ -1,0 +1,126 @@
+version: "3.9"
+
+services:
+  nginx:
+    image: nginx:1.25-alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - api
+      - frontend
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost/api
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  api:
+    build: ./backend
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD}@timescaledb:5432/penguinai
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    environment:
+      POSTGRES_USER: penguinai
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: penguinai
+    volumes:
+      - timescaledb_data:/var/lib/postgresql/data
+      - ./db/schema:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U penguinai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  celery_worker:
+    build: ./ml
+    command: celery -A ml.tasks.celery_app worker --loglevel=info --queues=default -c 4
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD}@timescaledb:5432/penguinai
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - timescaledb
+      - redis
+    restart: unless-stopped
+
+  ml_worker:
+    build: ./ml
+    command: celery -A ml.tasks.celery_app worker --loglevel=info --queues=ml_inference -c 1
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD}@timescaledb:5432/penguinai
+      - REDIS_URL=redis://redis:6379/0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    depends_on:
+      - timescaledb
+      - redis
+    restart: unless-stopped
+
+  celery_beat:
+    build: ./ml
+    command: celery -A ml.tasks.celery_app beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD}@timescaledb:5432/penguinai
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - timescaledb
+      - redis
+    restart: unless-stopped
+
+  scraper:
+    build: ./data
+    command: python -m data.scrapers.runner
+    env_file: .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD}@timescaledb:5432/penguinai
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - timescaledb
+      - redis
+    restart: unless-stopped
+
+volumes:
+  timescaledb_data:
+  redis_data:

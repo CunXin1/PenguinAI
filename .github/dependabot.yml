@@ -1,0 +1,47 @@
+version: 2
+
+updates:
+  # Backend Python dependencies
+  - package-ecosystem: pip
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      fastapi-stack:
+        patterns: ["fastapi*", "uvicorn*", "pydantic*", "sqlalchemy*", "asyncpg*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]  # major bumps are manual
+
+  # ML Python dependencies
+  - package-ecosystem: pip
+    directory: /ml
+    schedule:
+      interval: weekly
+      day: monday
+    ignore:
+      # PyTorch major versions are highly breaking — update manually
+      - dependency-name: "torch"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      - dependency-name: "transformers"
+        update-types: ["version-update:semver-major"]
+
+  # Frontend npm dependencies
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      next-react:
+        patterns: ["next", "react", "react-dom"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
+  # GitHub Actions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

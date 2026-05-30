@@ -1,0 +1,93 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# ── Environment & secrets ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.production
+.env.*.local
+# Keep the example
+!.env.example
+
+# ── ML models & large data files ─────────────────────────────────────────────
+# Models are stored in /models/ on the server, not in git
+/models/
+*.pkl
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+
+# Historical market data — too large for git (import from external source)
+*.parquet
+*.csv
+*.feather
+*.arrow
+data/raw/
+data/processed/
+
+# MLflow experiment tracking
+mlruns/
+mlartifacts/
+
+# ── Node.js / Next.js ─────────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+frontend/.env
+frontend/.env.local
+frontend/.env.production
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+docker-compose.override.yml
+
+# ── Database ──────────────────────────────────────────────────────────────────
+*.db
+*.duckdb
+*.duckdb.wal
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.vim/
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+celerybeat-schedule
+celerybeat.pid
+
+# ── Playwright ────────────────────────────────────────────────────────────────
+playwright-report/
+test-results/

@@ -1,0 +1,62 @@
+name: ML Model Retrain (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      horizon_bars:
+        description: "Prediction horizon in 30-min bars (default: 16 = 8h)"
+        required: false
+        default: "16"
+      tickers:
+        description: "Comma-separated ticker subset (leave blank for full universe)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Dry run — log metrics but don't save model"
+        type: boolean
+        default: false
+
+jobs:
+  retrain:
+    name: Retrain XGBoost + RF
+    runs-on: [self-hosted, gpu]    # requires a self-hosted runner with 4090
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ML dependencies
+        run: pip install -r ml/requirements.txt
+
+      - name: Run retraining pipeline
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          HORIZON_BARS: ${{ github.event.inputs.horizon_bars }}
+          DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          python -c "
+          import asyncio
+          from ml.models.xgboost_trainer import train as train_xgb
+          from ml.models.rf_trainer import train as train_rf
+          from pathlib import Path
+
+          tickers_input = '${{ github.event.inputs.tickers }}'
+          tickers = [t.strip() for t in tickers_input.split(',') if t.strip()] or None
+          horizon = int('${{ github.event.inputs.horizon_bars }}')
+          dry_run = '${{ github.event.inputs.dry_run }}' == 'true'
+
+          out = Path('/models/penguinai') if not dry_run else Path('/tmp/penguinai_dryrun')
+
+          xgb_metrics = train_xgb(':memory:', out / 'xgboost_prod.pkl', tickers, horizon)
+          rf_metrics  = train_rf(':memory:',  out / 'rf_prod.pkl',      tickers, horizon)
+
+          print('XGBoost:', xgb_metrics)
+          print('RF:      ', rf_metrics)
+          "
+
+      - name: Report metrics
+        run: echo "Retrain complete. Check logs above for AUC scores."

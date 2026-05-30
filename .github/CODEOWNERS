@@ -1,0 +1,13 @@
+# PenguinAI Code Owners
+# All PRs require at least one review from the tech lead.
+
+# Global fallback — tech lead reviews everything
+* @sunruibo5
+
+# ML / AI layer — extra scrutiny on signal pipeline changes
+/ml/inference/    @sunruibo5
+/ml/models/       @sunruibo5
+/db/schema/       @sunruibo5
+
+# Frontend
+/frontend/        @sunruibo5
