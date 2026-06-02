@@ -5,12 +5,11 @@ Uses PRAW. Extracts ticker mentions and post content.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from datetime import datetime, timezone
 
 import praw
-
-from ml.core.config import ml_settings
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +31,9 @@ class RedditScraper:
     def _ensure_connected(self):
         if self._reddit is None:
             self._reddit = praw.Reddit(
-                client_id=ml_settings.REDDIT_CLIENT_ID,
-                client_secret=ml_settings.REDDIT_CLIENT_SECRET,
-                user_agent=ml_settings.REDDIT_USER_AGENT,
+                client_id=os.getenv("REDDIT_CLIENT_ID", ""),
+                client_secret=os.getenv("REDDIT_CLIENT_SECRET", ""),
+                user_agent=os.getenv("REDDIT_USER_AGENT", "PenguinAI/0.1"),
             )
 
     async def fetch_new_posts(self, limit_per_sub: int = 50) -> list[dict]:

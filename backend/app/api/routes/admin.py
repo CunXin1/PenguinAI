@@ -1,11 +1,12 @@
 from typing import Annotated
 
+from celery import Celery
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_tier
-from app.models.signal_cache import SignalCache
+from app.core.config import settings
 
 router = APIRouter()
 AdminUser = Depends(require_tier("ADMIN"))
@@ -13,11 +14,10 @@ AdminUser = Depends(require_tier("ADMIN"))
 
 @router.get("/pipeline/status")
 async def pipeline_status(
+    db: Annotated[AsyncSession, Depends(get_db)],
     _=AdminUser,
-    db: Annotated[AsyncSession, Depends(get_db)] = None,
 ):
     """Dashboard for monitoring data pipeline health."""
-    signal_count = await db.execute(select(func.count()).select_from(SignalCache))
     row_counts = await db.execute(
         text("""
             SELECT
@@ -34,6 +34,6 @@ async def pipeline_status(
 @router.post("/cache/refresh")
 async def refresh_cache(_=AdminUser):
     """Manually trigger Top-100 signal cache refresh."""
-    from ml.tasks.celery_app import celery_app
+    celery_app = Celery(broker=settings.REDIS_URL)
     celery_app.send_task("ml.tasks.hourly_signal_cache.refresh_top100", queue="ml_inference")
     return {"triggered": True}

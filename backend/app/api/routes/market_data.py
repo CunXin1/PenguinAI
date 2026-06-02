@@ -27,19 +27,26 @@ async def get_candles(
         "1day": "market_data_daily",
     }
     table = table_map[timeframe]
+    adjusted_filter = " AND adjusted = TRUE" if timeframe == "30min" else ""
 
     rows = await db.execute(
         text(f"""
             SELECT time, open, high, low, close, volume
             FROM {table}
-            WHERE ticker = :ticker AND time >= :since AND adjusted = TRUE
+            WHERE ticker = :ticker AND time >= :since{adjusted_filter}
             ORDER BY time ASC
         """),
         {"ticker": ticker, "since": since},
     )
     candles = [
-        {"time": row.time.isoformat(), "open": float(row.open), "high": float(row.high),
-         "low": float(row.low), "close": float(row.close), "volume": row.volume}
+        {
+            "time": row["time"].isoformat(),
+            "open": float(row["open"]),
+            "high": float(row["high"]),
+            "low": float(row["low"]),
+            "close": float(row["close"]),
+            "volume": row["volume"],
+        }
         for row in rows.mappings()
     ]
     return {"ticker": ticker, "timeframe": timeframe, "candles": candles}

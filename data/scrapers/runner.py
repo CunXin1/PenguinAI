@@ -4,6 +4,7 @@ on a schedule. Runs in its own Docker container (no GPU needed).
 """
 import asyncio
 import logging
+import os
 import signal
 import sys
 from datetime import datetime
@@ -35,8 +36,7 @@ signal.signal(signal.SIGINT, _handle_shutdown)
 async def _dispatch_social():
     """Send scrape task to Celery instead of running inline — keeps this process light."""
     from celery import Celery
-    from ml.core.config import ml_settings
-    app = Celery(broker=ml_settings.REDIS_URL)
+    app = Celery(broker=os.getenv("REDIS_URL", "redis://localhost:6379/0"))
     app.send_task("ml.tasks.realtime_ingest.scrape_social_media", queue="default")
     logger.info("Dispatched scrape_social_media task")
 
@@ -45,13 +45,16 @@ async def _dispatch_fomc():
     from data.scrapers.sec_scraper import sec_scraper
     from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
     from sqlalchemy import text
-    from ml.core.config import ml_settings
 
     result = await sec_scraper.fetch_fomc_statement()
     if not result:
         return
 
-    engine = create_async_engine(ml_settings.DATABASE_URL)
+    database_url = os.getenv(
+        "DATABASE_URL",
+        "postgresql+asyncpg://penguinai:penguinai_dev@localhost:5432/penguinai",
+    )
+    engine = create_async_engine(database_url)
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with SessionLocal() as db:
         await db.execute(

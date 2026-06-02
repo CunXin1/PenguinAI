@@ -29,3 +29,19 @@ class SignalCache(Base):
     tier_required = Column(Text, nullable=False, default="FREE")
     computed_at = Column(DateTime(timezone=True), server_default=func.now())
     expires_at = Column(DateTime(timezone=True), nullable=False)
+
+    @property
+    def ml_scores(self) -> dict:
+        return {
+            "xgb_prob_up": self.xgb_prob_up,
+            "rf_prob_up": self.rf_prob_up,
+            "ensemble_prob": self.ensemble_prob,
+        }
+
+    @property
+    def sentiment(self) -> dict:
+        return {
+            "finbert_score": self.finbert_score,
+            "post_count": self.post_count,
+            "hawk_dove_ref": self.hawk_dove_ref,
+        }

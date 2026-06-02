@@ -20,6 +20,6 @@ RUN pip install --no-cache-dir \
 
 RUN playwright install chromium --with-deps
 
-COPY . .
+COPY data ./data
 
 CMD ["python", "-m", "data.scrapers.runner"]

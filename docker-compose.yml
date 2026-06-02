@@ -13,7 +13,10 @@ services:
     restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost/api
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost/api
     depends_on:
@@ -67,7 +70,9 @@ services:
     restart: unless-stopped
 
   celery_worker:
-    build: ./ml
+    build:
+      context: .
+      dockerfile: ml/Dockerfile
     command: celery -A ml.tasks.celery_app worker --loglevel=info --queues=default -c 4
     env_file: .env
     environment:
@@ -79,7 +84,9 @@ services:
     restart: unless-stopped
 
   ml_worker:
-    build: ./ml
+    build:
+      context: .
+      dockerfile: ml/Dockerfile
     command: celery -A ml.tasks.celery_app worker --loglevel=info --queues=ml_inference -c 1
     env_file: .env
     environment:
@@ -98,8 +105,10 @@ services:
     restart: unless-stopped
 
   celery_beat:
-    build: ./ml
-    command: celery -A ml.tasks.celery_app beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    build:
+      context: .
+      dockerfile: ml/Dockerfile
+    command: celery -A ml.tasks.celery_app beat --loglevel=info
     env_file: .env
     environment:
       - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD}@timescaledb:5432/penguinai
@@ -110,7 +119,9 @@ services:
     restart: unless-stopped
 
   scraper:
-    build: ./data
+    build:
+      context: .
+      dockerfile: data/Dockerfile
     command: python -m data.scrapers.runner
     env_file: .env
     environment:

@@ -27,11 +27,23 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...authHeaders(), ...options?.headers },
     ...options,
   });
+  if (res.status === 204) {
+    return undefined as T;
+  }
+
+  const data = await res.json().catch(() => null);
+  if (res.status === 202) {
+    throw Object.assign(new Error(data?.message ?? "Request accepted"), {
+      status: res.status,
+      data,
+    });
+  }
+
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    const err = data ?? { detail: res.statusText };
     throw Object.assign(new Error(err.detail ?? "API error"), { status: res.status, data: err });
   }
-  return res.json() as Promise<T>;
+  return data as T;
 }
 
 // ── Auth API ───────────────────────────────────────────────────────────────────
