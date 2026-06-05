@@ -15,6 +15,7 @@ import type {
   ProfileUser,
   UniverseRow,
   CandleBar,
+  Quote,
 } from "./types";
 
 const NOW = "2026-06-05T14:30:00Z";
@@ -194,7 +195,33 @@ export const MOCK_UNIVERSE: UniverseRow[] = [
   { ticker: "CVX", name: "Chevron Corp.", sector: "Energy", price: 156.7, change_pct: -0.5, direction: "NEUTRAL", confidence: 0.5 },
   { ticker: "SPY", name: "SPDR S&P 500 ETF", sector: "ETF", price: 543.2, change_pct: 0.3, direction: "LONG", confidence: 0.56 },
   { ticker: "QQQ", name: "Invesco QQQ ETF", sector: "ETF", price: 472.8, change_pct: 0.9, direction: "LONG", confidence: 0.63 },
+  { ticker: "IWM", name: "iShares Russell 2000 ETF", sector: "ETF", price: 218.4, change_pct: -0.5, direction: "NEUTRAL", confidence: 0.52 },
+  { ticker: "DIA", name: "SPDR Dow Jones ETF", sector: "ETF", price: 432.1, change_pct: 0.1, direction: "NEUTRAL", confidence: 0.5 },
+  { ticker: "BAC", name: "Bank of America", sector: "Financials", price: 42.6, change_pct: -0.7, direction: "NEUTRAL", confidence: 0.53 },
+  { ticker: "ORCL", name: "Oracle Corp.", sector: "Technology", price: 188.9, change_pct: 1.4, direction: "LONG", confidence: 0.64 },
+  { ticker: "CRM", name: "Salesforce Inc.", sector: "Technology", price: 276.3, change_pct: 0.6, direction: "LONG", confidence: 0.58 },
 ];
+
+/** Top-30 board (ETFs first), mirrors the IBKR stream's IBKR_TICKERS. */
+export const TOP30: string[] = [
+  "QQQ", "SPY", "IWM", "DIA", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META",
+  "TSLA", "AVGO", "AMD", "NFLX", "PLTR", "COIN", "MU", "QCOM", "JPM", "V",
+  "GS", "LLY", "UNH", "XOM", "CVX", "COST", "WMT", "BAC", "ORCL", "CRM",
+];
+
+/** Deterministic demo quotes for the live board when the backend is offline. */
+export function mockQuotes(tickers: string[]): Quote[] {
+  return tickers.map((ticker) => {
+    const u = MOCK_UNIVERSE.find((x) => x.ticker === ticker);
+    if (u) return { ticker, price: u.price, change_pct: u.change_pct };
+    // Fallback synth (seeded by ticker) for any symbol not in the demo universe.
+    let seed = 11;
+    for (let i = 0; i < ticker.length; i++) seed = (seed * 31 + ticker.charCodeAt(i)) & 0x7fffffff;
+    const price = r2(20 + (seed % 60000) / 100);
+    const change_pct = r2(((seed % 700) / 100) - 3.5);
+    return { ticker, price, change_pct };
+  });
+}
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const r4 = (n: number) => Math.round(n * 10000) / 10000;

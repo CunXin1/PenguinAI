@@ -1,0 +1,5 @@
+# Real-time IBKR ingestion service (data/ingestion/ibkr_stream.py)
+ib_async>=1.0            # IBKR TWS API client (maintained ib_insync fork) — needs TWS/Gateway
+SQLAlchemy[asyncio]>=2.0
+asyncpg>=0.29            # async Postgres driver for postgresql+asyncpg://
+pydantic-settings>=2.0

@@ -32,6 +32,9 @@ CREATE TABLE IF NOT EXISTS market_data_1min (
 );
 SELECT create_hypertable('market_data_1min', 'time', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS idx_1min_ticker_time ON market_data_1min (ticker, time DESC);
+-- Conflict target for the real-time IBKR stream's idempotent upserts
+-- (data/ingestion/ibkr_stream.py re-emits the forming minute as it fills).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_1min_ticker_time ON market_data_1min (ticker, time);
 
 -- Daily bars (lightweight, for macro context)
 CREATE TABLE IF NOT EXISTS market_data_daily (

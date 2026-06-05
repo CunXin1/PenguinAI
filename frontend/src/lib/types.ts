@@ -154,3 +154,11 @@ export interface CandleBar {
   low: number;
   close: number;
 }
+
+/** A latest-quote board row (live price + same-session % change). */
+export interface Quote {
+  ticker: string;
+  price: number;
+  change_pct: number;
+  time?: string; // ISO timestamp of the latest bar
+}

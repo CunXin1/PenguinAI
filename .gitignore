@@ -6,31 +6,71 @@ __pycache__/
 *.so
 *.egg
 *.egg-info/
+.eggs/
 dist/
 build/
-.eggs/
+*.manifest
+*.spec
+
+# Packaging / installer artifacts
+pip-wheel-metadata/
+share/python-wheels/
+__pypackages__/
+
+# ── Python tooling caches ───────────────────────────────────────────────────────
 .mypy_cache/
+.dmypy.json
+dmypy.json
 .ruff_cache/
 .pytest_cache/
-.coverage
-coverage.xml
-htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.pyre/
+.pytype/
+cython_debug/
 
-# Virtual environments
+# Coverage / profiling
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+*.py.cover
+htmlcov/
+nosetests.xml
+.prof
+*.prof
+*.lprof
+
+# ── Virtual environments & version pins ─────────────────────────────────────────
 .venv/
 venv/
 env/
 ENV/
+.python-version
+# uv / poetry / pipenv local caches (lockfiles ARE committed)
+.uv/
+.pdm-python
+.pdm-build/
 
-# ── Environment & secrets ─────────────────────────────────────────────────────
+# ── Environment & secrets ───────────────────────────────────────────────────────
 .env
 .env.local
 .env.production
 .env.*.local
+.envrc
+# Credentials / keys — never commit
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.*
+credentials.json
+service-account*.json
 # Keep the example
 !.env.example
 
-# ── ML models & large data files ─────────────────────────────────────────────
+# ── ML models, checkpoints & experiment tracking ───────────────────────────────
 # Models are stored in /models/ on the server, not in git
 /models/
 *.pkl
@@ -39,18 +79,52 @@ ENV/
 *.onnx
 *.bin
 *.safetensors
+*.ckpt
+*.h5
+*.hdf5
+*.joblib
+# Experiment tracking / training logs
+mlruns/
+mlartifacts/
+wandb/
+lightning_logs/
+runs/                 # TensorBoard
+catboost_info/
+.neptune/
 
-# Historical market data — too large for git (import from external source)
+# ── Historical market data — too large for git (import from external source) ────
 *.parquet
 *.csv
 *.feather
 *.arrow
+*.npy
+*.npz
 data/raw/
 data/processed/
+data/interim/
+data/external/
+data/cache/
+data/exports/
+# Local 30-min & daily bar archives (~32 GB of parquet) — never commit
+data/30min_data/
+data/daily_data/
 
-# MLflow experiment tracking
-mlruns/
-mlartifacts/
+# ── Databases (local) ───────────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+*.duckdb.wal
+# DB dumps / backups (schema .sql files ARE committed)
+*.sql.gz
+*.sql.bz2
+*.dump
+*.bak
+pgdata/
+
+# ── Notebooks ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*-checkpoint.ipynb
 
 # ── Node.js / Next.js ─────────────────────────────────────────────────────────
 node_modules/
@@ -58,36 +132,52 @@ node_modules/
 out/
 .turbo/
 *.tsbuildinfo
+.eslintcache
+.vercel
+# package manager debug logs (lockfiles ARE committed)
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
 frontend/.env
 frontend/.env.local
 frontend/.env.production
+frontend/coverage/
 
 # ── Docker ────────────────────────────────────────────────────────────────────
 docker-compose.override.yml
 
-# ── Database ──────────────────────────────────────────────────────────────────
-*.db
-*.duckdb
-*.duckdb.wal
-
-# ── IDE ───────────────────────────────────────────────────────────────────────
-.vscode/
-.idea/
-*.swp
-*.swo
-.vim/
-
-# ── OS ────────────────────────────────────────────────────────────────────────
-.DS_Store
-Thumbs.db
-Desktop.ini
-
-# ── Logs ──────────────────────────────────────────────────────────────────────
-*.log
-logs/
+# ── Celery ──────────────────────────────────────────────────────────────────────
 celerybeat-schedule
+celerybeat-schedule.*
 celerybeat.pid
 
 # ── Playwright ────────────────────────────────────────────────────────────────
 playwright-report/
 test-results/
+.playwright/
+
+# ── Logs & temp ───────────────────────────────────────────────────────────────
+*.log
+logs/
+tmp/
+.cache/
+*.tmp
+*.orig
+
+# ── IDE / editors ───────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.vim/
+*.sublime-project
+*.sublime-workspace
+
+# ── Claude Code (machine-local settings) ────────────────────────────────────────
+.claude/settings.local.json
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini

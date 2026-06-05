@@ -1,5 +1,6 @@
 import type {
   Candle,
+  Quote,
   Signal,
   SignalListItem,
   Ticker,
@@ -100,5 +101,10 @@ export const marketData = {
   candles: (ticker: string, timeframe: "1min" | "30min" | "1day" = "30min", days = 30) =>
     apiFetch<{ ticker: string; timeframe: string; candles: Candle[] }>(
       `/market-data/${ticker}/candles?timeframe=${timeframe}&days=${days}`
+    ),
+
+  quotes: (tickers: string[]) =>
+    apiFetch<{ quotes: Quote[] }>(
+      `/market-data/quotes?tickers=${encodeURIComponent(tickers.join(","))}`
     ),
 };

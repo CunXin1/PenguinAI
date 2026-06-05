@@ -1,4 +1,4 @@
-.PHONY: up down logs backend frontend ml-worker lint type-check test db-init bootstrap
+.PHONY: up down logs backend frontend ml-worker ibkr-stream lint type-check test db-init bootstrap
 
 # ── Docker Compose ────────────────────────────────────────────────────────────
 up:
@@ -22,6 +22,10 @@ frontend:
 
 ml-worker:
 	cd . && celery -A ml.tasks.celery_app worker --queues=ml_inference -c 1 --loglevel=info
+
+# Live IBKR 1-min bars → market_data_1min (needs TWS/Gateway + DB). Run from repo root.
+ibkr-stream:
+	python -m data.ingestion.ibkr_stream
 
 celery-beat:
 	cd . && celery -A ml.tasks.celery_app beat --loglevel=info
