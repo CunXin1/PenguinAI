@@ -7,6 +7,7 @@ import { LayoutGrid, Loader2 } from "lucide-react";
 import { marketData } from "@/lib/api";
 import { Card } from "@/components/ui/Card";
 import { Heatmap, tileGradient } from "@/components/market/Heatmap";
+import { useMarketStatus } from "@/lib/market-status";
 import { cn, money, signedPct } from "@/lib/utils";
 import type { HeatmapPeriod, HeatmapResponse } from "@/lib/types";
 
@@ -23,17 +24,20 @@ const LEGEND =
 export default function HeatmapPage() {
   const [limit, setLimit] = useState<number>(50);
   const [period, setPeriod] = useState<HeatmapPeriod>("1D");
+  const { isOpen } = useMarketStatus();
 
   const { data, isLoading, isError } = useQuery<HeatmapResponse>({
     queryKey: ["heatmap", limit, period],
     queryFn: () => marketData.heatmap(limit, period),
-    // Poll on 1D regardless of the badge — lets the backend observe live ticks
-    // advancing and flip Closed→Live (and keeps prices fresh). Other periods are
-    // historical and don't move, so no polling.
-    refetchInterval: period === "1D" ? REFRESH_MS : false,
+    // Poll 1D prices only while the market is open (the global /market-data/status
+    // heartbeat handles the Closed→Live flip). Other periods are historical, so
+    // they don't move and never poll.
+    refetchInterval: period === "1D" && isOpen ? REFRESH_MS : false,
   });
 
-  const open = data?.market_open ?? false;
+  // Drive the badge off the shared status so it agrees with the rest of the app
+  // and flips immediately, instead of lagging on the last heatmap payload.
+  const open = isOpen;
   const items = data?.items ?? [];
   const indices = data?.indices ?? [];
   const asOf = data?.as_of ? new Date(data.as_of) : null;

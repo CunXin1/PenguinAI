@@ -4,6 +4,7 @@ import type {
   ChartRange,
   EarningsEvent,
   HeatmapResponse,
+  MarketStatus,
   MiniQuote,
   Quote,
   Signal,
@@ -139,6 +140,9 @@ export const marketData = {
   /** Market-cap heatmap tiles (Top-N by market cap, colored by % change over `period`). */
   heatmap: (limit = 100, period: string = "1D") =>
     apiFetch<HeatmapResponse>(`/market-data/heatmap?limit=${limit}&period=${period}`),
+
+  /** Global "is the US market open right now" — one source of truth for LIVE badges + poll cadence. */
+  status: () => apiFetch<MarketStatus>("/market-data/status"),
 };
 
 // ── Earnings API ─────────────────────────────────────────────────────────────

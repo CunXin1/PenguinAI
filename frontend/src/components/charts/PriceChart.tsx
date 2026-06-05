@@ -6,6 +6,7 @@ import { CandlestickChart, LineChart, Loader2 } from "lucide-react";
 import type { IChartApi, ISeriesApi, MouseEventParams } from "lightweight-charts";
 import { marketData } from "@/lib/api";
 import { Card } from "@/components/ui/Card";
+import { useMarketStatus } from "@/lib/market-status";
 import { cn, money, signedPct } from "@/lib/utils";
 import type { CandleBar, ChartRange } from "@/lib/types";
 
@@ -68,6 +69,7 @@ export function PriceChart({
   const [range, setRange] = useState<ChartRange>(defaultRange);
   const [type, setType] = useState<SeriesType>(defaultType);
   const cfg = RANGES.find((r) => r.key === range)!;
+  const { isOpen } = useMarketStatus();
 
   const qc = useQueryClient();
 
@@ -75,8 +77,9 @@ export function PriceChart({
   // an empty result renders an explicit empty state instead of fake bars.
   const { data, isLoading, isError } = useQuery<CandleBar[]>({
     ...seriesQuery(T, range),
-    // Intraday ranges poll; daily ranges barely move so a long stale window is fine.
-    refetchInterval: cfg.intraday ? REFRESH_MS : false,
+    // Poll the live minute store only while the market is open AND the range is
+    // intraday; otherwise the bars are frozen at the last close, so don't refetch.
+    refetchInterval: cfg.intraday && isOpen ? REFRESH_MS : false,
     staleTime: cfg.intraday ? 0 : DAILY_STALE_MS,
     // NOTE: no keepPreviousData — showing the previous range's bars while the new
     // range loads made a range switch (e.g. 3M→1Y) render the new data at the old
@@ -101,6 +104,10 @@ export function PriceChart({
   const first = bars[0]?.open ?? last;
   const chg = first ? ((last - first) / first) * 100 : 0;
   const up = chg >= 0;
+  // Live only when the market is actually open and we're on an intraday range;
+  // daily ranges are historical, and a closed market shows the last close frozen.
+  const intradayLive = cfg.intraday && isOpen;
+  const statusLabel = cfg.intraday ? (isOpen ? "Live" : "Closed") : "Daily";
 
   return (
     <Card className="p-4 sm:p-5">
@@ -130,10 +137,19 @@ export function PriceChart({
         {hasData && (
           <span className="flex items-center gap-1.5 text-[11px] font-medium">
             <span
-              className={cn("w-1.5 h-1.5 rounded-full bg-emerald-500", cfg.intraday && "animate-pulse")}
+              className={cn(
+                "w-1.5 h-1.5 rounded-full",
+                intradayLive ? "bg-emerald-500 animate-pulse" : "bg-zinc-400 dark:bg-zinc-500"
+              )}
             />
-            <span className="text-emerald-600 dark:text-emerald-400">
-              {cfg.intraday ? "Live" : "Daily"}
+            <span
+              className={
+                intradayLive
+                  ? "text-emerald-600 dark:text-emerald-400"
+                  : "text-zinc-500 dark:text-zinc-400"
+              }
+            >
+              {statusLabel}
             </span>
           </span>
         )}

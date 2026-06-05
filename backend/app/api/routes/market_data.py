@@ -1,7 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from time import monotonic
 from typing import Literal
-from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import text
@@ -9,10 +7,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.core.database import engine as app_engine
+from app.core.market_clock import ET, get_market_status, is_regular_session, ticks_advancing
 
 router = APIRouter()
 
-ET = ZoneInfo("America/New_York")  # US market session timezone
+
+@router.get("/status")
+async def market_status(db: AsyncSession = Depends(get_db)):
+    """Global "is the US market open right now" — the single source of truth the
+    frontend uses for the LIVE/CLOSED badge and to gate live-poll cadence across
+    every market-data surface. Public (no auth)."""
+    return await get_market_status(db)
 
 
 @router.post("/{ticker}/warm")
@@ -341,40 +346,6 @@ async def get_series(
     return {"ticker": tkr, "range": rng, "bars": bars}
 
 
-def _is_market_open(now_utc: datetime) -> bool:
-    """US regular session: weekdays 09:30–16:00 ET (holidays not modeled)."""
-    et = now_utc.astimezone(ET)
-    if et.weekday() >= 5:  # Sat/Sun
-        return False
-    return et.replace(hour=9, minute=30, second=0, microsecond=0) <= et < et.replace(
-        hour=16, minute=0, second=0, microsecond=0
-    )
-
-
-# Tracks whether the live minute feed is advancing, using a MONOTONIC clock so it
-# works even if the system wall-clock is wrong. Process-global (one API worker).
-_LIVE_TICKS: dict = {"max": None, "advanced_at": None}
-# Stay "live" if a new bar arrived within this many real seconds. Bars land ~1/min
-# during a session (with jitter / 15-min Massive delay), so a generous window keeps
-# the badge stable; it flips to Closed only after the feed truly stops (~5 min).
-_LIVE_WINDOW_S = 360.0
-
-
-def _ticks_advancing(latest_tick) -> bool:
-    """True if the newest minute bar grew within the last _LIVE_WINDOW_S seconds."""
-    if latest_tick is None:
-        return False
-    mono = monotonic()
-    prev = _LIVE_TICKS["max"]
-    if prev is None:
-        _LIVE_TICKS["max"] = latest_tick  # seed (can't tell on first observation)
-    elif latest_tick > prev:
-        _LIVE_TICKS["max"] = latest_tick
-        _LIVE_TICKS["advanced_at"] = mono
-    at = _LIVE_TICKS["advanced_at"]
-    return at is not None and (mono - at) <= _LIVE_WINDOW_S
-
-
 # period → return-horizon column in bars_1d (1D handled live; rest are stored returns)
 _PERIOD_RET = {"1W": "ret_5d", "1M": "ret_21d", "3M": "ret_63d", "1Y": "ret_252d"}
 _PERIODS = ("1D", *(_PERIOD_RET.keys()))
@@ -445,15 +416,16 @@ async def get_heatmap(
             detail=f"period must be one of {list(_PERIODS)}",
         )
     now = datetime.now(UTC)
-    is_open = _is_market_open(now)
+    is_open = is_regular_session(now)
     if not is_open:
-        # Clock-independent fallback: if minute ticks are actively *advancing*
-        # (the latest tick grew within the last ~90s of real/monotonic time),
-        # the market is live regardless of the wall clock. This is robust to a
-        # wrong system clock — it can't be fooled by stale data either, since it
-        # requires an actual advance, not just recency vs a (possibly-bad) now().
+        # Clock-independent fallback: if minute ticks are actively *advancing* (the
+        # latest tick grew within the last window of real/monotonic time), the
+        # market is live regardless of the wall clock. Robust to a wrong system
+        # clock — it can't be fooled by stale data either, since it requires an
+        # actual advance, not just recency vs a (possibly-bad) now(). Shared with
+        # the /status endpoint via app.core.market_clock.
         mx = (await db.execute(text("SELECT max(time) FROM market_data_1min"))).scalar()
-        is_open = _ticks_advancing(mx)
+        is_open = ticks_advancing(mx)
 
     # ── Top-N by market cap + daily metrics ──────────────────────────────────
     rows = await db.execute(

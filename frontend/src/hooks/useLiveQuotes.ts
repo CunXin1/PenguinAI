@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { marketData } from "@/lib/api";
+import { useMarketStatus } from "@/lib/market-status";
 import type { Quote } from "@/lib/types";
 
 /**
@@ -11,6 +12,7 @@ import type { Quote } from "@/lib/types";
  */
 export function useLiveQuotes(tickers: string[]) {
   const key = [...tickers].sort().join(",");
+  const { isOpen } = useMarketStatus();
   return useQuery<Record<string, Quote>>({
     queryKey: ["quotes", key],
     queryFn: async () => {
@@ -24,6 +26,7 @@ export function useLiveQuotes(tickers: string[]) {
     },
     initialData: {},
     staleTime: 0, // with initialData, any non-zero staleTime suppresses the fetch
-    refetchInterval: 60_000, // keep prices fresh while the page is open
+    // Refresh prices while the market is open; freeze on the last close when shut.
+    refetchInterval: isOpen ? 60_000 : false,
   });
 }

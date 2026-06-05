@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
+import { MarketStatusBadge } from "@/components/ui/MarketStatusBadge";
 import { useAuth, userInitial } from "@/hooks/useAuth";
 
 const NAV = [
@@ -63,6 +64,9 @@ export function Navbar() {
           <span className="text-zinc-900 dark:text-white">Penguin</span>
           <span className="text-sky-500 dark:text-sky-400">AI</span>
         </Link>
+
+        {/* Global market open/closed badge — single source of truth (useMarketStatus). */}
+        <MarketStatusBadge className="hidden sm:inline-flex shrink-0" />
 
         {/* Desktop / tablet nav: icon-only from md, labels added at lg */}
         <nav className="hidden md:flex items-center gap-1">

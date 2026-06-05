@@ -233,6 +233,17 @@ export interface HeatmapResponse {
   indices: IndexTile[];
 }
 
+// ── Market status (global open / closed) ──────────────────────────────────────
+/** The one answer every surface uses for "is the US market open right now".
+ *  `market_open` = ET regular session OR the live feed is actively advancing. */
+export interface MarketStatus {
+  market_open: boolean;
+  session_open: boolean; // true only during the ET regular session (09:30–16:00)
+  source: "session" | "ticks" | "closed"; // which path decided market_open
+  as_of: string; // ISO timestamp
+  latest_tick: string | null; // newest market_data_1min bar (ISO), or null
+}
+
 // ── Earnings ──────────────────────────────────────────────────────────────────
 /** Reporting session — backend derives it from `earnings.report_hour` (Finnhub `hour`). */
 export type EarningsSession = "BMO" | "AMC" | "TBD";

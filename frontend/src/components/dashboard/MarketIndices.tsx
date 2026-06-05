@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { marketData } from "@/lib/api";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { Card } from "@/components/ui/Card";
+import { useMarketStatus } from "@/lib/market-status";
 import { cn, money, signedPct } from "@/lib/utils";
 
 const UP = "#10b981"; // emerald-500
@@ -22,10 +23,12 @@ const SYMS = INDICES.map((i) => i.ticker);
 
 /** Top-of-dashboard index strip: live price + 1-day % change + intraday thumbnail. */
 export function MarketIndices() {
+  const { isOpen } = useMarketStatus();
   const { data } = useQuery({
     queryKey: ["mini", SYMS.join(",")],
     queryFn: () => marketData.mini(SYMS),
-    refetchInterval: 15_000, // tracks the 1-min stream
+    // Track the 1-min stream while open; freeze on the last close when shut.
+    refetchInterval: isOpen ? 15_000 : false,
     staleTime: 0,
   });
 
