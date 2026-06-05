@@ -11,10 +11,10 @@ import { cn } from "@/lib/utils";
 import type { UserTier } from "@/lib/types";
 
 const TIER_STYLE: Record<UserTier, string> = {
-  FREE: "text-zinc-300 bg-zinc-700/40 border-zinc-600",
-  PRO: "text-sky-400 bg-sky-500/10 border-sky-500/40",
-  PREMIUM: "text-amber-400 bg-amber-500/10 border-amber-500/40",
-  ADMIN: "text-red-400 bg-red-500/10 border-red-500/40",
+  FREE: "text-zinc-700 dark:text-zinc-300 bg-zinc-200 dark:bg-zinc-700/40 border-zinc-300 dark:border-zinc-600",
+  PRO: "text-sky-600 dark:text-sky-400 bg-sky-500/10 border-sky-500/40",
+  PREMIUM: "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/40",
+  ADMIN: "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/40",
 };
 
 export default function ProfilePage() {
@@ -36,7 +36,7 @@ export default function ProfilePage() {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
-              <h1 className="text-xl font-bold text-white">{u.display_name}</h1>
+              <h1 className="text-xl font-bold text-zinc-900 dark:text-white">{u.display_name}</h1>
               <span
                 className={cn(
                   "px-2 py-0.5 rounded-full text-[11px] font-semibold border flex items-center gap-1",
@@ -47,7 +47,7 @@ export default function ProfilePage() {
               </span>
             </div>
             <p className="text-sm text-zinc-500">{u.email}</p>
-            <p className="text-xs text-zinc-600 mt-1">Member since {u.member_since}</p>
+            <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-1">Member since {u.member_since}</p>
           </div>
           {!authed && (
             <Link
@@ -70,9 +70,9 @@ export default function ProfilePage() {
       <Card className="p-5">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
-            <Shield size={18} className="text-sky-400 shrink-0" />
+            <Shield size={18} className="text-sky-500 dark:text-sky-400 shrink-0" />
             <div>
-              <p className="text-sm font-semibold text-zinc-200">Current plan: {u.tier}</p>
+              <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Current plan: {u.tier}</p>
               <p className="text-xs text-zinc-500">
                 Top-100 daily signals · upgrade for full 2,000-stock real-time coverage
               </p>
@@ -87,26 +87,26 @@ export default function ProfilePage() {
       {/* Watchlist */}
       <Card className="p-5">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-zinc-200 flex items-center gap-2">
-            <Star size={15} className="text-amber-400" /> My Watchlist
+          <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-2">
+            <Star size={15} className="text-amber-500 dark:text-amber-400" /> My Watchlist
           </h2>
-          <Link href="/" className="text-xs text-zinc-500 hover:text-sky-400 transition-colors">
+          <Link href="/" className="text-xs text-zinc-500 hover:text-sky-600 dark:hover:text-sky-400 transition-colors">
             Browse signals
           </Link>
         </div>
-        <div className="divide-y divide-zinc-800">
+        <div className="divide-y divide-zinc-200 dark:divide-zinc-800">
           {watch.map((s) => (
             <Link
               key={s.ticker}
               href={`/signals/${s.ticker}`}
-              className="flex items-center justify-between py-2.5 -mx-2 px-2 rounded-md hover:bg-zinc-800/30 transition-colors"
+              className="flex items-center justify-between py-2.5 -mx-2 px-2 rounded-md hover:bg-zinc-100 dark:hover:bg-zinc-800/30 transition-colors"
             >
               <div className="flex items-center gap-3 min-w-0">
-                <span className="font-mono font-semibold text-sm text-zinc-200 w-14 shrink-0">{s.ticker}</span>
+                <span className="font-mono font-semibold text-sm text-zinc-800 dark:text-zinc-200 w-14 shrink-0">{s.ticker}</span>
                 <span className="text-xs text-zinc-500 truncate">{s.name}</span>
               </div>
               <div className="flex items-center gap-3 shrink-0">
-                <span className="text-xs font-mono text-zinc-400">{Math.round(s.confidence * 100)}%</span>
+                <span className="text-xs font-mono text-zinc-600 dark:text-zinc-400">{Math.round(s.confidence * 100)}%</span>
                 <DirectionBadge direction={s.direction} />
               </div>
             </Link>
@@ -123,11 +123,11 @@ export default function ProfilePage() {
         ].map((it) => (
           <button
             key={it.label}
-            className="w-full flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-zinc-800/50 transition-colors text-left"
+            className="w-full flex items-center gap-3 px-3 py-3 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800/50 transition-colors text-left"
           >
-            <it.icon size={17} className={it.danger ? "text-red-400" : "text-zinc-400"} />
+            <it.icon size={17} className={it.danger ? "text-red-500 dark:text-red-400" : "text-zinc-600 dark:text-zinc-400"} />
             <div className="flex-1">
-              <p className={cn("text-sm font-medium", it.danger ? "text-red-400" : "text-zinc-200")}>{it.label}</p>
+              <p className={cn("text-sm font-medium", it.danger ? "text-red-500 dark:text-red-400" : "text-zinc-800 dark:text-zinc-200")}>{it.label}</p>
               {it.sub && <p className="text-xs text-zinc-500">{it.sub}</p>}
             </div>
           </button>
@@ -139,8 +139,8 @@ export default function ProfilePage() {
 
 function Stat({ label, value, accent }: { label: string; value: ReactNode; accent?: boolean }) {
   return (
-    <div className="rounded-lg bg-zinc-800/40 p-3 text-center">
-      <p className={cn("text-lg font-bold font-mono", accent ? "text-emerald-400" : "text-zinc-200")}>{value}</p>
+    <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800/40 p-3 text-center">
+      <p className={cn("text-lg font-bold font-mono", accent ? "text-emerald-600 dark:text-emerald-400" : "text-zinc-800 dark:text-zinc-200")}>{value}</p>
       <p className="text-[11px] text-zinc-500 mt-0.5">{label}</p>
     </div>
   );

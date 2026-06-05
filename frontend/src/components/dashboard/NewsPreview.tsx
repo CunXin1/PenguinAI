@@ -13,11 +13,11 @@ export function NewsPreview() {
   return (
     <Card className="p-4">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-semibold text-zinc-300 flex items-center gap-2">
-          <Newspaper size={15} className="text-sky-400" />
+        <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-2">
+          <Newspaper size={15} className="text-sky-500 dark:text-sky-400" />
           Latest News
         </h3>
-        <Link href="/news" className="text-xs text-zinc-500 hover:text-sky-400 flex items-center gap-1 transition-colors">
+        <Link href="/news" className="text-xs text-zinc-500 hover:text-sky-600 dark:hover:text-sky-400 flex items-center gap-1 transition-colors">
           All <ArrowRight size={12} />
         </Link>
       </div>
@@ -27,10 +27,10 @@ export function NewsPreview() {
             <div className="flex gap-2.5">
               <span className={`mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${DOT[n.sentiment]}`} />
               <div className="min-w-0">
-                <p className="text-sm text-zinc-300 leading-snug group-hover:text-white transition-colors line-clamp-2">
+                <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-snug group-hover:text-zinc-900 dark:group-hover:text-white transition-colors line-clamp-2">
                   {n.headline}
                 </p>
-                <p className="text-[11px] text-zinc-600 mt-0.5">
+                <p className="text-[11px] text-zinc-400 dark:text-zinc-600 mt-0.5">
                   {n.source} · {n.time}
                   {n.tickers && n.tickers.length > 0 ? ` · ${n.tickers.join(", ")}` : ""}
                 </p>

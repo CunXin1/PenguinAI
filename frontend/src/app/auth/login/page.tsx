@@ -41,24 +41,24 @@ export default function LoginPage() {
         {/* Logo */}
         <div className="text-center">
           <h1 className="text-3xl font-bold">
-            <span className="text-white">Penguin</span>
-            <span className="text-sky-400">AI</span>
+            <span className="text-zinc-900 dark:text-white">Penguin</span>
+            <span className="text-sky-500 dark:text-sky-400">AI</span>
           </h1>
           <p className="text-zinc-500 text-sm mt-1">AI Quantitative Signal Platform</p>
         </div>
 
         {/* Card */}
-        <div className="rounded-xl border border-zinc-700/60 bg-zinc-900 p-6 space-y-5">
+        <div className="rounded-xl border border-zinc-200 dark:border-zinc-700/60 bg-white dark:bg-zinc-900 p-6 space-y-5">
           {/* Mode toggle */}
-          <div className="flex rounded-lg bg-zinc-800 p-1">
+          <div className="flex rounded-lg bg-zinc-100 dark:bg-zinc-800 p-1">
             {(["login", "register"] as Mode[]).map((m) => (
               <button
                 key={m}
                 onClick={() => { setMode(m); setError(null); }}
                 className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-colors ${
                   mode === m
-                    ? "bg-zinc-700 text-white"
-                    : "text-zinc-500 hover:text-zinc-300"
+                    ? "bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm"
+                    : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
                 }`}
               >
                 {m === "login" ? "Sign in" : "Sign up"}
@@ -94,7 +94,7 @@ export default function LoginPage() {
             />
 
             {error && (
-              <p className="text-sm text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+              <p className="text-sm text-red-600 dark:text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
                 {error}
               </p>
             )}
@@ -109,7 +109,7 @@ export default function LoginPage() {
           </form>
         </div>
 
-        <p className="text-center text-xs text-zinc-600">
+        <p className="text-center text-xs text-zinc-400 dark:text-zinc-600">
           Signal platform · No trading execution
         </p>
       </div>
@@ -134,14 +134,14 @@ function Field({
 }) {
   return (
     <div className="space-y-1.5">
-      <label className="text-xs font-medium text-zinc-400">{label}</label>
+      <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">{label}</label>
       <input
         type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         required={required}
-        className="w-full rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:border-sky-500 transition-colors"
+        className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-3 py-2.5 text-sm text-zinc-900 dark:text-white placeholder-zinc-400 dark:placeholder-zinc-600 focus:outline-none focus:border-sky-500 transition-colors"
       />
     </div>
   );

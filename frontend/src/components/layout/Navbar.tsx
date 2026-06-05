@@ -5,6 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { LayoutDashboard, Telescope, Star, Newspaper, User, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -31,11 +32,11 @@ export function Navbar() {
   };
 
   return (
-    <header className="sticky top-0 z-50 border-b border-zinc-800 bg-zinc-950/80 backdrop-blur">
+    <header className="sticky top-0 z-50 border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-950/80 backdrop-blur">
       <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-4">
         <Link href="/" className="text-lg font-bold tracking-tight shrink-0">
-          <span className="text-white">Penguin</span>
-          <span className="text-sky-400">AI</span>
+          <span className="text-zinc-900 dark:text-white">Penguin</span>
+          <span className="text-sky-500 dark:text-sky-400">AI</span>
         </Link>
 
         <nav className="flex items-center gap-1">
@@ -47,7 +48,9 @@ export function Navbar() {
                 href={href}
                 className={cn(
                   "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
-                  active ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-white hover:bg-zinc-800/50"
+                  active
+                    ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white"
+                    : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800/50"
                 )}
               >
                 <Icon size={15} />
@@ -61,16 +64,18 @@ export function Navbar() {
 
         <form
           onSubmit={submitSearch}
-          className="hidden md:flex items-center gap-2 rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-1.5 w-56 focus-within:border-sky-500/60 transition-colors"
+          className="hidden md:flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-1.5 w-56 focus-within:border-sky-500/60 transition-colors"
         >
           <Search size={14} className="text-zinc-500 shrink-0" />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search ticker..."
-            className="bg-transparent outline-none text-sm text-zinc-200 placeholder-zinc-600 w-full"
+            className="bg-transparent outline-none text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-600 w-full"
           />
         </form>
+
+        <ThemeToggle />
 
         {authed ? (
           <Link

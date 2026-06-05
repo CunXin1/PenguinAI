@@ -3,7 +3,12 @@
 @tailwind utilities;
 
 :root {
-  --background: #09090b;   /* zinc-950 */
+  --background: #fafafa;   /* zinc-50  — light canvas */
+  --foreground: #18181b;   /* zinc-900 */
+}
+
+.dark {
+  --background: #09090b;   /* zinc-950 — dark canvas */
   --foreground: #f4f4f5;   /* zinc-100 */
 }
 
@@ -14,8 +19,13 @@ body {
   color: var(--foreground);
 }
 
-/* Custom scrollbar — dark theme */
+/* Custom scrollbar — light theme */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #18181b; }
-::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #52525b; }
+::-webkit-scrollbar-track { background: #e4e4e7; }       /* zinc-200 */
+::-webkit-scrollbar-thumb { background: #d4d4d8; border-radius: 3px; }  /* zinc-300 */
+::-webkit-scrollbar-thumb:hover { background: #a1a1aa; } /* zinc-400 */
+
+/* Custom scrollbar — dark theme */
+.dark ::-webkit-scrollbar-track { background: #18181b; }
+.dark ::-webkit-scrollbar-thumb { background: #3f3f46; }
+.dark ::-webkit-scrollbar-thumb:hover { background: #52525b; }

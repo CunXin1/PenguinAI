@@ -1,0 +1,11 @@
+# Core (Parquet build + TimescaleDB import)
+pyarrow>=16,<19
+psycopg[binary]>=3.2,<4
+
+# Indicators (compute_indicators.py, fill_adj_gap.py)
+numpy>=1.26
+pandas>=2.2
+
+# Data refresh
+yfinance>=0.2          # Yahoo 30-min refresh (yahoo_fetch.py / yahoo_monitor.py)
+ib_async>=1.0          # IBKR alternative (ibkr_fetch.py) — needs TWS/Gateway running
