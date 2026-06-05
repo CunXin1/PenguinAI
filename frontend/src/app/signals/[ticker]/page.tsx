@@ -66,24 +66,24 @@ export default function SignalDetailPage({ params }: Props) {
 
   return (
     <div className="max-w-5xl mx-auto px-4 py-6 space-y-5">
-      <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-300 flex items-center gap-1 w-fit transition-colors">
+      <Link href="/" className="text-sm text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 flex items-center gap-1 w-fit transition-colors">
         <ArrowLeft size={14} /> Dashboard
       </Link>
 
       <div className="flex items-end justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-3xl font-bold font-mono text-white">{T}</h1>
+          <h1 className="text-3xl font-bold font-mono text-zinc-900 dark:text-white">{T}</h1>
           <div className="flex items-center gap-3 mt-1">
-            <span className="font-mono text-lg text-zinc-200">{money(last)}</span>
-            <span className={`font-mono text-sm ${up ? "text-emerald-400" : "text-red-400"}`}>{signedPct(chg)}</span>
-            <span className="text-xs text-zinc-600">· 30m bars</span>
+            <span className="font-mono text-lg text-zinc-800 dark:text-zinc-200">{money(last)}</span>
+            <span className={`font-mono text-sm ${up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>{signedPct(chg)}</span>
+            <span className="text-xs text-zinc-400 dark:text-zinc-600">· 30m bars</span>
           </div>
         </div>
         <button
           onClick={addToWatchlist}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-800 text-sm text-zinc-300 hover:bg-zinc-800/50 transition-colors"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/50 transition-colors"
         >
-          <Star size={14} className={watched ? "text-amber-400 fill-amber-400" : ""} />
+          <Star size={14} className={watched ? "text-amber-500 dark:text-amber-400 fill-amber-500 dark:fill-amber-400" : ""} />
           {watched ? "Watching" : "Watch"}
         </button>
       </div>
@@ -93,12 +93,12 @@ export default function SignalDetailPage({ params }: Props) {
       </Card>
 
       {!signal ? (
-        <div className="h-56 rounded-xl bg-zinc-900/60 animate-pulse" />
+        <div className="h-56 rounded-xl bg-zinc-100 dark:bg-zinc-900/60 animate-pulse" />
       ) : (
         <SignalCard signal={signal} />
       )}
 
-      <p className="text-xs text-zinc-600 text-center">
+      <p className="text-xs text-zinc-400 dark:text-zinc-600 text-center">
         {live ? "Live signal from the API." : "Demo signal & chart — connect the backend for live ML output and real bars."}
       </p>
     </div>
