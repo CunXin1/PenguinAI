@@ -9,7 +9,6 @@ from app.core.database import get_db
 from app.core.security import decode_access_token
 from app.models.user import User
 
-
 security = HTTPBearer()
 
 
@@ -24,7 +23,7 @@ async def get_current_user(
     if not user_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    result = await db.execute(select(User).where(User.id == user_id, User.is_active == True))
+    result = await db.execute(select(User).where(User.id == user_id, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
 
     if not user:
@@ -49,7 +48,9 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 async def get_optional_user(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(HTTPBearer(auto_error=False))],
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(HTTPBearer(auto_error=False))
+    ],
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User | None:
     """Use for endpoints that work for both authenticated and anonymous users."""

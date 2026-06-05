@@ -3,7 +3,6 @@ from celery.schedules import crontab
 
 from ml.core.config import ml_settings
 
-
 celery_app = Celery(
     "penguinai",
     broker=ml_settings.REDIS_URL,
@@ -23,8 +22,8 @@ celery_app.conf.update(
     enable_utc=True,
     task_routes={
         "ml.tasks.hourly_signal_cache.*": {"queue": "ml_inference"},
-        "ml.tasks.daily_pipeline.*":      {"queue": "ml_inference"},
-        "ml.tasks.realtime_ingest.*":     {"queue": "default"},
+        "ml.tasks.daily_pipeline.*": {"queue": "ml_inference"},
+        "ml.tasks.realtime_ingest.*": {"queue": "default"},
     },
 )
 

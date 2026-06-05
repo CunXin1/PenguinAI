@@ -25,8 +25,8 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # ── Signal cache TTL (seconds) ────────────────────────────────
-    CACHE_TTL_TOP100: int = 3600        # 1 hour
-    CACHE_TTL_COLD: int = 14400         # 4 hours
+    CACHE_TTL_TOP100: int = 3600  # 1 hour
+    CACHE_TTL_COLD: int = 14400  # 4 hours
     TOP100_TICKERS_KEY: str = "top100:tickers"
 
     # ── Data APIs ─────────────────────────────────────────────────
@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # ── ML ────────────────────────────────────────────────────────
     GEMMA_MODEL_PATH: str = "/models/gemma4"
-    GEMMA_API_URL: str = ""          # empty = use local inference
+    GEMMA_API_URL: str = ""  # empty = use local inference
     GEMMA_API_KEY: str = ""
     FINBERT_MODEL: str = "ProsusAI/finbert"
 

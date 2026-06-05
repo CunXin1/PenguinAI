@@ -7,9 +7,9 @@ class SignalCache(Base):
     __tablename__ = "signal_cache"
 
     ticker = Column(Text, primary_key=True)
-    direction = Column(Text, nullable=False)          # LONG | SHORT | NEUTRAL
+    direction = Column(Text, nullable=False)  # LONG | SHORT | NEUTRAL
     confidence = Column(Numeric(5, 4), nullable=False)
-    holding_period = Column(Text, nullable=False)     # INTRADAY | SHORT_TERM | SWING | POSITION
+    holding_period = Column(Text, nullable=False)  # INTRADAY | SHORT_TERM | SWING | POSITION
 
     # ML scores
     xgb_prob_up = Column(Numeric(5, 4))

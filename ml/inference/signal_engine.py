@@ -2,17 +2,18 @@
 Main signal generation orchestrator.
 Coordinates: feature engineering → ML models → RAG retrieval → Gemma 4 → signal output.
 """
+
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pandas as pd
 
 from ml.core.config import ml_settings
-from ml.features.technical import compute_features, features_to_dict
-from ml.features.sentiment import get_ticker_sentiment
 from ml.features.fundamental import get_fundamentals
+from ml.features.sentiment import get_ticker_sentiment
+from ml.features.technical import compute_features, features_to_dict
 from ml.inference.gemma_agent import GemmaSignalOutput, gemma_agent
 from ml.models.model_registry import model_registry
 from ml.rag.retriever import rag_retriever
@@ -82,7 +83,7 @@ class SignalEngine:
             hawk_dove_score,
         )
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return {
             "ticker": ticker,
             "direction": direction,
@@ -115,14 +116,18 @@ class SignalEngine:
         return direction, confidence
 
     def _neutral_signal(self, ticker: str, reason: str = "") -> dict:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return {
             "ticker": ticker,
             "direction": "NEUTRAL",
             "confidence": 0.5,
             "holding_period": "SHORT_TERM",
-            "xgb_prob_up": None, "rf_prob_up": None, "ensemble_prob": None,
-            "finbert_score": None, "post_count": 0, "hawk_dove_ref": None,
+            "xgb_prob_up": None,
+            "rf_prob_up": None,
+            "ensemble_prob": None,
+            "finbert_score": None,
+            "post_count": 0,
+            "hawk_dove_ref": None,
             "ai_attribution": reason,
             "ai_analysis": "Insufficient data to generate a reliable signal.",
             "tier_required": "FREE",
@@ -132,6 +137,7 @@ class SignalEngine:
 
     async def _load_bars(self, ticker: str, db_session) -> pd.DataFrame:
         from sqlalchemy import text
+
         rows = await db_session.execute(
             text("""
                 SELECT time, open, high, low, close, volume, vwap
@@ -149,6 +155,7 @@ class SignalEngine:
 
     async def _get_celebrity_actions(self, ticker: str, db_session) -> list[dict]:
         from sqlalchemy import text
+
         rows = await db_session.execute(
             text("""
                 SELECT celebrity, action, reported_at
@@ -163,6 +170,7 @@ class SignalEngine:
 
     async def _get_latest_fomc(self, db_session) -> float | None:
         from sqlalchemy import text
+
         row = await db_session.execute(
             text("SELECT hawk_dove_score FROM fomc_statements ORDER BY time DESC LIMIT 1")
         )

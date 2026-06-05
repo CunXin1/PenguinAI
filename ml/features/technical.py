@@ -2,26 +2,29 @@
 Technical indicator computation on 30-min OHLCV data.
 Uses pandas-ta for all indicator calculations.
 """
+
+from dataclasses import dataclass
+
+import numpy as np
 import pandas as pd
 import pandas_ta as ta
-import numpy as np
-from dataclasses import dataclass
 
 
 @dataclass
 class IndicatorFeatures:
     """Flat feature dict ready to feed into XGBoost / RF."""
+
     rsi_14: float | None
     macd: float | None
     macd_signal: float | None
     macd_hist: float | None
-    bb_pct_b: float | None        # position within Bollinger Bands (0–1)
-    bb_width: float | None        # bandwidth normalized
-    atr_14_pct: float | None      # ATR as % of close price
-    ema20_slope: float | None     # rate of change of EMA-20 over last 3 bars
-    price_vs_sma200: float | None # close / SMA-200 - 1
-    volume_ratio: float | None    # current vol / 20-bar avg vol
-    vwap_pct: float | None        # (close - vwap) / vwap
+    bb_pct_b: float | None  # position within Bollinger Bands (0–1)
+    bb_width: float | None  # bandwidth normalized
+    atr_14_pct: float | None  # ATR as % of close price
+    ema20_slope: float | None  # rate of change of EMA-20 over last 3 bars
+    price_vs_sma200: float | None  # close / SMA-200 - 1
+    volume_ratio: float | None  # current vol / 20-bar avg vol
+    vwap_pct: float | None  # (close - vwap) / vwap
 
 
 def compute_features(df: pd.DataFrame) -> IndicatorFeatures:
@@ -36,7 +39,7 @@ def compute_features(df: pd.DataFrame) -> IndicatorFeatures:
         IndicatorFeatures for the LAST bar (most recent).
     """
     if len(df) < 20:
-        return IndicatorFeatures(**{f: None for f in IndicatorFeatures.__dataclass_fields__})
+        return IndicatorFeatures(**dict.fromkeys(IndicatorFeatures.__dataclass_fields__))
 
     close = df["close"].astype(float)
     high = df["high"].astype(float)
@@ -70,17 +73,22 @@ def compute_features(df: pd.DataFrame) -> IndicatorFeatures:
     if bb is not None and not bb.empty:
         upper_col = [c for c in bb.columns if "BBU" in c][0]
         lower_col = [c for c in bb.columns if "BBL" in c][0]
-        mid_col   = [c for c in bb.columns if "BBM" in c][0]
+        mid_col = [c for c in bb.columns if "BBM" in c][0]
         upper = bb[upper_col].iloc[last]
         lower = bb[lower_col].iloc[last]
-        mid   = bb[mid_col].iloc[last]
+        mid = bb[mid_col].iloc[last]
         if pd.notna(upper) and pd.notna(lower) and upper != lower:
             bb_pct_b = (close.iloc[last] - lower) / (upper - lower)
             bb_width = (upper - lower) / mid if mid else None
 
     # EMA-20 slope (3-bar rate of change)
     ema20_slope = None
-    if ema20 is not None and len(ema20) >= 4 and pd.notna(ema20.iloc[last]) and pd.notna(ema20.iloc[-4]):
+    if (
+        ema20 is not None
+        and len(ema20) >= 4
+        and pd.notna(ema20.iloc[last])
+        and pd.notna(ema20.iloc[-4])
+    ):
         ema20_slope = (ema20.iloc[last] - ema20.iloc[-4]) / ema20.iloc[-4]
 
     # Price vs SMA-200
@@ -95,7 +103,9 @@ def compute_features(df: pd.DataFrame) -> IndicatorFeatures:
 
     # ATR as % of close
     atr_val = atr.iloc[last] if atr is not None else None
-    atr_14_pct = (atr_val / close.iloc[last]) if pd.notna(atr_val) and close.iloc[last] > 0 else None
+    atr_14_pct = (
+        (atr_val / close.iloc[last]) if pd.notna(atr_val) and close.iloc[last] > 0 else None
+    )
 
     # VWAP (use session VWAP if available in df, else compute simple approximation)
     vwap_pct = None
@@ -105,7 +115,7 @@ def compute_features(df: pd.DataFrame) -> IndicatorFeatures:
             vwap_pct = (close.iloc[last] - vwap_val) / vwap_val
 
     cols = list(macd_df.columns) if macd_df is not None and not macd_df.empty else []
-    macd_col  = [c for c in cols if "MACD_"  in c and "MACDs" not in c and "MACDh" not in c]
+    macd_col = [c for c in cols if "MACD_" in c and "MACDs" not in c and "MACDh" not in c]
     macds_col = [c for c in cols if "MACDs" in c]
     macdh_col = [c for c in cols if "MACDh" in c]
 

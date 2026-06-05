@@ -1,6 +1,7 @@
 """
 Real-time data ingest tasks: IBKR 1-min stream and social media scraping.
 """
+
 import asyncio
 import logging
 
@@ -16,13 +17,14 @@ def scrape_social_media():
 
 
 async def _async_scrape():
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
     from data.scrapers.reddit_scraper import RedditScraper
     from data.scrapers.twitter_scraper import TwitterScraper
+    from ml.core.config import ml_settings
     from ml.inference.finbert_scorer import finbert_scorer
     from ml.rag.embedder import embedder
-    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
-    from sqlalchemy import text
-    from ml.core.config import ml_settings
 
     engine = create_async_engine(ml_settings.DATABASE_URL)
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -44,7 +46,7 @@ async def _async_scrape():
     embeddings = embedder.encode_batch(texts)
 
     async with SessionLocal() as db:
-        for post, score, emb in zip(new_posts, scores, embeddings):
+        for post, score, emb in zip(new_posts, scores, embeddings, strict=False):
             await db.execute(
                 text("""
                     INSERT INTO social_posts

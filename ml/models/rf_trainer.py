@@ -1,6 +1,7 @@
 """
 Random Forest trainer — complementary to XGBoost for ensemble diversity.
 """
+
 from __future__ import annotations
 
 import logging
@@ -8,12 +9,11 @@ import pickle
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import TimeSeriesSplit
 
-from ml.models.xgboost_trainer import FEATURE_COLS, load_training_data
+from ml.models.xgboost_trainer import load_training_data
 
 logger = logging.getLogger(__name__)
 

@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -19,7 +19,7 @@ async def get_candles(
 ):
     """Return OHLCV bars for charting. Frontend uses TradingView Lightweight Charts."""
     ticker = ticker.upper()
-    since = datetime.now(timezone.utc) - timedelta(days=days)
+    since = datetime.now(UTC) - timedelta(days=days)
 
     table_map = {
         "1min": "market_data_1min",

@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -20,14 +20,18 @@ _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 def _validate_ticker(ticker: str) -> str:
     t = ticker.upper()
     if not _TICKER_RE.match(t):
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid ticker format")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid ticker format"
+        )
     return t
 
 
 def _trigger_signal_computation(ticker: str) -> None:
     """Send Celery task by name string — no ML imports in the API process."""
     from celery import Celery
+
     from app.core.config import settings
+
     app = Celery(broker=settings.REDIS_URL)
     app.send_task(
         "ml.tasks.hourly_signal_cache.compute_single_signal",
@@ -42,7 +46,7 @@ async def get_top_signals(
     limit: int = Query(default=100, le=200),
 ):
     """Return pre-computed Top-N signals (cache hit, instant response)."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     result = await db.execute(
         select(SignalCache)
         .where(SignalCache.expires_at > now)
@@ -64,7 +68,7 @@ async def get_signal(
     - Cache miss → 202, triggers background computation, frontend polls
     """
     ticker = _validate_ticker(ticker)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     cached = await db.get(SignalCache, ticker)
     if cached and cached.expires_at > now:

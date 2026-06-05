@@ -1,9 +1,11 @@
 name: CD — Deploy to AWS
 
 on:
-  push:
-    branches: [main]
-  workflow_dispatch:          # allow manual trigger
+  # Manual-only until AWS infra (ECR/ECS + secrets) is provisioned.
+  # Re-enable the push trigger below once secrets are configured:
+  #   push:
+  #     branches: [main]
+  workflow_dispatch:
 
 # Only one deploy runs at a time
 concurrency:
@@ -18,8 +20,7 @@ jobs:
   deploy:
     name: Build → Push ECR → Deploy ECS
     runs-on: ubuntu-latest
-    # Require CI to pass first
-    needs: []
+    # Manual-only deploy — confirm CI is green on the commit before dispatching.
     environment: production
 
     steps:

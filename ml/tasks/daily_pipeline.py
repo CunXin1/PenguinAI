@@ -2,6 +2,7 @@
 Daily pipeline tasks: model retraining, fundamentals fetch, Top-100 list update.
 Runs at ~10pm ET after market close.
 """
+
 import asyncio
 import logging
 from pathlib import Path
@@ -23,13 +24,13 @@ def run_daily_pipeline():
 
 
 async def _async_daily_pipeline():
-    from ml.models.xgboost_trainer import train as train_xgb
     from ml.models.rf_trainer import train as train_rf
+    from ml.models.xgboost_trainer import train as train_xgb
 
     # Retrain XGBoost
     try:
         metrics = train_xgb(
-            db_path=":memory:",   # replace with DuckDB Parquet path
+            db_path=":memory:",  # replace with DuckDB Parquet path
             output_path=MODEL_DIR / "xgboost_prod.pkl",
         )
         logger.info("XGBoost retrained: %s", metrics)
@@ -48,6 +49,7 @@ async def _async_daily_pipeline():
 
     # Hot-reload models in registry
     from ml.models.model_registry import model_registry
+
     model_registry.reload(MODEL_DIR)
 
     # Update Top-100 list in Redis
@@ -56,8 +58,8 @@ async def _async_daily_pipeline():
 
 async def _update_top100_redis():
     """Rank tickers by recent signal confidence → store Top-100 in Redis."""
-    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
     from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
     engine = create_async_engine(ml_settings.DATABASE_URL)
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

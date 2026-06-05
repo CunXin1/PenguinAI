@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -20,14 +20,12 @@ async def get_watchlist(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     """Return user's watchlist tickers with their latest cached signals."""
-    result = await db.execute(
-        select(Watchlist.ticker).where(Watchlist.user_id == current_user.id)
-    )
+    result = await db.execute(select(Watchlist.ticker).where(Watchlist.user_id == current_user.id))
     tickers = [row[0] for row in result.all()]
     if not tickers:
         return []
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     signals_result = await db.execute(
         select(SignalCache).where(
             SignalCache.ticker.in_(tickers),
@@ -39,7 +37,9 @@ async def get_watchlist(
     return [
         {
             "ticker": t,
-            "signal": SignalListItem.model_validate(signal_map[t]).model_dump() if t in signal_map else None,
+            "signal": SignalListItem.model_validate(signal_map[t]).model_dump()
+            if t in signal_map
+            else None,
         }
         for t in tickers
     ]
