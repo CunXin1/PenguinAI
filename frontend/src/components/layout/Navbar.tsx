@@ -85,7 +85,7 @@ export function Navbar() {
                 )}
               >
                 <Icon size={15} className="shrink-0" />
-                <span className="hidden lg:inline">{label}</span>
+                <span className="hidden lg:inline whitespace-nowrap">{label}</span>
               </Link>
             );
           })}
