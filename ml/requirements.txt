@@ -21,4 +21,4 @@ praw==7.8.1
 playwright==1.49.0
 polygon-api-client==1.16.3
 python-dotenv==1.2.2
-mlflow==2.18.0
+mlflow==3.13.0
