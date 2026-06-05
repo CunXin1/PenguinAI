@@ -95,6 +95,7 @@ penguinai/
 | [docs/data-sources.md](docs/data-sources.md) | Data sources, coverage, and ingestion |
 | [docs/api-reference.md](docs/api-reference.md) | REST API endpoint reference |
 | [docs/deployment.md](docs/deployment.md) | Docker local → AWS production |
+| [TODO.md](TODO.md) | Backlog, known gaps, stubs, and remaining work |
 
 ### Tech Stack
 

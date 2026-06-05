@@ -1,6 +1,4 @@
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,6 +52,5 @@ async def get_universe(
 async def get_ticker(ticker: str, db: AsyncSession = Depends(get_db)):
     row = await db.get(Ticker, ticker.upper())
     if not row:
-        from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ticker not found")
     return row

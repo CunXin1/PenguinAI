@@ -77,7 +77,7 @@ CREATE INDEX IF NOT EXISTS idx_ind30_ticker_time ON indicators_30min (ticker, ti
 
 -- Social media posts (Twitter / Reddit WSB)
 CREATE TABLE IF NOT EXISTS social_posts (
-    id            UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id            UUID            NOT NULL DEFAULT uuid_generate_v4(),
     time          TIMESTAMPTZ     NOT NULL,
     ticker        TEXT,           -- NULL = macro/general sentiment
     platform      TEXT            NOT NULL,  -- 'twitter' | 'reddit'
@@ -88,7 +88,8 @@ CREATE TABLE IF NOT EXISTS social_posts (
     finbert_label TEXT,           -- 'positive' | 'negative' | 'neutral'
     embedding     VECTOR(384),    -- sentence-transformers MiniLM-L6
     is_vip        BOOLEAN         DEFAULT FALSE,  -- tracked influencer
-    raw_metadata  JSONB
+    raw_metadata  JSONB,
+    PRIMARY KEY (time, id)
 );
 SELECT create_hypertable('social_posts', 'time', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS idx_posts_ticker_time ON social_posts (ticker, time DESC);
@@ -96,7 +97,7 @@ CREATE INDEX IF NOT EXISTS idx_posts_embedding ON social_posts USING ivfflat (em
 
 -- News articles
 CREATE TABLE IF NOT EXISTS news_articles (
-    id            UUID            PRIMARY KEY DEFAULT uuid_generate_v4(),
+    id            UUID            NOT NULL DEFAULT uuid_generate_v4(),
     time          TIMESTAMPTZ     NOT NULL,
     ticker        TEXT,
     headline      TEXT            NOT NULL,
@@ -105,17 +106,20 @@ CREATE TABLE IF NOT EXISTS news_articles (
     finbert_score NUMERIC(5, 4),
     finbert_label TEXT,
     embedding     VECTOR(384),
-    raw_metadata  JSONB
+    raw_metadata  JSONB,
+    PRIMARY KEY (time, id)
 );
 SELECT create_hypertable('news_articles', 'time', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS idx_news_ticker_time ON news_articles (ticker, time DESC);
+CREATE INDEX IF NOT EXISTS idx_news_url ON news_articles (url);
 
 -- FOMC statements (global risk filter)
 CREATE TABLE IF NOT EXISTS fomc_statements (
     time           TIMESTAMPTZ     NOT NULL,
-    document_url   TEXT            UNIQUE,
+    document_url   TEXT,
     hawk_dove_score NUMERIC(5, 4), -- positive=hawkish, negative=dovish
     summary        TEXT,
     raw_text       TEXT
 );
 SELECT create_hypertable('fomc_statements', 'time', if_not_exists => TRUE);
+CREATE INDEX IF NOT EXISTS idx_fomc_document_url ON fomc_statements (document_url);

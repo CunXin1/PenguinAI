@@ -1,9 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch",
-      "PowerShell(New-Item *)",
-      "Bash"
-    ]
+      "Bash(*)",
+      "Read(*)",
+      "Write(*)",
+      "Edit(*)",
+      "WebFetch(*)",
+      "WebSearch(*)",
+      "PowerShell(*)"
+    ],
+    "deny": []
   }
 }

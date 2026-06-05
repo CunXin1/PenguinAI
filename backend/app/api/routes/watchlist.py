@@ -10,7 +10,6 @@ from app.models.signal_cache import SignalCache
 from app.models.ticker import Ticker
 from app.models.watchlist import Watchlist
 from app.schemas.signal import SignalListItem
-from app.schemas.ticker import TickerResponse
 
 router = APIRouter()
 

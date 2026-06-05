@@ -1,7 +1,6 @@
+import re
 from datetime import datetime, timezone
 from typing import Annotated
-
-import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
@@ -70,7 +69,7 @@ async def get_signal(
     cached = await db.get(SignalCache, ticker)
     if cached and cached.expires_at > now:
         _check_tier_access(current_user, cached.tier_required)
-        return cached
+        return SignalResponse.model_validate(cached)
 
     # Cache miss: trigger computation asynchronously
     _trigger_signal_computation(ticker)

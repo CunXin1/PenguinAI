@@ -6,7 +6,6 @@ import asyncio
 import logging
 import os
 import signal
-import sys
 from datetime import datetime
 
 logging.basicConfig(
@@ -59,9 +58,12 @@ async def _dispatch_fomc():
     async with SessionLocal() as db:
         await db.execute(
             text("""
-                INSERT INTO fomc_statements (time, document_url, hawk_dove_score, summary, raw_text)
-                VALUES (:time, :document_url, :hawk_dove_score, :summary, :raw_text)
-                ON CONFLICT (document_url) DO NOTHING
+                INSERT INTO fomc_statements
+                    (time, document_url, hawk_dove_score, summary, raw_text)
+                SELECT :time, :document_url, :hawk_dove_score, :summary, :raw_text
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM fomc_statements WHERE document_url = :document_url
+                )
             """),
             result,
         )

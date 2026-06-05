@@ -8,7 +8,7 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from ib_insync import IB, BarData, Contract, Stock, util
+from ib_insync import IB, BarData, Stock
 
 logger = logging.getLogger(__name__)
 
