@@ -10,7 +10,7 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "next": "15.1.4",
+    "next": "15.5.19",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "lightweight-charts": "^5.0.0",
