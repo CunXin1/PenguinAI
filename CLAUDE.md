@@ -119,24 +119,40 @@ Tier check is done in `backend/app/api/deps.py:require_tier()`. Signal rows carr
 - API calls via `frontend/src/lib/api.ts` only — never fetch directly from components.
 - Types live in `frontend/src/lib/types.ts`. Keep in sync with backend Pydantic schemas.
 
-## Development Workflow
+## Commands
+
+The `Makefile` is the canonical command runner — prefer it over raw commands.
 
 ```bash
-# Start full stack locally
-docker-compose up
+# ── Run ───────────────────────────────────────────────
+make up            # full stack via docker-compose (detached)
+make down / logs   # stop / tail logs
+make backend       # uvicorn app.main:app --reload --port 8000  (run from backend/)
+make frontend      # next dev --turbo  (run from frontend/)
+make ml-worker     # Celery worker, ml_inference queue — MUST run from repo root
+make celery-beat   # scheduler  |  make flower  → task monitor on :5555
 
-# Backend only (fast iteration)
-cd backend && uvicorn app.main:app --reload
+# ── Quality (run before pushing; mirrors .github/workflows/ci.yml) ──
+make lint          # ruff check (backend/ml/data/scripts) + next lint
+make lint-fix      # ruff check --fix + ruff format
+make type-check    # mypy backend/app + ml  |  npx tsc --noEmit (frontend)
+make test          # pytest backend/tests + ml/tests
 
-# ML worker (requires GPU)
-cd ml && celery -A ml.tasks.celery_app worker --queues=ml_inference -c 1
-
-# Frontend
-cd frontend && npm run dev
-
-# Bootstrap ticker universe (run once)
-python scripts/bootstrap_universe.py
+# ── DB / data ─────────────────────────────────────────
+make db-init       # apply db/schema/*.sql into the timescaledb container
+make bootstrap     # scripts/bootstrap_universe.py — populate ticker universe (run once)
 ```
+
+Run a single Python test: `pytest backend/tests/test_signals.py::test_name -v`
+(pytest config in `pyproject.toml`; `asyncio_mode=auto`, so async tests need no decorator).
+Frontend has no test runner configured — CI gates it via `tsc --noEmit` + `next lint` + `next build`.
+
+**Tooling:** ruff (line-length 100, double quotes), mypy (non-strict, ignores missing imports),
+Python 3.12, Node 22. `make ml-worker` resolves the `ml.tasks.celery_app` import path only from
+the repo root — never `cd ml` first.
+
+> Note: `backend/tests/` and `ml/tests/` are not created yet — `make test` is a no-op until they exist.
+> Add tests under those paths (files `test_*.py`) to wire into CI automatically.
 
 ## What NOT to do
 
