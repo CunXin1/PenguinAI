@@ -103,17 +103,20 @@ Tier check is done in `backend/app/api/deps.py:require_tier()`. Signal rows carr
 | `run_daily_pipeline` | 10pm ET weekdays | ml_inference |
 | `scrape_social_media` | Every 30 min | default |
 | `fetch_fundamentals` | 8am ET weekdays | default |
+| `fetch_earnings` | 3×/weekday (8am/2pm/9pm ET) | default |
+| `validate_symbol_requests` | Every 6h | default |
 
 ## Data Sources
 
-| Source | What | How |
-|--------|------|-----|
-| User's own data | 30-min bars 2000–present (full market) | Import script TBD |
-| IBKR WebSocket | Real-time 1-min bars during market hours | `data/ingestion/ibkr_stream.py` |
-| Polygon.io | Historical minute bars (supplemental) | `data/ingestion/polygon_loader.py` |
-| Twitter/X | VIP finance accounts | `data/scrapers/twitter_scraper.py` (Playwright) |
-| Reddit | r/wallstreetbets + r/stocks | `data/scrapers/reddit_scraper.py` (PRAW) |
-| SEC EDGAR | 13F filings + FOMC statements | `data/scrapers/sec_scraper.py` |
+| Source | What | How | Status |
+|--------|------|-----|--------|
+| User's own data | 30-min + daily bars 2000–present (6,300 symbols) | `db/market_data/import_features_to_timescale.py` (`make import-30min`) → `bars_30m`/`bars_1d` | ✅ loaded (~236M rows) |
+| IBKR WebSocket | Real-time 1-min bars during market hours | `data/ingestion/ibkr_stream.py` | ✅ live |
+| Massive (massive.com) | Minute history + reference + market cap + symbol validation | `data/ingestion/massive_*.py`, `ml/tasks/symbol_validation.py` | ✅ live |
+| Finnhub | Earnings calendar (EPS actual/estimate/surprise) | `data/ingestion/finnhub_earnings.py` (`make fetch-earnings`) | ✅ live |
+| Twitter/X · Reddit | Social sentiment | `data/scrapers/*` (Playwright / PRAW) | 🚧 planned — not created |
+| SEC EDGAR | 13F filings + FOMC statements | `data/scrapers/sec_scraper.py` | 🚧 planned — not created |
+| Polygon.io | Historical minute bars (supplemental) | — | ❌ legacy (no loader; superseded by Massive) |
 
 ## Frontend Rules
 

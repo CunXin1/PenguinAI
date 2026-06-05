@@ -4,153 +4,181 @@
 
 ### Overview
 
-PenguinAI ingests data from five categories of sources. Each source feeds a specific table in TimescaleDB and serves a distinct role in the signal generation pipeline.
+PenguinAI ingests data from several source categories. Each feeds a specific
+table in TimescaleDB and serves a distinct role in the signal-generation
+pipeline. Some sources are **live today**; the social/smart-money sources are
+**designed but not yet built** (the tables exist and stay empty until the
+ingestion code lands).
 
 ### Source Matrix
 
-| Source | Category | Tables Fed | Frequency | Required |
-|--------|----------|-----------|-----------|----------|
-| User's existing dataset | Historical bars | `market_data_30min` | One-time import | ✅ Yes |
-| IBKR WebSocket | Real-time bars | `market_data_1min` | Continuous (market hours) | ✅ Yes |
-| Polygon.io | Supplemental bars | `market_data_30min`, `market_data_daily` | On-demand / backfill | ⚡ Recommended |
-| Twitter/X (Playwright) | Social sentiment | `social_posts` | Every 30 min | ⚡ Recommended |
-| Reddit PRAW | Social sentiment | `social_posts` | Every 30 min | ⚡ Recommended |
-| SEC EDGAR | Smart money | `celebrity_holdings`, `fomc_statements` | Quarterly / per meeting | 📋 Optional for MVP |
+| Source | Category | Tables Fed | Status | How |
+|--------|----------|-----------|--------|-----|
+| User's historical 30-min/daily dataset | Historical bars + indicators | `bars_30m`, `bars_1d` (+ `instruments`) | ✅ Live (236M+19.5M rows loaded) | `db/market_data/import_features_to_timescale.py` (`make import-30min`) |
+| IBKR WebSocket | Real-time 1-min bars | `market_data_1min` | ✅ Live (market hours) | `data/ingestion/ibkr_stream.py` (`make ibkr-stream`) |
+| Massive (massive.com) — minute history | Supplemental minute bars | `data/minute_data/` parquet → `market_data_1min` | ✅ Delivered (NDX-100 + Top-20 ETF, ~2yr parquet) | `data/ingestion/massive_minute_parquet.py` (`make minute-parquet`) |
+| Massive — reference + market cap | Universe metadata | `data/reference/tickers_reference.parquet`, `tickers.market_cap` | ✅ Live | `data/ingestion/massive_reference.py`, `massive_marketcap.py` |
+| Massive — symbol validation | On-demand universe expansion | `symbol_requests` → `tickers` | ✅ Live (Celery, every 6h) | `ml/tasks/symbol_validation.py` |
+| Finnhub — earnings calendar | EPS actual/estimate/surprise | `earnings` | ✅ Live | `data/ingestion/finnhub_earnings.py` (`make fetch-earnings`) + Celery `fetch_earnings` |
+| Twitter/X · Reddit | Social sentiment | `social_posts` | 🚧 Planned (no `data/scrapers/` yet) | designed: Playwright / PRAW |
+| SEC EDGAR (13F + FOMC) | Smart money + macro | `celebrity_holdings`, `fomc_statements` | 🚧 Planned | designed: SEC submissions API |
+| Polygon.io | Supplemental bars | — | ❌ Legacy placeholder (env key only, no loader) | superseded by Massive |
 
-### 1. User's Existing 30-Min Dataset
+> **Reality check.** `data/scrapers/` and `data/ingestion/polygon_loader.py` do
+> **not** exist. The social-sentiment, celebrity-holdings, FOMC, and news tables
+> are created by the schema but are not populated yet — the macro/sentiment steps
+> of the signal pipeline degrade gracefully (see `docs/signal-pipeline.md`).
 
-**What it is**: Full-market 30-min OHLCV bars (adjusted + unadjusted) from 2000 to present, covering ~2000 US stocks and ETFs.
+---
 
-**Size estimate**: ~170M rows, ~10 GB compressed in TimescaleDB.
+### 1. Historical 30-Min / Daily Dataset (the core asset)
 
-**Import**: Custom import script will be written based on your data format (CSV/Parquet/database).
+**What it is**: Full-market 30-min OHLCV bars + inline technical indicators,
+2000–present, plus a daily roll-up with multi-horizon returns. This is the
+user's own dataset, cleaned and normalized through a dedicated pipeline.
 
-**Columns expected**:
+**Coverage** (as of the 2026-06 load): **4,167 common stocks + 2,133 ETFs =
+6,300 symbols** (preferred shares, SPAC units, baby bonds, warrants, and delisted
+tickers removed). Adjusted series are continuous 2000→present.
+
+**Where it lands**:
+- `instruments` — symbol ↔ `instrument_id` dimension
+- `bars_30m` — **~236M rows**, 30-min bars with `raw_*` + `adj_*` prices and inline indicators (PRIMARY training source)
+- `bars_1d` — **~19.5M rows**, daily bars + indicators + returns (`ret_1d … ret_252d`, `gap_overnight`)
+
+The app/ML keep querying the familiar names `market_data_30min`,
+`market_data_daily`, and `indicators_30min` — these are **compatibility views**
+over `bars_30m` / `bars_1d` (see `db/schema/04_compat_views.sql`). Prices in the
+views are the adjusted (`adj_*`) series.
+
+**Import**:
+```bash
+make db-init        # apply db/schema/*.sql
+make import-30min   # db/market_data/import_features_to_timescale.py: per-symbol
+                    # parquet (data/30min_data, data/daily_data) → bars_30m / bars_1d
+                    # via COPY + index drop/rebuild
 ```
-time (TIMESTAMPTZ), ticker (TEXT),
-open, high, low, close (NUMERIC),
-volume (BIGINT), vwap (NUMERIC, optional),
-adjusted (BOOLEAN)
-```
+
+**Cleaning / build pipeline** lives in `backend/scripts/market_data/`
+(`ibkr_fetch.py`, `yahoo_fetch.py`, `compute_indicators.py`,
+`filter_common_stock.py`, `prune_delisted.py`, `fill_adj_gap.py`, …). The full
+data dictionary, indicator formulas, and reproduce-from-scratch steps are
+documented in **`data/docs/`** (start at `data/docs/README.md`).
+
+**Train/serve parity**: training reads the `data/30min_data` parquet via DuckDB;
+serving reads the `indicators_30min` view. Both derive features through the same
+SQL, so there is no train/serve skew.
 
 ### 2. IBKR Real-Time Stream
 
-**File**: `data/ingestion/ibkr_stream.py`
+**File**: `data/ingestion/ibkr_stream.py` · **run**: `make ibkr-stream`
 
-**What it provides**: Real-time 1-minute bars during market hours (9:30am–4:00pm ET). IBKR's TWS API streams 5-second bars which the `MinuteBarAggregator` class combines into 1-minute bars.
+**What it provides**: Real-time 1-minute bars during market hours
+(9:30am–4:00pm ET), written to `market_data_1min` with `source='ibkr'`. IBKR's
+TWS API streams 5-second bars which the `MinuteBarAggregator` combines into
+1-minute bars. Idempotent upsert on `(ticker, time)`.
+
+**Subscribed tickers**: from the `IBKR_TICKERS` env var (default: Top-30, ETFs
+first). These power the homepage live board / index strip
+(`/api/market-data/quotes`, `/mini`, `/heatmap`).
 
 **Setup requirements**:
 - IBKR TWS or IB Gateway running locally
-- Port: 7497 (TWS paper) / 7496 (TWS live) / 4002 (IB Gateway)
-- Market data subscription for US equities
+- `IBKR_HOST` / `IBKR_PORT` / `IBKR_CLIENT_ID` in `.env`
+  (7497/7496 TWS paper/live · 4002/4001 IB Gateway paper/live)
+- Market-data subscription for US equities
 
-**Historical depth via API**:
-| Bar Size | Available History |
-|----------|-----------------|
-| 1 minute | ~6 months (practical limit) |
-| 5 minutes | ~6 months–1 year |
-| 30 minutes | ~5–10 years |
-| Daily | 20+ years |
+### 3. Massive (massive.com)
 
-**Tip**: Use `reqHeadTimeStamp()` to check the exact earliest available date for each ticker.
+The **$29 Starter** plan gives minute history (15-min delayed) over a
+Polygon-compatible API. Massive is used three ways:
 
-### 3. Polygon.io
+**a) Minute-bar history** — `data/ingestion/massive_minute_parquet.py`
+(`make minute-parquet`)
+- Pulls minute bars for the Nasdaq-100 + Top-20 ETFs (~2yr) → `data/minute_data/`
+  parquet (self-contained; schema matches `ibkr_fetch` BASE_SCHEMA). Resumable
+  (skips files that already exist).
 
-**File**: `data/ingestion/polygon_loader.py`
+**b) Universe reference + market cap** — `massive_reference.py`,
+`massive_marketcap.py`
+- Reference dump → `data/reference/tickers_reference.parquet` (symbol → name,
+  type, exchange, active flag).
+- Market caps backfilled into `tickers.market_cap` (drives the heatmap sizing).
 
-**Coverage**: 2003–present for most US-listed stocks.
+**c) Symbol validation** — `ml/tasks/symbol_validation.py` (Celery, every 6h)
+- When a user searches a symbol we don't cover, it lands in `symbol_requests`.
+  This job classifies each against Massive's reference API: real-but-uningested,
+  delisted, or junk/typo. No user free text reaches any LLM — only the relational
+  DB is touched.
 
-**Plans**:
-- Starter (~$79/month): Unlimited historical data, 5 API calls/minute
-- Developer (~$199/month): 100 calls/minute, real-time data
+**Config**: `MASSIVE_API_KEY`, `MASSIVE_BASE_URL` in `.env`.
 
-**Usage example**:
-```python
-from data.ingestion.polygon_loader import PolygonLoader
-from datetime import date
+### 4. Finnhub — Earnings Calendar
 
-loader = PolygonLoader(api_key="YOUR_KEY")
-# Download 30-min bars for a list of tickers
-await loader.bulk_load_tickers(
-    tickers=["NVDA", "AAPL", "MSFT"],
-    from_date=date(2018, 1, 1),
-    to_date=date.today(),
-    timespan="minute",
-    multiplier=30,
-    db_writer=your_async_write_function,
-)
-```
+**File**: `data/ingestion/finnhub_earnings.py` · **run**: `make fetch-earnings`
 
-**Pacing**: The loader automatically sleeps 200ms between requests and retries on 429 (rate limit) with 12-second backoff.
+**What it provides**: Forward earnings calendar + EPS actual/estimate/surprise +
+report session (`bmo`/`amc`) → the `earnings` table. Idempotent: re-run to
+backfill actuals once results publish.
 
-### 4. Twitter/X Scraper
+**Scheduled**: Celery `fetch_earnings` runs 3×/weekday (08:00 / 14:00 / 21:00 ET)
+to capture the forward calendar plus BMO (pre-open) and AMC (after-close) actuals.
 
-**File**: `data/scrapers/twitter_scraper.py`
+**Config**: `FINNHUB_API_KEY` in `.env`. Powers the `/api/earnings/*` endpoints
+and the frontend Earnings page.
 
-**Method**: Playwright browser automation — visits `x.com/{username}` and extracts tweets. No official API required.
+### 5. Social Sentiment — Twitter/X + Reddit *(planned, not built)*
 
-**Ticker extraction**: Looks for cashtag format (`$NVDA`). Falls back to uppercase word detection.
+**Intended files**: `data/scrapers/twitter_scraper.py` (Playwright),
+`data/scrapers/reddit_scraper.py` (PRAW) → `social_posts`.
 
-**VIP accounts** (configured in `VIP_ACCOUNTS` list):
-```python
-VIP_ACCOUNTS = [
-    "jimcramer",       # Jim Cramer (reverse indicator use)
-    "elonmusk",        # Market-moving announcements
-    "CathieDWood",     # ARK Invest positions
-    "chamath",         # VC/macro commentary
-]
-```
+The `social_posts` table (FinBERT score + pgvector embedding) and the Celery
+`scrape_social_media` task **exist as stubs**, but the scraper modules and the
+`data/scrapers/` directory have **not been created yet**. Until then,
+`social_posts` is empty and the sentiment/RAG steps return neutral/empty.
 
-**Limitations**:
-- Timestamp accuracy: Playwright cannot extract exact post times without login; defaults to scrape time. Use Twitter API if precise timestamps are needed.
-- Anti-bot: X.com may block headless browsers; add `user_agent` rotation and delays if needed.
+Planned design:
+- Twitter: cashtag (`$NVDA`) extraction from a curated VIP-account list.
+- Reddit: `wallstreetbets` / `stocks` / `investing` / `StockMarket`, with a
+  false-positive blacklist (`DD`, `IPO`, `CEO`, …).
+- Reddit creds: `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT`.
 
-### 5. Reddit PRAW
+### 6. SEC EDGAR — 13F + FOMC *(planned, not built)*
 
-**File**: `data/scrapers/reddit_scraper.py`
+**Intended file**: `data/scrapers/sec_scraper.py` → `celebrity_holdings`,
+`fomc_statements`.
 
-**Subreddits scraped**: `wallstreetbets`, `stocks`, `investing`, `StockMarket`
+- **13F filings** (quarterly institutional holdings) → `celebrity_holdings`
+  (Buffett, Cathie Wood, …) via `https://data.sec.gov/submissions/CIK{cik}.json`.
+- **FOMC statements** → `fomc_statements` with keyword-based hawk/dove scoring,
+  consumed by the macro filter in `signal_engine._apply_macro_filter()`.
 
-**Ticker extraction**: Regex `\b([A-Z]{1,5})\b` with a blacklist of common false positives (`"DD"`, `"IPO"`, `"CEO"`, etc.).
+These tables are empty until the scraper is written; the FOMC filter simply
+no-ops when `fomc_statements` has no rows.
 
-**Setup**:
-1. Create a Reddit app at `https://www.reddit.com/prefs/apps`
-2. Set `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`, `REDDIT_USER_AGENT` in `.env`
+### 7. News *(table only)*
 
-**PRAW rate limits**: 60 requests/minute for OAuth apps (free). This is more than sufficient for our scraping frequency.
-
-### 6. SEC EDGAR
-
-**File**: `data/scrapers/sec_scraper.py`
-
-#### 13F Filings (Quarterly Holdings)
-- **What**: Institutional holdings filings submitted 45 days after each quarter end
-- **Celebrities tracked**: Berkshire Hathaway (Buffett), ARK Invest (Cathie Wood)
-- **API**: `https://data.sec.gov/submissions/CIK{cik}.json` — free, no auth
-- **Frequency**: Quarterly (February, May, August, November)
-
-To add a new celebrity, find their SEC CIK at `https://www.sec.gov/cgi-bin/browse-edgar` and add to `CELEBRITY_CIKS` in `sec_scraper.py`.
-
-#### FOMC Statements
-- **What**: Federal Reserve monetary policy statements
-- **Scoring**: Keyword-based hawk/dove scoring — positive = hawkish, negative = dovish
-- **Used as**: Global macro risk filter in `_apply_macro_filter()`
-- **Frequency**: 8 FOMC meetings per year (roughly every 6 weeks)
+`news_articles` exists in the schema (with FinBERT score + embedding columns) but
+nothing populates it yet, and there is no `/api/news` endpoint — the frontend
+News pages run on mock data.
 
 ### Data Quality Considerations
 
-**Adjusted vs. Unadjusted Bars**
-- Use `adjusted=TRUE` for ML training and signal generation (splits/dividends normalized)
-- Keep `adjusted=FALSE` for backtesting with exact historical prices
+**Adjusted vs. raw bars** — `bars_30m` / `bars_1d` store both `raw_*` and `adj_*`
+columns. The compat views and ML use the adjusted (`adj_*`) series; raw is kept
+for exact-price backtests.
 
-**Bar Alignment**
-- `market_data_30min` and `indicators_30min` must be time-aligned (same timestamps)
-- Run `scripts/backfill_indicators.py` after importing new bar data
+**Indicator recomputation** — indicators are computed inline during the parquet
+build (`backend/scripts/market_data/compute_indicators.py`), which resets
+recursive indicators (EMA/MACD/RSI/ATR/OBV/`ret_1bar`) at adjustment
+discontinuities via a `_segment_id`, so a bad boundary bar cannot pollute across
+eras. After importing new bars, rebuild indicators for the affected symbols.
 
-**Gap Detection**
+**Gap detection**
 ```sql
--- Find tickers with suspiciously low bar counts (potential data gaps)
-SELECT ticker, count(*) as bars, min(time), max(time)
+-- Tickers with suspiciously low bar counts (potential data gaps).
+-- market_data_30min is a compat view over bars_30m.
+SELECT ticker, count(*) AS bars, min(time), max(time)
 FROM market_data_30min
 WHERE time >= '2024-01-01'
 GROUP BY ticker
@@ -164,28 +192,39 @@ ORDER BY bars;
 
 ### 数据源汇总
 
-| 数据源 | 类型 | 写入表 | 频率 | MVP 必要性 |
-|--------|------|--------|------|-----------|
-| 用户已有历史数据 | 30 分钟 K 线 | `market_data_30min` | 一次性导入 | ✅ 必须 |
-| IBKR WebSocket | 实时 1 分钟 K 线 | `market_data_1min` | 盘中实时 | ✅ 必须 |
-| Polygon.io | 补充历史数据 | `market_data_30min` | 按需 | ⚡ 推荐 |
-| Twitter/X | 社媒情绪 | `social_posts` | 每 30 分钟 | ⚡ 推荐 |
-| Reddit WSB | 社媒情绪 | `social_posts` | 每 30 分钟 | ⚡ 推荐 |
-| SEC EDGAR | 机构持仓/FOMC | `celebrity_holdings`, `fomc_statements` | 每季度 | 📋 MVP 后 |
+| 数据源 | 类型 | 写入表 | 状态 | 入口 |
+|--------|------|--------|------|------|
+| 用户历史 30 分钟 / 日线数据 | 历史 K 线 + 指标 | `bars_30m`、`bars_1d`（+ `instruments`） | ✅ 已导入（2.36亿 + 1955万行） | `make import-30min` |
+| IBKR WebSocket | 实时 1 分钟 K 线 | `market_data_1min` | ✅ 盘中实时 | `make ibkr-stream` |
+| Massive — 分钟历史 | 补充分钟 K 线 | `data/minute_data/` parquet | ✅ 已交付（NDX-100 + Top-20 ETF，~2 年） | `make minute-parquet` |
+| Massive — 参考 + 市值 | 宇宙元数据 | `tickers_reference.parquet`、`tickers.market_cap` | ✅ 已接入 | `massive_reference.py` / `massive_marketcap.py` |
+| Massive — 符号校验 | 按需扩展宇宙 | `symbol_requests` → `tickers` | ✅ Celery 每 6 小时 | `ml/tasks/symbol_validation.py` |
+| Finnhub — 财报日历 | EPS 实际/预期/超预期 | `earnings` | ✅ 已接入 | `make fetch-earnings` |
+| Twitter/X · Reddit | 社媒情绪 | `social_posts` | 🚧 规划中（`data/scrapers/` 尚未创建） | Playwright / PRAW |
+| SEC EDGAR（13F + FOMC） | 机构持仓 + 宏观 | `celebrity_holdings`、`fomc_statements` | 🚧 规划中 | SEC submissions API |
+| Polygon.io | 补充 K 线 | — | ❌ 遗留占位（仅 env，无 loader） | 已被 Massive 取代 |
 
-### IBKR 历史数据深度
+> **现状提醒**：`data/scrapers/` 与 `polygon_loader.py` **不存在**。社媒、名人持仓、
+> FOMC、新闻表由 schema 建好但**尚未填充**，所以宏观/情绪步骤会优雅降级。
 
-| 粒度 | 实际可拉取历史 |
-|------|--------------|
-| 1 分钟 | ~6 个月 |
-| 5 分钟 | ~6 个月–1 年 |
-| 30 分钟 | ~5–10 年 |
-| 日线 | 20+ 年 |
+### 核心资产：历史 30 分钟 / 日线数据
 
-**结论**：IBKR 拉不到 2000 年历史数据。用户已有的 2000 年至今 30 分钟数据是核心资产，比 IBKR API 价值更高。
+- 最终宇宙：**4,167 普通股 + 2,133 ETF = 6,300 标的**（已剔除优先股/SPAC 单位/
+  baby-bond/权证/退市）。
+- 已装载：`bars_30m` **约 2.36 亿行** + `bars_1d` **约 1955 万行**，均带指标。
+- app/ML 仍查询 `market_data_30min` / `market_data_daily` / `indicators_30min` —
+  它们现在是 `bars_30m` / `bars_1d` 上的**兼容视图**（`04_compat_views.sql`），价格
+  取复权（`adj_*`）序列。
+- 清洗/构建脚本在 `backend/scripts/market_data/`；完整数据字典与复现步骤见
+  **`data/docs/`**（从 `data/docs/README.md` 开始）。
 
 ### 数据质量注意事项
 
-- **分权 vs 不分权**：ML 训练和信号生成使用 `adjusted=TRUE`（分红除权标准化）；回测历史价格使用 `adjusted=FALSE`
-- **Bar 对齐**：`market_data_30min` 和 `indicators_30min` 必须时间对齐。导入新 Bar 数据后需运行 `scripts/backfill_indicators.py`
-- **缺口检测**：导入完成后用 SQL 检查每只股票的 Bar 数量是否合理
+- **复权 vs 原始**：`bars_30m` / `bars_1d` 同时存 `raw_*` 和 `adj_*`；视图和 ML 用
+  `adj_*`，原始价用于精确回测。
+- **指标重算**：指标在 parquet 构建期内联计算
+  （`compute_indicators.py`），在复权断点用 `_segment_id` 重置递归类指标
+  （EMA/MACD/RSI/ATR/OBV/`ret_1bar`），避免坏边界 bar 跨时代污染。导入新 bar 后需
+  对受影响标的重算指标。
+- **缺口检测**：导入后用 SQL 检查每只标的 Bar 数量是否合理（`market_data_30min` 是
+  `bars_30m` 的兼容视图）。

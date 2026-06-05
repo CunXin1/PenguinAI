@@ -2,57 +2,97 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Telescope, ArrowUpDown, Search } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Telescope, ArrowUpDown, Search, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
-import { DirectionBadge } from "@/components/ui/Badge";
-import { MOCK_UNIVERSE } from "@/lib/mock";
+import { tickers as tickerApi } from "@/lib/api";
 import { useLiveQuotes } from "@/hooks/useLiveQuotes";
-import { money, signedPct, cn } from "@/lib/utils";
+import { compact, money, signedPct, cn } from "@/lib/utils";
+import type { Ticker, TickerSearchResult } from "@/lib/types";
 
-const SECTORS = ["All", ...Array.from(new Set(MOCK_UNIVERSE.map((u) => u.sector)))];
-const UNIVERSE_TICKERS = MOCK_UNIVERSE.map((u) => u.ticker);
-
-type SortKey = "ticker" | "price" | "change_pct" | "confidence";
+interface Row {
+  ticker: string;
+  name: string;
+  sector: string | null;
+  market_cap: number | null;
+}
+type SortKey = "ticker" | "market_cap" | "change_pct";
 
 export default function ScreenerPage() {
   const [q, setQ] = useState("");
   const [sector, setSector] = useState("All");
-  const [sortKey, setSortKey] = useState<SortKey>("confidence");
+  const [sortKey, setSortKey] = useState<SortKey>("market_cap");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
 
-  // Overlay real DB prices (market_data_1min) onto the demo universe; tickers
-  // without minute data keep their demo price.
-  const { data: quoteMap } = useLiveQuotes(UNIVERSE_TICKERS);
-  const universe = useMemo(
-    () =>
-      MOCK_UNIVERSE.map((u) => {
-        const qd = quoteMap[u.ticker];
-        return qd ? { ...u, price: qd.price, change_pct: qd.change_pct } : u;
-      }),
-    [quoteMap]
-  );
+  // Top 500 by market cap — the screener landing set.
+  const universeQ = useQuery<Ticker[]>({
+    queryKey: ["universe", 500],
+    queryFn: () => tickerApi.getUniverse(0, 500),
+    staleTime: 60 * 60_000,
+  });
+  const universe = useMemo(() => universeQ.data ?? [], [universeQ.data]);
+
+  // Typing searches the *whole* universe server-side (not just the loaded 500).
+  const query = q.trim();
+  const searchQ = useQuery<TickerSearchResult[]>({
+    queryKey: ["ticker-search", query.toUpperCase()],
+    queryFn: () => tickerApi.search(query),
+    enabled: query.length >= 1,
+    staleTime: 5 * 60_000,
+  });
+
+  // Overlay live prices for the most liquid names (those with minute data).
+  const top60 = useMemo(() => universe.slice(0, 60).map((u) => u.ticker), [universe]);
+  const { data: quotes } = useLiveQuotes(top60);
+
+  const SECTORS = useMemo(() => {
+    const s = new Set<string>();
+    universe.forEach((u) => u.sector && s.add(u.sector));
+    return ["All", ...Array.from(s).sort()];
+  }, [universe]);
+
+  const source: Row[] = useMemo(() => {
+    if (query.length >= 1) {
+      return (searchQ.data ?? []).map((r) => ({
+        ticker: r.ticker,
+        name: r.name,
+        sector: r.sector,
+        market_cap: null,
+      }));
+    }
+    return universe.map((u) => ({
+      ticker: u.ticker,
+      name: u.name,
+      sector: u.sector,
+      market_cap: u.market_cap,
+    }));
+  }, [query, searchQ.data, universe]);
 
   const rows = useMemo(() => {
-    const filtered = universe.filter(
-      (u) =>
-        (sector === "All" || u.sector === sector) &&
-        (q === "" || u.ticker.includes(q.toUpperCase()) || u.name.toLowerCase().includes(q.toLowerCase()))
-    );
+    const filtered = source.filter((u) => sector === "All" || u.sector === sector);
+    const val = (r: Row): number | string => {
+      if (sortKey === "ticker") return r.ticker;
+      if (sortKey === "change_pct") return quotes[r.ticker]?.change_pct ?? -Infinity;
+      return r.market_cap ?? -Infinity;
+    };
     return [...filtered].sort((a, b) => {
-      const av = a[sortKey];
-      const bv = b[sortKey];
-      const cmp = typeof av === "string" ? String(av).localeCompare(String(bv)) : (av as number) - (bv as number);
+      const av = val(a);
+      const bv = val(b);
+      const cmp =
+        typeof av === "string" ? av.localeCompare(bv as string) : (av as number) - (bv as number);
       return dir === "asc" ? cmp : -cmp;
     });
-  }, [universe, q, sector, sortKey, dir]);
+  }, [source, sector, sortKey, dir, quotes]);
 
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setDir((d) => (d === "asc" ? "desc" : "asc"));
     else {
       setSortKey(k);
-      setDir("desc");
+      setDir(k === "ticker" ? "asc" : "desc");
     }
   };
+
+  const loading = query.length >= 1 ? searchQ.isLoading : universeQ.isLoading;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
@@ -60,7 +100,9 @@ export default function ScreenerPage() {
         <h1 className="text-xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
           <Telescope size={20} className="text-sky-500 dark:text-sky-400" /> Stock Screener
         </h1>
-        <p className="text-sm text-zinc-500 mt-0.5">Browse the signal universe · {MOCK_UNIVERSE.length} instruments</p>
+        <p className="text-sm text-zinc-500 mt-0.5">
+          Top {universe.length} by market cap · search any ticker in the universe
+        </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-3">
@@ -69,7 +111,7 @@ export default function ScreenerPage() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Filter ticker or name..."
+            placeholder="Search ticker or name..."
             className="bg-transparent outline-none text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-600 w-full"
           />
         </div>
@@ -93,47 +135,87 @@ export default function ScreenerPage() {
 
       <Card className="overflow-hidden">
         <div className="grid grid-cols-12 gap-2 px-4 py-2.5 border-b border-zinc-200 dark:border-zinc-800 text-[11px] uppercase tracking-wider text-zinc-500">
-          <button onClick={() => toggleSort("ticker")} className="col-span-4 sm:col-span-3 text-left flex items-center gap-1 hover:text-zinc-700 dark:hover:text-zinc-300">
+          <button
+            onClick={() => toggleSort("ticker")}
+            className="col-span-5 sm:col-span-4 text-left flex items-center gap-1 hover:text-zinc-700 dark:hover:text-zinc-300"
+          >
             Symbol <ArrowUpDown size={11} />
           </button>
           <div className="hidden sm:block col-span-3">Sector</div>
-          <button onClick={() => toggleSort("price")} className="col-span-3 sm:col-span-2 text-right flex items-center justify-end gap-1 hover:text-zinc-700 dark:hover:text-zinc-300">
+          <button
+            onClick={() => toggleSort("market_cap")}
+            className="col-span-4 sm:col-span-3 text-right flex items-center justify-end gap-1 hover:text-zinc-700 dark:hover:text-zinc-300"
+          >
+            Mkt Cap <ArrowUpDown size={11} />
+          </button>
+          <button
+            onClick={() => toggleSort("change_pct")}
+            className="col-span-3 sm:col-span-2 text-right flex items-center justify-end gap-1 hover:text-zinc-700 dark:hover:text-zinc-300"
+          >
             Price <ArrowUpDown size={11} />
           </button>
-          <button onClick={() => toggleSort("change_pct")} className="col-span-2 text-right flex items-center justify-end gap-1 hover:text-zinc-700 dark:hover:text-zinc-300">
-            24h <ArrowUpDown size={11} />
-          </button>
-          <button onClick={() => toggleSort("confidence")} className="col-span-3 sm:col-span-2 text-right flex items-center justify-end gap-1 hover:text-zinc-700 dark:hover:text-zinc-300">
-            Signal <ArrowUpDown size={11} />
-          </button>
         </div>
 
-        <div className="divide-y divide-zinc-200 dark:divide-zinc-800/70">
-          {rows.map((u) => (
-            <Link
-              key={u.ticker}
-              href={`/signals/${u.ticker}`}
-              className="grid grid-cols-12 gap-2 px-4 py-3 items-center hover:bg-zinc-100 dark:hover:bg-zinc-800/30 transition-colors"
-            >
-              <div className="col-span-4 sm:col-span-3 min-w-0">
-                <p className="font-mono font-semibold text-sm text-zinc-900 dark:text-zinc-100">{u.ticker}</p>
-                <p className="text-xs text-zinc-500 truncate">{u.name}</p>
-              </div>
-              <div className="hidden sm:block col-span-3 text-sm text-zinc-600 dark:text-zinc-400">{u.sector}</div>
-              <div className="col-span-3 sm:col-span-2 text-right font-mono text-sm text-zinc-800 dark:text-zinc-200">{money(u.price)}</div>
-              <div className={cn("col-span-2 text-right font-mono text-sm", u.change_pct >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
-                {signedPct(u.change_pct, 1)}
-              </div>
-              <div className="col-span-3 sm:col-span-2 flex items-center justify-end gap-2">
-                <span className="text-xs font-mono text-zinc-600 dark:text-zinc-400 hidden sm:inline">{Math.round(u.confidence * 100)}%</span>
-                <DirectionBadge direction={u.direction} />
-              </div>
-            </Link>
-          ))}
-        </div>
+        {loading ? (
+          <div className="py-16 grid place-items-center">
+            <Loader2 size={20} className="animate-spin text-sky-500" />
+          </div>
+        ) : (
+          <div className="divide-y divide-zinc-200 dark:divide-zinc-800/70">
+            {rows.map((u) => {
+              const qd = quotes[u.ticker];
+              const up = (qd?.change_pct ?? 0) >= 0;
+              return (
+                <Link
+                  key={u.ticker}
+                  href={`/signals/${u.ticker}`}
+                  className="grid grid-cols-12 gap-2 px-4 py-3 items-center hover:bg-zinc-100 dark:hover:bg-zinc-800/30 transition-colors"
+                >
+                  <div className="col-span-5 sm:col-span-4 min-w-0">
+                    <p className="font-mono font-semibold text-sm text-zinc-900 dark:text-zinc-100">
+                      {u.ticker}
+                    </p>
+                    <p className="text-xs text-zinc-500 truncate">{u.name}</p>
+                  </div>
+                  <div className="hidden sm:block col-span-3 text-sm text-zinc-600 dark:text-zinc-400 truncate">
+                    {u.sector ?? "—"}
+                  </div>
+                  <div className="col-span-4 sm:col-span-3 text-right font-mono text-sm text-zinc-800 dark:text-zinc-200">
+                    {u.market_cap ? `$${compact(u.market_cap)}` : "—"}
+                  </div>
+                  <div className="col-span-3 sm:col-span-2 text-right">
+                    {qd ? (
+                      <>
+                        <p className="font-mono text-sm text-zinc-800 dark:text-zinc-200">
+                          {money(qd.price)}
+                        </p>
+                        <p
+                          className={cn(
+                            "font-mono text-xs",
+                            up
+                              ? "text-emerald-600 dark:text-emerald-400"
+                              : "text-red-600 dark:text-red-400"
+                          )}
+                        >
+                          {signedPct(qd.change_pct, 1)}
+                        </p>
+                      </>
+                    ) : (
+                      <span className="font-mono text-sm text-zinc-400 dark:text-zinc-600">—</span>
+                    )}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
       </Card>
 
-      {rows.length === 0 && <p className="text-center text-sm text-zinc-400 dark:text-zinc-600 py-8">No matches for “{q}”.</p>}
+      {!loading && rows.length === 0 && (
+        <p className="text-center text-sm text-zinc-400 dark:text-zinc-600 py-8">
+          No matches{query ? ` for “${query}”` : ""}.
+        </p>
+      )}
     </div>
   );
 }

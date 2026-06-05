@@ -10,12 +10,13 @@ import { cn, money, signedPct } from "@/lib/utils";
 const UP = "#10b981"; // emerald-500
 const DOWN = "#f43f5e"; // rose-500
 
-// The three headline US index ETFs. DIA (Dow) joins the IBKR stream's default
-// list, so it lights up automatically once the live feed / minute data is present.
+// Headline US index ETFs. Dow (DIA) isn't in the loaded dataset yet (Nasdaq-100 +
+// broad ETFs only), so we show Russell 2000 (IWM) for now — swap back to
+// { ticker: "DIA", name: "Dow Jones" } once DIA minute data / the IBKR stream lands.
 const INDICES = [
-  { ticker: "DIA", name: "Dow Jones" },
   { ticker: "QQQ", name: "Nasdaq 100" },
   { ticker: "SPY", name: "S&P 500" },
+  { ticker: "IWM", name: "Russell 2000" },
 ];
 const SYMS = INDICES.map((i) => i.ticker);
 

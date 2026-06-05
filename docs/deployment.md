@@ -18,7 +18,7 @@ cd penguinai
 
 # 2. Configure environment
 cp .env.example .env
-# Edit .env: set DB_PASSWORD, SECRET_KEY, POLYGON_API_KEY, etc.
+# Edit .env: set DB_PASSWORD, SECRET_KEY, MASSIVE_API_KEY, FINNHUB_API_KEY, IBKR_*, etc.
 
 # 3. Start all services (first run takes a few minutes to pull images)
 docker-compose up -d
@@ -159,7 +159,8 @@ Set as ECS Task secrets (pulled from AWS Secrets Manager or Parameter Store):
 # Store secrets in SSM Parameter Store
 aws ssm put-parameter --name "/penguinai/prod/SECRET_KEY" --value "..." --type SecureString
 aws ssm put-parameter --name "/penguinai/prod/DATABASE_URL" --value "..." --type SecureString
-aws ssm put-parameter --name "/penguinai/prod/POLYGON_API_KEY" --value "..." --type SecureString
+aws ssm put-parameter --name "/penguinai/prod/MASSIVE_API_KEY" --value "..." --type SecureString
+aws ssm put-parameter --name "/penguinai/prod/FINNHUB_API_KEY" --value "..." --type SecureString
 ```
 
 #### GPU Instance Recommendation

@@ -4,7 +4,7 @@
 
 ### Overview
 
-The backend is the API gateway for PenguinAI. It handles authentication, signal retrieval, watchlist management, and market data serving. It deliberately contains **no ML logic** — all signal computation is dispatched to the ML layer via Celery task names.
+The backend is the API gateway for PenguinAI. It handles authentication, signal retrieval, watchlist management, market-data serving, the earnings calendar, and the user symbol-request (data-demand) queue. It deliberately contains **no ML logic** — all signal computation is dispatched to the ML layer via Celery task names.
 
 ### Structure
 
@@ -19,8 +19,10 @@ backend/
 │   │       ├── auth.py      POST /api/auth/register, /login, GET /me
 │   │       ├── tickers.py   GET /api/tickers/search, /universe, /{ticker}
 │   │       ├── watchlist.py GET/POST/DELETE /api/watchlist
-│   │       ├── market_data.py GET /api/market-data/{ticker}/candles
-│   │       └── admin.py     GET /api/admin/pipeline/status (ADMIN tier only)
+│   │       ├── market_data.py GET /api/market-data/{ticker}/candles, /{ticker}/series, /quotes, /mini, /heatmap
+│   │       ├── earnings.py  GET /api/earnings/calendar, /api/earnings/{ticker}
+│   │       ├── symbols.py   POST /api/symbols/request, GET /api/symbols/requests (ADMIN)
+│   │       └── admin.py     GET /api/admin/pipeline/status, POST /api/admin/cache/refresh (ADMIN tier only)
 │   ├── core/
 │   │   ├── config.py        Pydantic Settings — all config via environment variables
 │   │   ├── database.py      Async SQLAlchemy engine + session factory
@@ -29,10 +31,12 @@ backend/
 │   │   ├── user.py
 │   │   ├── ticker.py
 │   │   ├── signal_cache.py
+│   │   ├── symbol_request.py   Data-demand queue (user-requested uncovered symbols)
 │   │   └── watchlist.py
 │   └── schemas/             Pydantic request/response schemas
 │       ├── signal.py        SignalResponse, SignalListItem, MLScores, SentimentInfo
 │       ├── user.py          RegisterRequest, LoginRequest, TokenResponse, UserResponse
+│       ├── symbol_request.py   SymbolRequestInput, SymbolRequestResult, SymbolRequestRow
 │       └── ticker.py        TickerResponse, TickerSearchResult
 ├── alembic.ini              Alembic config (points to db/migrations/)
 ├── requirements.txt

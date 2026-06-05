@@ -46,7 +46,7 @@ open http://localhost
           └────────────────┘  └───────┬─────────┘
                                       │ async
                               ┌───────▼─────────┐
-                              │   TimescaleDB   │◄── Hypertable (170M rows)
+                              │   TimescaleDB   │◄── Hypertable (bars_30m ~236M rows)
                               │   + pgvector    │
                               └───────┬─────────┘
                                       │
@@ -68,7 +68,7 @@ open http://localhost
 penguinai/
 ├── backend/        FastAPI API gateway (port 8000)
 ├── ml/             ML inference + Celery workers (GPU)
-├── data/           Data ingestion + scrapers
+├── data/           Data ingestion (bars, minute, earnings); social scrapers planned
 ├── frontend/       Next.js web app (port 3000)
 ├── db/             TimescaleDB schema + Alembic migrations
 ├── scripts/        One-time bootstrap scripts
@@ -82,7 +82,7 @@ penguinai/
 |--------|--------|-------------|
 | Backend | [backend/README.md](backend/README.md) | FastAPI routes, auth, DB models |
 | ML | [ml/README.md](ml/README.md) | Signal pipeline, models, Celery tasks |
-| Data | [data/README.md](data/README.md) | Ingestion, scrapers, IBKR stream |
+| Data | [data/docs/README.md](data/docs/README.md) | 30-min/daily pipeline, ingestion, data dictionary |
 | Frontend | [frontend/README.md](frontend/README.md) | Next.js pages, components, theming |
 | Database | [db/README.md](db/README.md) | Schema, hypertables, migrations |
 

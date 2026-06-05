@@ -247,7 +247,7 @@ Remove a ticker from watchlist.
 ### Market Data
 
 #### `GET /market-data/{ticker}/candles`
-Get OHLCV bars for charting.
+Get raw OHLCV bars for charting (legacy/simple form).
 
 **Query params**:
 | Param | Type | Default | Options |
@@ -261,11 +261,160 @@ Get OHLCV bars for charting.
   "ticker": "NVDA",
   "timeframe": "30min",
   "candles": [
-    { "time": "2026-05-30T09:30:00Z", "open": 900.0, "high": 915.0, "low": 898.0, "close": 910.0, "volume": 5200000 },
-    ...
+    { "time": "2026-05-30T09:30:00Z", "open": 900.0, "high": 915.0, "low": 898.0, "close": 910.0, "volume": 5200000 }
   ]
 }
 ```
+
+---
+
+#### `GET /market-data/{ticker}/series`
+Range-bucketed OHLC series for the frontend `PriceChart`. Tries the live minute
+store (`market_data_1min` / daily cagg) first, then falls back to imported
+30-min/daily bars so every symbol in the ~6,300 universe charts on all ranges.
+
+**Query params**:
+| Param | Type | Default | Options |
+|-------|------|---------|---------|
+| `range` | string | `1W` | `1D`, `1W`, `1M`, `3M`, `1Y` |
+
+**Response** `200 OK`
+```json
+{
+  "ticker": "NVDA",
+  "range": "1W",
+  "bars": [
+    { "time": 1748599200, "open": 900.0, "high": 915.0, "low": 898.0, "close": 910.0, "volume": 5200000 }
+  ]
+}
+```
+`time` is unix seconds (TradingView `UTCTimestamp`).
+
+---
+
+#### `GET /market-data/quotes`
+Batch latest-quote board: newest 1-min close + same-session % change per ticker.
+Powers the homepage live board. Reads `market_data_1min` (IBKR stream).
+
+**Query params**: `tickers` — comma-separated, e.g. `QQQ,SPY,NVDA` (max 60)
+
+**Response** `200 OK`
+```json
+{ "quotes": [ { "ticker": "NVDA", "price": 910.12, "change_pct": 1.34, "time": "2026-05-30T15:59:00Z" } ] }
+```
+
+---
+
+#### `GET /market-data/mini`
+Index-strip data: latest price + same-session % change + a downsampled intraday
+spark per ticker, batched in one round-trip. Powers the homepage market-overview
+strip.
+
+**Query params**: `tickers` — comma-separated (max 12)
+
+**Response** `200 OK`
+```json
+{ "items": [ { "ticker": "QQQ", "price": 480.1, "change_pct": 0.62, "time": "...", "spark": [479.2, 479.8, 480.1] } ] }
+```
+
+---
+
+#### `GET /market-data/heatmap`
+Market-cap heatmap tiles — sized by `tickers.market_cap`, colored by % change.
+Market closed → last daily close + prior-session move; market open → live price
+from `market_data_1min` vs prior close.
+
+**Query params**:
+| Param | Type | Default | Max |
+|-------|------|---------|-----|
+| `limit` | int | 100 | 500 |
+
+**Response** `200 OK`
+```json
+{
+  "market_open": false,
+  "as_of": "2026-05-30T21:00:00Z",
+  "count": 100,
+  "items": [
+    { "ticker": "NVDA", "name": "NVIDIA Corp.", "sector": "Technology", "market_cap": 3200000000000, "price": 910.0, "change_pct": 1.34 }
+  ]
+}
+```
+
+---
+
+### Earnings
+
+#### `GET /earnings/calendar`
+Earnings calendar for a date window.
+
+**Query params**:
+| Param | Type | Default |
+|-------|------|---------|
+| `from` | date | today − 7d |
+| `to` | date | today + 30d |
+
+**Response** `200 OK`
+```json
+[
+  {
+    "ticker": "NVDA",
+    "report_date": "2026-05-28",
+    "eps_actual": 1.21,
+    "eps_estimate": 1.10,
+    "eps_surprise_pct": 10.0,
+    "revenue_actual": 44000000000,
+    "revenue_estimate": 42000000000,
+    "guidance_text": null,
+    "name": "NVIDIA Corp.",
+    "session": "AMC"
+  }
+]
+```
+`session` ∈ `BMO` (pre-open) · `AMC` (after-close) · `TBD`.
+
+**Errors**: `422` (`to` before `from`)
+
+---
+
+#### `GET /earnings/{ticker}`
+Most recent earnings history for one ticker (newest first).
+
+**Query params**: `limit` — int, default 12, max 40
+
+**Response** `200 OK` — same `EarningsEvent` array shape as `/calendar`.
+
+---
+
+### Symbols
+
+#### `POST /symbols/request`
+Record demand for a symbol not in our universe. Deduped by symbol — repeat
+requests bump `request_count`; a background job
+(`ml.tasks.symbol_validation`) later classifies it against Massive. No free text
+reaches any LLM.
+
+**Request**
+```json
+{ "symbol": "ABCD" }
+```
+
+**Response** `200 OK`
+```json
+{ "symbol": "ABCD", "status": "pending", "request_count": 1, "message": "Thanks — we logged your request for ABCD..." }
+```
+`status` ∈ `pending` · `already_covered` · `real_pending_ingest` · `delisted` · `rejected_junk` · `ingested`.
+
+**Errors**: `422` (invalid symbol format)
+
+---
+
+#### `GET /symbols/requests`
+Admin: inspect the data-demand queue, most-requested first.
+
+**Auth**: ADMIN tier
+
+**Query params**: `status` (filter), `limit` (default 100, max 500)
 
 ---
 
@@ -278,9 +427,9 @@ Get data pipeline health metrics.
 ```json
 {
   "db_stats": {
-    "bars_30min": 170000000,
-    "bars_1min": 500000,
-    "social_posts": 85000,
+    "bars_30min": 236000000,
+    "bars_1min": 27000000,
+    "social_posts": 0,
     "cached_signals": 98
   }
 }

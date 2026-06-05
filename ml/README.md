@@ -38,8 +38,9 @@ ml/
 ├── tasks/
 │   ├── celery_app.py        Celery app + Beat schedule definitions
 │   ├── hourly_signal_cache.py  refresh_top100 + compute_single_signal tasks
-│   ├── daily_pipeline.py    Model retraining + fundamentals + Top-100 Redis update
-│   └── realtime_ingest.py   Social media scrape dispatch + FinBERT scoring
+│   ├── daily_pipeline.py    run_daily_pipeline (retrain) + fetch_fundamentals (stub)
+│   ├── realtime_ingest.py   scrape_social_media (stub) + fetch_earnings (Finnhub)
+│   └── symbol_validation.py validate_symbol_requests — classify user-requested symbols via Massive
 ├── requirements.txt
 └── Dockerfile
 ```
@@ -120,12 +121,14 @@ ml/
 | `refresh_top100` | ml_inference | Hourly 9am–5pm ET weekdays | Pre-compute Top-100 signals |
 | `compute_single_signal` | ml_inference | On-demand | Cold ticker real-time compute |
 | `run_daily_pipeline` | ml_inference | 10pm ET weekdays | Model retrain + Redis update |
-| `scrape_social_media` | default | Every 30 min | Reddit + Twitter → FinBERT score |
-| `fetch_fundamentals` | default | 8am ET weekdays | PE, earnings data refresh |
+| `scrape_social_media` | default | Every 30 min | Reddit + Twitter → FinBERT score *(stub — scrapers not built)* |
+| `fetch_fundamentals` | default | 8am ET weekdays | PE / fundamentals refresh *(stub)* |
+| `fetch_earnings` | default | 3×/weekday (08:00/14:00/21:00 ET) | Finnhub earnings calendar + BMO/AMC actuals |
+| `validate_symbol_requests` | default | Every 6h | Classify user-requested symbols against Massive |
 
 ### Feature Engineering
 
-All features are computed from `market_data_30min` using `pandas-ta`. The canonical feature list lives in `ml/models/xgboost_trainer.py:FEATURE_COLS` — this is the **single source of truth**. Adding a feature requires updating:
+At serve time, features come from the `indicators_30min` view (computed in SQL over `bars_30m`); training reads the `data/30min_data` parquet through the *same* SQL, so there's no train/serve skew. `ml/features/technical.py` (`pandas-ta`) is the live/fallback path for symbols without precomputed indicators. The canonical feature list lives in `ml/models/xgboost_trainer.py:FEATURE_COLS` — this is the **single source of truth**. Adding a feature requires updating:
 1. `FEATURE_COLS` in `xgboost_trainer.py`
 2. `_feature_names()` in `model_registry.py`
 3. `compute_features()` in `features/technical.py`

@@ -1,13 +1,29 @@
 from datetime import UTC, datetime, timedelta
+from time import monotonic
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.core.database import engine as app_engine
 
 router = APIRouter()
+
+ET = ZoneInfo("America/New_York")  # US market session timezone
+
+
+@router.post("/{ticker}/warm")
+async def warm_ticker_endpoint(ticker: str):
+    """On-demand: pull a user-opened ticker's recent 1-min bars from Massive into
+    market_data_1min (+ indicators) so its chart fills immediately. Idempotent —
+    safe to call whenever a chart for an uncovered symbol opens."""
+    from data.ingestion.realtime.ondemand import warm_ticker  # lazy: keeps pandas out of import
+
+    n = await warm_ticker(app_engine, ticker)
+    return {"ticker": ticker.upper(), "warmed_bars": n}
 
 
 @router.get("/{ticker}/candles")
@@ -57,7 +73,7 @@ async def get_quotes(
     db: AsyncSession = Depends(get_db),
     tickers: str = Query(..., description="Comma-separated tickers, e.g. QQQ,SPY,NVDA"),
 ):
-    """Batch latest-quote board: newest 1-min close + same-session % change per ticker.
+    """Batch latest-quote board: newest 1-min close + % change vs the previous close per ticker.
 
     Powers the homepage Top-N live board (fed by the IBKR stream → market_data_1min).
     One round-trip for many symbols instead of N candle calls.
@@ -74,19 +90,19 @@ async def get_quotes(
                 WHERE ticker = ANY(:syms)
                 ORDER BY ticker, time DESC
             )
-            SELECT l.ticker, l.close AS price, l.time, b.open AS base
+            SELECT l.ticker, l.close AS price, l.time, b.close AS base
             FROM latest l
             LEFT JOIN LATERAL (
-                -- first bar of the latest bar's ET session, found via a sargable
-                -- (ticker, time) range scan instead of a full per-ticker date filter
-                -- — keeps /quotes fast on a 27M-row market_data_1min.
-                SELECT m.open
+                -- Previous close: the last bar strictly before the latest bar's ET
+                -- session start. "% change today" is measured against the prior close
+                -- (not today's open), so a gap shows correctly at the open. Sargable
+                -- (ticker, time) backward scan + LIMIT 1 keeps it fast on ~27M rows.
+                SELECT m.close
                 FROM market_data_1min m
                 WHERE m.ticker = l.ticker
-                  AND m.time >= date_trunc('day', l.time AT TIME ZONE 'America/New_York')
-                                AT TIME ZONE 'America/New_York'
-                  AND m.time <= l.time
-                ORDER BY m.time ASC
+                  AND m.time < date_trunc('day', l.time AT TIME ZONE 'America/New_York')
+                               AT TIME ZONE 'America/New_York'
+                ORDER BY m.time DESC
                 LIMIT 1
             ) b ON TRUE
         """),
@@ -114,8 +130,8 @@ async def get_mini(
     db: AsyncSession = Depends(get_db),
     tickers: str = Query(..., description="Comma-separated tickers, e.g. DIA,QQQ,SPY"),
 ):
-    """Index-strip data: latest price + same-session % change + a downsampled intraday
-    spark per ticker, batched in one round-trip.
+    """Index-strip data: latest price + % change vs previous close + a downsampled
+    intraday spark per ticker, batched in one round-trip.
 
     Powers the homepage market-overview strip. Reads only market_data_1min (fed by the
     IBKR stream). Tickers with no rows are omitted — the frontend renders an empty card.
@@ -124,6 +140,8 @@ async def get_mini(
     if not syms:
         return {"items": []}
 
+    # 1) Latest price + previous close per ticker. DISTINCT ON + a LIMIT-1 LATERAL
+    #    for the prior close — cheap (same shape as /quotes).
     rows = await db.execute(
         text("""
             WITH latest AS (
@@ -132,48 +150,76 @@ async def get_mini(
                 WHERE ticker = ANY(:syms)
                 ORDER BY ticker, time DESC
             )
-            SELECT l.ticker, l.price, l.last_t, base.open AS base, spark.pts AS spark
+            SELECT l.ticker, l.price, l.last_t, prev.close AS base
             FROM latest l
-            -- start of the latest bar's ET session (basis for both %chg and the spark)
-            CROSS JOIN LATERAL (
-                SELECT date_trunc('day', l.last_t AT TIME ZONE 'America/New_York')
-                       AT TIME ZONE 'America/New_York' AS sess_start
-            ) sess
             LEFT JOIN LATERAL (
-                SELECT m.open
+                -- Previous close: last bar strictly before the latest bar's ET session
+                -- start. "% change today" is vs the prior close (not today's open), so
+                -- an open-gap shows correctly. Sargable backward scan + LIMIT 1.
+                SELECT m.close
                 FROM market_data_1min m
-                WHERE m.ticker = l.ticker AND m.time >= sess.sess_start AND m.time <= l.last_t
-                ORDER BY m.time ASC
+                WHERE m.ticker = l.ticker
+                  AND m.time < date_trunc('day', l.last_t AT TIME ZONE 'America/New_York')
+                               AT TIME ZONE 'America/New_York'
+                ORDER BY m.time DESC
                 LIMIT 1
-            ) base ON TRUE
-            LEFT JOIN LATERAL (
-                SELECT array_agg(c ORDER BY b) AS pts
-                FROM (
-                    SELECT time_bucket(INTERVAL '5 minutes', m.time) AS b,
-                           last(m.close, m.time) AS c
-                    FROM market_data_1min m
-                    WHERE m.ticker = l.ticker AND m.time >= sess.sess_start AND m.time <= l.last_t
-                    GROUP BY b
-                ) q
-            ) spark ON TRUE
+            ) prev ON TRUE
         """),
         {"syms": syms},
     )
 
-    items = []
+    meta: dict[str, dict] = {}
+    latest_t: datetime | None = None
     for row in rows.mappings():
-        price = float(row["price"])
-        base = float(row["base"]) if row["base"] is not None else price
+        lt = row["last_t"]
+        meta[row["ticker"]] = {
+            "price": float(row["price"]),
+            "base": float(row["base"]) if row["base"] is not None else float(row["price"]),
+            "last_t": lt,
+        }
+        if latest_t is None or lt > latest_t:
+            latest_t = lt
+
+    if not meta:
+        return {"items": []}
+
+    # 2) Intraday spark for all tickers in ONE scan, bounded by a CONSTANT timestamp
+    #    (the latest bar's ET-session start). The correlated form (m.time >= a
+    #    per-row LATERAL value) defeated chunk exclusion → a Merge-Append SkipScan
+    #    over every chunk (~6s). A plain bind-param bound prunes to one chunk (~0.2s).
+    sess_start = latest_t.astimezone(ET).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).astimezone(UTC)
+    spark_rows = await db.execute(
+        text("""
+            SELECT ticker, time_bucket(INTERVAL '5 minutes', time) AS b, last(close, time) AS c
+            FROM market_data_1min
+            WHERE ticker = ANY(:syms) AND time >= :since
+            GROUP BY ticker, b
+            ORDER BY ticker, b
+        """),
+        {"syms": syms, "since": sess_start},
+    )
+
+    sparks: dict[str, list[float]] = {}
+    for row in spark_rows.mappings():
+        if row["c"] is not None:
+            sparks.setdefault(row["ticker"], []).append(round(float(row["c"]), 4))
+
+    items = []
+    for t in syms:
+        m = meta.get(t)
+        if m is None:
+            continue
+        price, base = m["price"], m["base"]
         change_pct = ((price - base) / base * 100.0) if base else 0.0
-        # bound the spark payload + drop any nulls from sparse buckets
-        spark = [round(float(x), 4) for x in (row["spark"] or []) if x is not None][-160:]
         items.append(
             {
-                "ticker": row["ticker"],
+                "ticker": t,
                 "price": round(price, 4),
                 "change_pct": round(change_pct, 2),
-                "time": row["last_t"].isoformat(),
-                "spark": spark,
+                "time": m["last_t"].isoformat(),
+                "spark": sparks.get(t, [])[-160:],
             }
         )
     return {"items": items}
@@ -193,16 +239,40 @@ _RANGE_MAP: dict[str, tuple[timedelta, timedelta]] = {
 }
 
 
+def _bars_from_rows(rows) -> list[dict]:
+    """Map an (t, o, h, l, c, v) result set → PriceChart bar dicts (unix-second time)."""
+    return [
+        {
+            "time": int(row["t"].timestamp()),  # unix seconds (UTCTimestamp)
+            "open": float(row["o"]),
+            "high": float(row["h"]),
+            "low": float(row["l"]),
+            "close": float(row["c"]),
+            "volume": int(row["v"] or 0),
+        }
+        for row in rows.mappings()
+    ]
+
+
 @router.get("/{ticker}/series")
 async def get_series(
     ticker: str,
     db: AsyncSession = Depends(get_db),
     range: str = Query(default="1W", description="1D | 1W | 1M | 3M | 1Y"),
 ):
-    """OHLC series for a user-facing range, time_bucket-aggregated from market_data_1min.
+    """OHLC series for a user-facing range, time_bucket-aggregated for the PriceChart.
 
-    Powers the shared PriceChart component (dashboard + signal detail). Bucket size
-    scales with the range so a year renders as daily candles, not raw minutes.
+    Two sources, tried in order:
+      1. The live minute store (``market_data_1min`` / daily cagg) — freshest, but
+         only covers the streamed symbols (~Top-100).
+      2. Fallback for the rest of the universe (most of the ~6300 symbols, which
+         have imported 30-min/daily bars but no minute data): the
+         ``market_data_30min`` view (sub-daily ranges) or ``market_data_daily``
+         (3M/1Y). Without this, every 30-min-only symbol charts as empty.
+
+    The fallback window is anchored to the symbol's latest bar (cheap
+    ``(instrument_id, ts)`` index lookup on the base hypertable) so a 1–2 day
+    stale import still renders every range, including 1D.
     """
     rng = range.upper()
     if rng not in _RANGE_MAP:
@@ -211,19 +281,21 @@ async def get_series(
             detail=f"range must be one of {list(_RANGE_MAP)}",
         )
     bucket, lookback = _RANGE_MAP[rng]
+    tkr = ticker.upper()
+    params = {"bucket": bucket, "lookback": lookback, "ticker": tkr}
 
+    # ── 1) Primary: live minute store ────────────────────────────────────────
     if bucket >= timedelta(days=1):
         # Daily ranges (3M/1Y) read the pre-materialized daily continuous aggregate
         # instead of rescanning ~350k 1-min rows per request (3s → ~10ms).
-        sql = """
+        primary_sql = """
             SELECT day AS t, open AS o, high AS h, low AS l, close AS c, volume AS v
             FROM market_data_1d_cagg
             WHERE ticker = :ticker AND day >= now() - (:lookback)::interval
             ORDER BY t ASC
         """
-        params = {"lookback": lookback, "ticker": ticker.upper()}
     else:
-        sql = """
+        primary_sql = """
             SELECT time_bucket((:bucket)::interval, time) AS t,
                    first(open, time)  AS o,
                    max(high)          AS h,
@@ -235,18 +307,237 @@ async def get_series(
             GROUP BY t
             ORDER BY t ASC
         """
-        params = {"bucket": bucket, "lookback": lookback, "ticker": ticker.upper()}
+    bars = _bars_from_rows(await db.execute(text(primary_sql), params))
 
-    rows = await db.execute(text(sql), params)
-    bars = [
-        {
-            "time": int(row["t"].timestamp()),  # unix seconds (UTCTimestamp)
-            "open": float(row["o"]),
-            "high": float(row["h"]),
-            "low": float(row["l"]),
-            "close": float(row["c"]),
-            "volume": int(row["v"] or 0),
-        }
-        for row in rows.mappings()
-    ]
-    return {"ticker": ticker.upper(), "range": rng, "bars": bars}
+    # ── 2) Fallback: imported 30-min / daily bars (covers the whole universe) ──
+    if not bars:
+        view, base = (
+            ("market_data_daily", "bars_1d")
+            if bucket >= timedelta(days=1)
+            else ("market_data_30min", "bars_30m")
+        )
+        fallback_sql = f"""
+            SELECT time_bucket((:bucket)::interval, m.time) AS t,
+                   first(m.open, m.time)  AS o,
+                   max(m.high)            AS h,
+                   min(m.low)             AS l,
+                   last(m.close, m.time)  AS c,
+                   sum(m.volume)          AS v
+            FROM {view} m
+            WHERE m.ticker = :ticker
+              AND m.time >= COALESCE(
+                  (SELECT max(ts) FROM {base}
+                   WHERE instrument_id = (
+                       SELECT instrument_id FROM instruments
+                       WHERE symbol = :ticker ORDER BY instrument_id LIMIT 1
+                   )),
+                  now()
+              ) - (:lookback)::interval
+            GROUP BY t
+            ORDER BY t ASC
+        """
+        bars = _bars_from_rows(await db.execute(text(fallback_sql), params))
+
+    return {"ticker": tkr, "range": rng, "bars": bars}
+
+
+def _is_market_open(now_utc: datetime) -> bool:
+    """US regular session: weekdays 09:30–16:00 ET (holidays not modeled)."""
+    et = now_utc.astimezone(ET)
+    if et.weekday() >= 5:  # Sat/Sun
+        return False
+    return et.replace(hour=9, minute=30, second=0, microsecond=0) <= et < et.replace(
+        hour=16, minute=0, second=0, microsecond=0
+    )
+
+
+# Tracks whether the live minute feed is advancing, using a MONOTONIC clock so it
+# works even if the system wall-clock is wrong. Process-global (one API worker).
+_LIVE_TICKS: dict = {"max": None, "advanced_at": None}
+# Stay "live" if a new bar arrived within this many real seconds. Bars land ~1/min
+# during a session (with jitter / 15-min Massive delay), so a generous window keeps
+# the badge stable; it flips to Closed only after the feed truly stops (~5 min).
+_LIVE_WINDOW_S = 360.0
+
+
+def _ticks_advancing(latest_tick) -> bool:
+    """True if the newest minute bar grew within the last _LIVE_WINDOW_S seconds."""
+    if latest_tick is None:
+        return False
+    mono = monotonic()
+    prev = _LIVE_TICKS["max"]
+    if prev is None:
+        _LIVE_TICKS["max"] = latest_tick  # seed (can't tell on first observation)
+    elif latest_tick > prev:
+        _LIVE_TICKS["max"] = latest_tick
+        _LIVE_TICKS["advanced_at"] = mono
+    at = _LIVE_TICKS["advanced_at"]
+    return at is not None and (mono - at) <= _LIVE_WINDOW_S
+
+
+# period → return-horizon column in bars_1d (1D handled live; rest are stored returns)
+_PERIOD_RET = {"1W": "ret_5d", "1M": "ret_21d", "3M": "ret_63d", "1Y": "ret_252d"}
+_PERIODS = ("1D", *(_PERIOD_RET.keys()))
+# Index ETFs shown as tiles up top (ETFs have no market_cap so they aren't in the map).
+_INDEX_TILES = (
+    ("SPY", "S&P 500"),
+    ("QQQ", "Nasdaq 100"),
+    ("IWM", "Russell 2000"),
+)
+
+# Last 2 daily bars per instrument + the stored return horizons, via the
+# (instrument_id, ts) index — cheap. Reused by the map tiles and the index tiles.
+_DAILY_LATERAL = """
+    LEFT JOIN LATERAL (
+        SELECT max(adj_close) FILTER (WHERE rn = 1) AS last_close,
+               max(adj_close) FILTER (WHERE rn = 2) AS prev_close,
+               max(ret_5d)    FILTER (WHERE rn = 1) AS ret_5d,
+               max(ret_21d)   FILTER (WHERE rn = 1) AS ret_21d,
+               max(ret_63d)   FILTER (WHERE rn = 1) AS ret_63d,
+               max(ret_252d)  FILTER (WHERE rn = 1) AS ret_252d
+        FROM (
+            SELECT adj_close, ret_5d, ret_21d, ret_63d, ret_252d,
+                   row_number() OVER (ORDER BY ts DESC) AS rn
+            FROM bars_1d WHERE instrument_id = {inst} ORDER BY ts DESC LIMIT 2
+        ) x
+    ) lc ON TRUE
+"""
+
+
+def _period_change(
+    m: dict, period: str, is_open: bool, live_price: float | None
+) -> tuple[float, float] | None:
+    """(price, change_pct) for the selected period, or None if no daily data."""
+    if m.get("last_close") is None:
+        return None
+    last_close = float(m["last_close"])
+    if period == "1D":
+        prev = float(m["prev_close"]) if m.get("prev_close") is not None else None
+        if is_open and live_price is not None:
+            price, baseline = live_price, last_close  # intraday move vs prior close
+        else:
+            price, baseline = last_close, (prev or last_close)
+        chg = ((price - baseline) / baseline * 100.0) if baseline else 0.0
+    else:
+        ret = m.get(_PERIOD_RET[period])  # stored as a fraction
+        chg = float(ret) * 100.0 if ret is not None else 0.0
+        price = last_close
+    return round(price, 2), round(chg, 2)
+
+
+@router.get("/heatmap")
+async def get_heatmap(
+    db: AsyncSession = Depends(get_db),
+    limit: int = Query(default=100, ge=10, le=500),
+    period: str = Query(default="1D", description="1D | 1W | 1M | 3M | 1Y"),
+):
+    """Market-cap heatmap — tiles sized by market cap, colored by % change over
+    the chosen period, plus index ETF tiles (SPY/QQQ/DIA/IWM).
+
+    - 1D: market OPEN → live ``market_data_1min`` price vs prior close; CLOSED →
+      last daily close vs the prior session.
+    - 1W/1M/3M/1Y: the stored return horizons in ``bars_1d`` (ret_5d/21d/63d/252d).
+    """
+    period = period.upper()
+    if period not in _PERIODS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"period must be one of {list(_PERIODS)}",
+        )
+    now = datetime.now(UTC)
+    is_open = _is_market_open(now)
+    if not is_open:
+        # Clock-independent fallback: if minute ticks are actively *advancing*
+        # (the latest tick grew within the last ~90s of real/monotonic time),
+        # the market is live regardless of the wall clock. This is robust to a
+        # wrong system clock — it can't be fooled by stale data either, since it
+        # requires an actual advance, not just recency vs a (possibly-bad) now().
+        mx = (await db.execute(text("SELECT max(time) FROM market_data_1min"))).scalar()
+        is_open = _ticks_advancing(mx)
+
+    # ── Top-N by market cap + daily metrics ──────────────────────────────────
+    rows = await db.execute(
+        text(f"""
+            WITH top AS (
+                SELECT t.ticker, t.name, t.sector, t.market_cap, i.instrument_id
+                FROM tickers t
+                JOIN instruments i ON i.symbol = t.ticker
+                WHERE t.market_cap IS NOT NULL AND t.is_active
+                ORDER BY t.market_cap DESC
+                LIMIT :limit
+            )
+            SELECT top.ticker, top.name, top.sector, top.market_cap,
+                   lc.last_close, lc.prev_close, lc.ret_5d, lc.ret_21d, lc.ret_63d, lc.ret_252d
+            FROM top
+            {_DAILY_LATERAL.format(inst="top.instrument_id")}
+            ORDER BY top.market_cap DESC
+        """),
+        {"limit": limit},
+    )
+    base = [dict(r) for r in rows.mappings()]
+
+    # ── Index ETF tiles (daily metrics; market_cap N/A for ETFs) ─────────────
+    idx_syms = [s for s, _ in _INDEX_TILES]
+    idx_rows = await db.execute(
+        text(f"""
+            SELECT i.symbol, lc.last_close, lc.prev_close,
+                   lc.ret_5d, lc.ret_21d, lc.ret_63d, lc.ret_252d
+            FROM instruments i
+            {_DAILY_LATERAL.format(inst="i.instrument_id")}
+            WHERE i.symbol = ANY(:syms)
+        """),
+        {"syms": idx_syms},
+    )
+    idx_metrics = {r["symbol"]: dict(r) for r in idx_rows.mappings()}
+
+    # ── Live prices for everything (1D + open only) ──────────────────────────
+    live: dict[str, float] = {}
+    if is_open and period == "1D":
+        syms = [r["ticker"] for r in base] + idx_syms
+        lrows = await db.execute(
+            text("""
+                SELECT DISTINCT ON (ticker) ticker, close
+                FROM market_data_1min
+                WHERE ticker = ANY(:syms)
+                ORDER BY ticker, time DESC
+            """),
+            {"syms": syms},
+        )
+        live = {r["ticker"]: float(r["close"]) for r in lrows.mappings()}
+
+    items = []
+    for r in base:
+        res = _period_change(r, period, is_open, live.get(r["ticker"]))
+        if res is None:
+            continue
+        price, change_pct = res
+        items.append(
+            {
+                "ticker": r["ticker"],
+                "name": r["name"],
+                "sector": r["sector"],
+                "market_cap": int(r["market_cap"]),
+                "price": price,
+                "change_pct": change_pct,
+            }
+        )
+
+    indices = []
+    for sym, label in _INDEX_TILES:
+        m = idx_metrics.get(sym)
+        if not m:
+            continue
+        res = _period_change(m, period, is_open, live.get(sym))
+        if res is None:
+            continue
+        price, change_pct = res
+        indices.append({"ticker": sym, "label": label, "price": price, "change_pct": change_pct})
+
+    return {
+        "market_open": is_open,
+        "as_of": now.isoformat(),
+        "period": period,
+        "count": len(items),
+        "items": items,
+        "indices": indices,
+    }

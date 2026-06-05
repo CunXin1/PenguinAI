@@ -4,10 +4,10 @@
 
 ### Overview
 
-The PenguinAI frontend is a dark-themed, multi-page investment-signal dashboard built with **Next.js 15 (App Router)**, **React 19**, **TypeScript**, and **Tailwind CSS**. It prefers the live FastAPI backend and **falls back to demo data** (`src/lib/mock.ts`) when the backend is unavailable, so every page renders fully even before the data pipeline is online.
+The PenguinAI frontend is a multi-page investment-signal dashboard built with **Next.js 15 (App Router)**, **React 19**, **TypeScript**, and **Tailwind CSS**. It prefers the live FastAPI backend and **falls back to demo data** (`src/lib/mock.ts`) when the backend is unavailable, so every page renders fully even before the data pipeline is online.
 
-**Design rules (non-negotiable):**
-- Dark theme only — background `#09090b` (zinc-950). No white backgrounds, ever.
+**Design rules:**
+- **Dark by default, with a light theme toggle** (`components/ui/ThemeToggle.tsx`). Dark background is `#09090b` (zinc-950). Always pair colors with `dark:` variants (e.g. `bg-white dark:bg-zinc-950`) so both themes render — never hardcode a single-mode color that breaks the other theme.
 - LONG = emerald (`emerald-400/500`), SHORT = red (`red-400/500`), NEUTRAL = zinc (`zinc-400/500`).
 - Brand accent = sky (`sky-400/500`). Numbers use the mono font.
 - All API calls go through `src/lib/api.ts` — never `fetch()` directly in components.
@@ -21,24 +21,28 @@ frontend/
 │   ├── app/                          App Router
 │   │   ├── layout.tsx                Root layout — dark theme + <Providers> + <Navbar>
 │   │   ├── providers.tsx             React Query QueryClientProvider (client)
-│   │   ├── page.tsx                  Dashboard (market pulse + top signals + trending + news)
+│   │   ├── page.tsx                  Dashboard (market overview + top signals + trending + news)
 │   │   ├── globals.css               Tailwind base + custom scrollbar
 │   │   ├── screener/page.tsx         Stock screener — filter / sort the universe
+│   │   ├── earnings/page.tsx         Earnings calendar (from /api/earnings)
 │   │   ├── watchlist/page.tsx        Watchlist — add/remove, persisted to localStorage
 │   │   ├── news/
 │   │   │   ├── page.tsx              News feed — sentiment overview + featured + filter
 │   │   │   └── [id]/page.tsx         Article detail (server component) + related signals
 │   │   ├── profile/page.tsx          Profile — identity, tier, watchlist, settings
-│   │   ├── signals/[ticker]/page.tsx Signal detail — candlestick chart + SignalCard
-│   │   └── auth/login/page.tsx       Login / register (dark card UI)
+│   │   ├── signals/[ticker]/page.tsx Signal detail — price chart + SignalCard
+│   │   └── auth/login/page.tsx       Login / register card UI
 │   ├── components/
-│   │   ├── layout/Navbar.tsx         Sticky top nav + ticker search
-│   │   ├── ui/                       Card, Badge, ConfidenceBar, Sparkline, StatTile
-│   │   ├── dashboard/                MarketPulse, TopSignals, TrendingTickers, NewsPreview
-│   │   ├── charts/CandleChart.tsx    TradingView Lightweight Charts (v5), dynamic import
-│   │   └── signals/SignalCard.tsx    Full signal display card
+│   │   ├── layout/Navbar.tsx         Sticky top nav + ticker search + theme toggle
+│   │   ├── ui/                       Card, Badge, ConfidenceBar, Sparkline, StatTile, ThemeToggle
+│   │   ├── dashboard/                MarketIndices, MarketChart, MarketPulse, TopSignals, TrendingTickers, WatchlistWidget, NewsPreview
+│   │   ├── market/Heatmap.tsx        Market-cap heatmap (from /api/market-data/heatmap)
+│   │   ├── charts/PriceChart.tsx     TradingView Lightweight Charts (v5), dynamic import
+│   │   └── signals/                  SignalCard, UnknownSymbol
 │   ├── hooks/
-│   │   └── useTopSignals.ts          React Query hook — API first, mock fallback
+│   │   ├── useTopSignals.ts          React Query hook — API first, mock fallback
+│   │   ├── useLiveQuotes.ts          Live quote board (/api/market-data/quotes)
+│   │   └── useTrending.ts            Trending tickers
 │   └── lib/
 │       ├── api.ts                    All API client functions (the only place that fetch()es)
 │       ├── types.ts                  TypeScript types (mirror backend schemas)
@@ -53,13 +57,14 @@ frontend/
 
 | Route | What it shows |
 |-------|---------------|
-| `/` | **Dashboard** — market-pulse stat tiles, Top Signals grid (filter by direction, sparkline + confidence), Trending list, Latest-news preview. |
+| `/` | **Dashboard** — market-overview strip + heatmap, Top Signals grid (filter by direction, sparkline + confidence), Trending list, Latest-news preview. |
 | `/screener` | **Screener** — sortable table of the stock universe; filter by sector and by ticker/name. |
+| `/earnings` | **Earnings** — earnings calendar (date window, BMO/AMC session, EPS surprise) from `/api/earnings/calendar`. |
 | `/watchlist` | **Watchlist** — add/remove tickers (persisted to `localStorage`); shows direction, confidence, price, sparkline. |
 | `/news` | **News** — sentiment-overview bar, featured headline, sentiment filter, clickable feed. |
 | `/news/[id]` | **Article** — full body, related-ticker signals, sentiment badge. |
 | `/profile` | **Profile** — identity card, tier/upgrade, watchlist, settings. |
-| `/signals/[ticker]` | **Signal detail** — candlestick chart + full `SignalCard` (ML scores, sentiment, AI analysis). Tries API, polls on 202, falls back to demo. |
+| `/signals/[ticker]` | **Signal detail** — `PriceChart` (real `/series`, empty state if no data) + full `SignalCard` (ML scores, sentiment, AI analysis). Tries API, polls on 202; `SignalCard` falls back to demo. |
 | `/auth/login` | Dual-mode login / register; stores JWT in `localStorage`. |
 
 ### Demo-data fallback pattern
@@ -139,9 +144,9 @@ npm run type-check   # tsc --noEmit
 
 PenguinAI 前端是基于 **Next.js 15（App Router）、React 19、TypeScript、Tailwind CSS** 的暗黑风多页投研信号看板。优先调用后端 API,后端不可用时**自动回退到 demo 数据**(`src/lib/mock.ts`),所以数据管线还没上线也能看到完整页面。
 
-### 设计规范(不可违反)
+### 设计规范
 
-- **永远暗黑主题**,背景 `#09090b`,禁止白色背景
+- **默认暗黑主题,支持浅色切换**(`components/ui/ThemeToggle.tsx`);暗色背景 `#09090b`。颜色一律配 `dark:` 变体(如 `bg-white dark:bg-zinc-950`),保证两种主题都正常,切勿写死只在单一主题下成立的颜色
 - 做多 `emerald-400/500`、做空 `red-400/500`、中性 `zinc-400/500`;品牌色 `sky-400/500`;数字用等宽字体
 - 组件内**禁止**直接 `fetch()`,统一走 `src/lib/api.ts`
 - 类型在 `src/lib/types.ts`,必须与后端 Pydantic Schema 同步

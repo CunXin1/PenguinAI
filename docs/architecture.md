@@ -10,6 +10,13 @@ PenguinAI follows three non-negotiable architectural principles:
 2. **Zero user input to LLM** — The Gemma 4 model receives only backend-assembled structured context. No user free-text input exists anywhere in the system.
 3. **Dual-track caching** — Top-100 hot tickers are pre-computed hourly; cold tickers are computed on-demand. The user experience is optimized without wasting GPU compute on unused tickers.
 
+> **Implementation status.** This map is the target design. Live today: nginx,
+> Next.js, FastAPI, TimescaleDB (`bars_30m` ~236M rows loaded), Redis, and the
+> Celery workers/beat (data ingestion: Massive, Finnhub, IBKR). **Not built yet:**
+> the long-lived `scraper` service (Playwright/PRAW) — `data/scrapers/` doesn't
+> exist, so `social_posts` / `celebrity_holdings` / `fomc_statements` stay empty.
+> The `ml_worker` runs but has no trained model pickles or Gemma endpoint yet.
+
 ### Service Map
 
 ```

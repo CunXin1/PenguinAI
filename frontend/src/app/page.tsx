@@ -18,6 +18,8 @@ export default function DashboardPage() {
         </p>
       </div>
 
+      <MarketIndices />
+
       <MarketPulse />
 
       <div className="grid lg:grid-cols-3 gap-6">

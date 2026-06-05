@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CandlestickChart, LineChart, Loader2 } from "lucide-react";
 import type { IChartApi, ISeriesApi, MouseEventParams } from "lightweight-charts";
 import { marketData } from "@/lib/api";
@@ -15,19 +15,41 @@ interface RangeCfg {
   key: ChartRange;
   /** Intraday ranges show HH:MM on the axis + legend; longer ranges show the date. */
   intraday: boolean;
+  /**
+   * Bars shown on first paint. The rest of the range stays off-screen so there's
+   * always history to drag through (and the fewer bars are visible, the wider each
+   * bar → a bigger pixel pan-range even when the range itself is data-sparse).
+   */
+  visible: number;
 }
 
 const RANGES: RangeCfg[] = [
-  { key: "1D", intraday: true },
-  { key: "1W", intraday: true },
-  { key: "1M", intraday: true },
-  { key: "3M", intraday: false },
-  { key: "1Y", intraday: false },
+  { key: "1D", intraday: true, visible: 55 },
+  { key: "1W", intraday: true, visible: 110 },
+  { key: "1M", intraday: true, visible: 120 },
+  { key: "3M", intraday: false, visible: 45 },
+  { key: "1Y", intraday: false, visible: 120 },
 ];
 
 const UP = "#10b981"; // emerald-500
 const DOWN = "#f43f5e"; // rose-500
 const REFRESH_MS = 15_000;
+// Daily ranges (3M/1Y) barely change → cache them long so switching back is instant
+// and they don't refetch on every visit.
+const DAILY_STALE_MS = 5 * 60_000;
+
+/** Shared query config for one range — used by both useQuery and the prefetch warm-up. */
+function seriesQuery(ticker: string, range: ChartRange) {
+  return {
+    queryKey: ["series", ticker, range] as const,
+    queryFn: async () => {
+      const res = await marketData.series(ticker, range);
+      return (res?.bars ?? []).filter(
+        (b) => Number.isFinite(b.time) && Number.isFinite(b.close)
+      );
+    },
+  };
+}
 
 export function PriceChart({
   ticker,
@@ -47,21 +69,31 @@ export function PriceChart({
   const [type, setType] = useState<SeriesType>(defaultType);
   const cfg = RANGES.find((r) => r.key === range)!;
 
+  const qc = useQueryClient();
+
   // Real data only — server-aggregated OHLC from the 1-min store. No mock fallback:
   // an empty result renders an explicit empty state instead of fake bars.
   const { data, isLoading, isError } = useQuery<CandleBar[]>({
-    queryKey: ["series", T, range],
-    queryFn: async () => {
-      const res = await marketData.series(T, range);
-      return (res?.bars ?? []).filter((b) => Number.isFinite(b.time) && Number.isFinite(b.close));
-    },
-    // Intraday ranges poll; daily ranges barely move so a short stale window is fine.
+    ...seriesQuery(T, range),
+    // Intraday ranges poll; daily ranges barely move so a long stale window is fine.
     refetchInterval: cfg.intraday ? REFRESH_MS : false,
-    staleTime: cfg.intraday ? 0 : 60_000,
+    staleTime: cfg.intraday ? 0 : DAILY_STALE_MS,
     // NOTE: no keepPreviousData — showing the previous range's bars while the new
     // range loads made a range switch (e.g. 3M→1Y) render the new data at the old
     // zoom (looked "stuck on 3M"). A brief loading state + fresh fit is correct.
   });
+
+  // Warm the cache for the other ranges on mount so switching is an instant hit —
+  // especially the non-polled daily ranges, which otherwise cold-fetch on each visit.
+  useEffect(() => {
+    for (const r of RANGES) {
+      qc.prefetchQuery({
+        ...seriesQuery(T, r.key),
+        staleTime: r.intraday ? REFRESH_MS : DAILY_STALE_MS,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [T]);
 
   const bars = data ?? [];
   const hasData = bars.length > 0;
@@ -149,7 +181,15 @@ export function PriceChart({
       </div>
 
       {hasData ? (
-        <Canvas bars={bars} type={type} up={up} intraday={cfg.intraday} range={range} height={height} />
+        <Canvas
+        bars={bars}
+        type={type}
+        up={up}
+        intraday={cfg.intraday}
+        range={range}
+        visible={cfg.visible}
+        height={height}
+      />
       ) : (
         <div
           className="grid place-items-center text-sm text-zinc-400 dark:text-zinc-600"
@@ -177,6 +217,7 @@ function Canvas({
   up,
   intraday,
   range,
+  visible,
   height,
 }: {
   bars: CandleBar[];
@@ -184,6 +225,7 @@ function Canvas({
   up: boolean;
   intraday: boolean;
   range: ChartRange;
+  visible: number;
   height: number;
 }) {
   const elRef = useRef<HTMLDivElement>(null);
@@ -226,6 +268,15 @@ function Canvas({
     return `${bs.length}:${lb?.time ?? 0}:${lb?.close ?? 0}`;
   };
 
+  // Open zoomed into the most recent `visible` bars, leaving older bars off-screen
+  // to drag into (fixLeftEdge/fixRightEdge stop the pan exactly at the data, no blank).
+  const frameView = (len: number) => {
+    const ts = chartRef.current?.timeScale();
+    if (!ts) return;
+    if (len > visible) ts.setVisibleLogicalRange({ from: len - visible, to: len - 1 });
+    else ts.fitContent(); // fewer bars than the window → just show them all
+  };
+
   // Create chart + series. Recreated when theme / series-type / range-granularity change.
   useEffect(() => {
     const el = elRef.current;
@@ -264,16 +315,17 @@ function Canvas({
           horzLine: { labelBackgroundColor: theme.crosshair },
           vertLine: { labelBackgroundColor: theme.crosshair },
         },
+        // Horizontal drag = PAN the time window (scroll through history), never zoom.
         handleScroll: {
-          mouseWheel: true,
-          pressedMouseMove: true,
+          mouseWheel: false, // let the page scroll normally when the cursor is over the chart
+          pressedMouseMove: true, // drag the chart body → slide the visible time range
           horzTouchDrag: true,
           vertTouchDrag: false,
         },
         handleScale: {
-          mouseWheel: true,
-          pinch: true,
-          axisPressedMouseMove: { time: true, price: false },
+          mouseWheel: false, // no wheel-zoom
+          pinch: true, // pinch-to-zoom on touch only
+          axisPressedMouseMove: false, // dragging the time/price axis must NOT scale (zoom) it
         },
       });
       chartRef.current = chart;
@@ -294,6 +346,7 @@ function Canvas({
       applyData(series, barsRef.current, type, up);
       sigRef.current = sigOf(barsRef.current);
       rangeRef.current = range;
+      frameView(barsRef.current.length);
 
       // Hover read-out — update the overlay imperatively (no per-move React state).
       chart.subscribeCrosshairMove((param: MouseEventParams) => {
@@ -335,9 +388,9 @@ function Canvas({
     applyData(s, bars, type, up);
     if (rangeChanged) {
       rangeRef.current = range;
-      // Range changed (e.g. cached 1Y↔3M with the chart still mounted): re-fit the
-      // whole new range instead of keeping the old zoom — never on a same-range poll.
-      chartRef.current?.timeScale().fitContent();
+      // Range changed (e.g. cached 1Y↔3M with the chart still mounted): re-frame to
+      // the new range's default window — never on a same-range poll.
+      frameView(bars.length);
     }
     const seed = bars[bars.length - 1];
     if (seed && legendRef.current) legendRef.current.innerHTML = legendHTML(seed, type, fmt(seed.time));

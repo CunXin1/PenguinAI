@@ -1,20 +1,26 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import bcrypt
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from app.core.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Use bcrypt directly rather than passlib: passlib 1.7.x crashes reading the
+# version of bcrypt 4.x ("module 'bcrypt' has no attribute '__about__'"), which
+# made every register/login 500. bcrypt's `$2b$` hashes are unchanged.
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    # bcrypt only hashes the first 72 bytes; truncate so longer inputs don't error.
+    return bcrypt.hashpw(password.encode("utf-8")[:72], bcrypt.gensalt()).decode("utf-8")
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    try:
+        return bcrypt.checkpw(plain.encode("utf-8")[:72], hashed.encode("utf-8"))
+    except (ValueError, TypeError):
+        return False
 
 
 def create_access_token(subject: str | Any, expires_delta: timedelta | None = None) -> str:

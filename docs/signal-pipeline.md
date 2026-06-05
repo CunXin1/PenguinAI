@@ -4,23 +4,43 @@
 
 ### Overview
 
-The signal pipeline transforms raw market data into a structured investment signal through 8 sequential steps. Each step is implemented as a separate module for testability and replaceability.
+The signal pipeline transforms market data into a structured investment signal through a sequence of steps, each implemented as a separate module for testability and replaceability.
+
+> **Implementation status.** The orchestration (`signal_engine.compute`) is wired
+> end-to-end, but several inputs are not populated yet and **degrade gracefully**:
+> the ML models aren't trained (`predict_*` → `None`), `social_posts` is empty
+> (sentiment/RAG → neutral/empty), and `celebrity_holdings` / `fomc_statements`
+> are empty (smart-money and macro filter no-op). Gemma 4 needs a running vLLM (or
+> `GEMMA_API_URL`) endpoint. See [TODO.md](../TODO.md) for the gaps.
 
 ### Step-by-Step Breakdown
 
-#### Step 1 — Load 30-Min Bars
+#### Step 1 — Load the latest feature row
 
-**File**: `ml/inference/signal_engine.py:_load_bars()`
+**File**: `ml/inference/signal_engine.py:_load_features()`
 
-Fetches the most recent `LOOKBACK_BARS_30MIN` (default: 96 bars = 2 trading days) from `market_data_30min`, ordered by time ascending. Uses only `adjusted=TRUE` bars.
+Reads the most recent **model-ready feature row** for the ticker from the
+`indicators_30min` view (`SELECT {FEATURE_COLS} … ORDER BY time DESC LIMIT 1`).
+The view already exposes the exact `FEATURE_COLS` the trainer saw — precomputed
+indicators + scale-free derivations over `bars_30m` — so there is **no
+on-the-fly recomputation** at serve time. This is the train/serve-parity
+guarantee.
 
-Minimum bar requirement: 20 bars. Below this, a NEUTRAL fallback signal is returned immediately with reason `"insufficient_data"`.
+If no row exists for the ticker, a NEUTRAL fallback signal is returned
+immediately with reason `"insufficient_data"`.
 
-#### Step 2 — Technical Feature Computation
+#### Step 2 — Feature vector
 
-**File**: `ml/features/technical.py:compute_features()`
+**File**: `ml/features/technical.py:features_to_dict()`
 
-Computes 11 features from the OHLCV DataFrame using `pandas-ta`:
+The row from Step 1 is already model-ready; `features_to_dict()` just maps it to
+the dict the models expect — no recomputation. The `pandas-ta` path
+(`compute_features()`) is the **offline build** path that produced these columns
+during the parquet build (`backend/scripts/market_data/compute_indicators.py`).
+Both derive the same `FEATURE_COLS` — the single source of truth in
+`ml/models/xgboost_trainer.py`.
+
+The feature set exposed by `indicators_30min` / `FEATURE_COLS`:
 
 | Feature | Formula | Purpose |
 |---------|---------|---------|
@@ -36,7 +56,7 @@ Computes 11 features from the OHLCV DataFrame using `pandas-ta`:
 | `volume_ratio` | volume/SMA20(volume) | Unusual volume activity |
 | `vwap_pct` | (close−VWAP)/VWAP | Institutional price reference |
 
-`None` values (insufficient data for a specific indicator) are converted to `np.nan` for XGBoost/RF, which handles missing values natively.
+Missing values stay as NULL/NaN — XGBoost/RF handle them natively.
 
 #### Step 3 — ML Model Inference
 
@@ -184,8 +204,8 @@ This ensures that strongly bullish signals generated during aggressive rate-hike
 
 | 步骤 | 模块 | 内容 |
 |------|------|------|
-| 1 | `signal_engine._load_bars()` | 从 TimescaleDB 加载最近 96 根 30 分钟K线 |
-| 2 | `features/technical.py` | 计算 11 个技术指标特征（RSI、MACD、BB、ATR等） |
+| 1 | `signal_engine._load_features()` | 从 `indicators_30min` 视图读取最新一行模型就绪特征（无需实时重算） |
+| 2 | `features/technical.py:features_to_dict()` | 将特征行映射为模型输入字典（`pandas-ta` 仅用于离线构建） |
 | 3 | `models/model_registry.py` | XGBoost + 随机森林推理，预测 8 小时后涨跌概率 |
 | 4 | `features/sentiment.py` | 聚合 72 小时内该股票的 FinBERT 情绪均值 |
 | 5 | `rag/retriever.py` | pgvector 余弦相似度检索，返回 Top-5 相关帖子 |

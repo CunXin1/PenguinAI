@@ -13,12 +13,16 @@ import {
   Search,
   Menu,
   X,
+  LayoutGrid,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
+import { useAuth, userInitial } from "@/hooks/useAuth";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/heatmap", label: "Market Map", icon: LayoutGrid },
   { href: "/screener", label: "Screener", icon: Telescope },
   { href: "/earnings", label: "Earnings", icon: CalendarDays },
   { href: "/watchlist", label: "Watchlist", icon: Star },
@@ -29,17 +33,15 @@ const NAV = [
 export function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
-  const [authed, setAuthed] = useState(false);
+  const { user, isLoggedIn, logout } = useAuth();
   const [query, setQuery] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
 
-  useEffect(() => {
-    setAuthed(typeof window !== "undefined" && !!localStorage.getItem("access_token"));
-  }, [pathname]);
-
-  // Close the mobile menu whenever the route changes.
+  // Close menus whenever the route changes.
   useEffect(() => {
     setMenuOpen(false);
+    setUserMenuOpen(false);
   }, [pathname]);
 
   const submitSearch = (e: React.FormEvent) => {
@@ -103,13 +105,48 @@ export function Navbar() {
 
         <ThemeToggle />
 
-        {authed ? (
-          <Link
-            href="/profile"
-            className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-400 to-sky-600 grid place-items-center text-sm font-bold text-white shrink-0"
-          >
-            U
-          </Link>
+        {isLoggedIn ? (
+          <div className="relative shrink-0">
+            <button
+              type="button"
+              onClick={() => setUserMenuOpen((o) => !o)}
+              aria-label="Account menu"
+              aria-expanded={userMenuOpen}
+              className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-400 to-sky-600 grid place-items-center text-sm font-bold text-white"
+            >
+              {userInitial(user)}
+            </button>
+            {userMenuOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setUserMenuOpen(false)} />
+                <div className="absolute right-0 mt-2 w-52 z-50 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-lg py-1">
+                  <div className="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
+                    <p className="text-sm font-medium text-zinc-900 dark:text-white truncate">
+                      {user?.display_name || user?.email?.split("@")[0] || "Account"}
+                    </p>
+                    {user?.email && <p className="text-xs text-zinc-500 truncate">{user.email}</p>}
+                  </div>
+                  <Link
+                    href="/profile"
+                    onClick={() => setUserMenuOpen(false)}
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/50"
+                  >
+                    <User size={15} /> Profile
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUserMenuOpen(false);
+                      logout();
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-500 dark:text-red-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/50 text-left"
+                  >
+                    <LogOut size={15} /> Sign out
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         ) : (
           <Link
             href="/auth/login"
@@ -168,7 +205,18 @@ export function Navbar() {
               );
             })}
 
-            {!authed && (
+            {isLoggedIn ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  logout();
+                }}
+                className="mt-2 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 text-red-500 dark:text-red-400 text-sm font-semibold transition-colors"
+              >
+                <LogOut size={16} /> Sign out
+              </button>
+            ) : (
               <Link
                 href="/auth/login"
                 onClick={() => setMenuOpen(false)}

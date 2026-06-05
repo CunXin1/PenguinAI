@@ -68,7 +68,7 @@ db/
 | Table | Primary Key | Description |
 |-------|-------------|-------------|
 | `users` | UUID | Auth + tier (FREE/PRO/PREMIUM/ADMIN) |
-| `tickers` | ticker TEXT | Stock universe (~2000 rows) |
+| `tickers` | ticker TEXT | Stock universe (~6,300 symbols, synced from `instruments`) |
 | `watchlists` | (user_id, ticker) | User → ticker many-to-many |
 | `signal_cache` | ticker TEXT | Latest computed signal per ticker |
 | `celebrity_holdings` | UUID | 13F + daily disclosure filings |
@@ -197,23 +197,37 @@ LIMIT 5;
 
 PenguinAI 使用 **TimescaleDB**（PostgreSQL 16 + TimescaleDB 扩展）作为主数据库，同时启用 **pgvector** 扩展用于 RAG 向量检索。
 
+### 真实数据模型
+
+历史行情现在落在 `instruments` / `bars_30m` / `bars_1d`（由
+`data/30min_data` + `data/daily_data` parquet 经 `make import-30min` 导入）。
+app/ML 仍查询 `market_data_30min` / `market_data_daily` / `indicators_30min` 这些
+熟悉的名字 —— 它们是 `04_compat_views.sql` 里对上述真实表的**兼容视图**（价格取
+复权 `adj_*` 序列，`indicators_30min` 暴露与
+`ml/models/xgboost_trainer.FEATURE_COLS` 对齐的模型特征）。`market_data_1min` 仍是
+真实表（IBKR + Massive 分钟流）。
+
 ### 表分类
 
 | 分类 | 表名 | 说明 |
 |------|------|------|
-| 时序（Hypertable） | `market_data_30min` | 历史30分钟K线，~1.7亿行 |
-| 时序（Hypertable） | `market_data_1min` | 实时1分钟K线，从今天开始累积 |
-| 时序（Hypertable） | `indicators_30min` | 技术指标，与K线对齐 |
-| 时序（Hypertable） | `social_posts` | 社媒帖子 + FinBERT分数 + pgvector向量 |
+| 时序（Hypertable） | `bars_30m` | 历史30分钟K线 + 内联指标，**约 2.36 亿行**（主训练源） |
+| 时序（Hypertable） | `bars_1d` | 日线 + 指标 + 多周期收益，**约 1955 万行** |
+| 时序（Hypertable） | `market_data_1min` | 实时1分钟K线，从今天开始累积（IBKR + Massive） |
+| 时序（Hypertable） | `social_posts` | 社媒帖子 + FinBERT分数 + pgvector向量（尚未填充） |
+| 时序（Hypertable） | `news_articles` | 新闻 + 情绪 + 向量（尚未填充） |
+| 兼容视图 | `market_data_30min` / `market_data_daily` / `indicators_30min` | app/ML 名字 → 真实模型 |
 | 关系表 | `signal_cache` | 信号缓存，ML层和API层的契约边界 |
 | 关系表 | `users` | 用户信息和分层 |
-| 关系表 | `tickers` | 股票池（约2000条） |
+| 关系表 | `tickers` | 股票池（约 6,300 标的，由 `instruments` 同步） |
 | 关系表 | `watchlists` | 用户自选股 |
-| 关系表 | `celebrity_holdings` | 名人持仓（13F + 日内披露） |
+| 关系表 | `earnings` / `fundamentals` | 财报 / 基本面快照 |
+| 关系表 | `symbol_requests` | 用户请求但未覆盖的符号（数据需求队列） |
+| 关系表 | `celebrity_holdings` | 名人持仓（13F + 日内披露，尚未填充） |
 
 ### signal_cache 变更规则
 
-修改 `signal_cache` 表结构时，必须同步修改以下四个位置：
+修改 `signal_cache` 表结构时，必须同步修改以下**五个**位置：
 1. `db/schema/03_relational.sql`（原始建表 SQL）
 2. `backend/app/models/signal_cache.py`（SQLAlchemy ORM）
 3. `backend/app/schemas/signal.py`（Pydantic Schema）

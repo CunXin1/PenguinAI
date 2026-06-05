@@ -202,6 +202,37 @@ export interface MiniQuote {
   spark: number[]; // session closes (5-min buckets) for the thumbnail
 }
 
+// ── Market heatmap (market-cap treemap) ──────────────────────────────────────
+/** One tile of the market-cap heatmap. */
+export interface HeatmapTile {
+  ticker: string;
+  name: string | null;
+  sector: string | null;
+  market_cap: number;
+  price: number;
+  change_pct: number;
+}
+
+/** Selectable performance window for the market map. */
+export type HeatmapPeriod = "1D" | "1W" | "1M" | "3M" | "1Y";
+
+/** An index ETF tile (SPY/QQQ/DIA/IWM) shown above the map. */
+export interface IndexTile {
+  ticker: string;
+  label: string;
+  price: number;
+  change_pct: number;
+}
+
+export interface HeatmapResponse {
+  market_open: boolean;
+  as_of: string; // ISO timestamp
+  period: HeatmapPeriod;
+  count: number;
+  items: HeatmapTile[];
+  indices: IndexTile[];
+}
+
 // ── Earnings ──────────────────────────────────────────────────────────────────
 /** Reporting session — backend derives it from `earnings.report_hour` (Finnhub `hour`). */
 export type EarningsSession = "BMO" | "AMC" | "TBD";

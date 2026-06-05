@@ -3,6 +3,7 @@ import type {
   CandleBar,
   ChartRange,
   EarningsEvent,
+  HeatmapResponse,
   MiniQuote,
   Quote,
   Signal,
@@ -134,6 +135,10 @@ export const marketData = {
     apiFetch<{ items: MiniQuote[] }>(
       `/market-data/mini?tickers=${encodeURIComponent(tickers.join(","))}`
     ),
+
+  /** Market-cap heatmap tiles (Top-N by market cap, colored by % change over `period`). */
+  heatmap: (limit = 100, period: string = "1D") =>
+    apiFetch<HeatmapResponse>(`/market-data/heatmap?limit=${limit}&period=${period}`),
 };
 
 // ── Earnings API ─────────────────────────────────────────────────────────────
