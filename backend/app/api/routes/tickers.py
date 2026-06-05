@@ -18,7 +18,7 @@ async def search_tickers(
     result = await db.execute(
         select(Ticker)
         .where(
-            Ticker.is_active == True,
+            Ticker.is_active.is_(True),
             or_(
                 Ticker.ticker.ilike(f"{q_upper}%"),
                 Ticker.name.ilike(f"%{q}%"),
@@ -38,7 +38,7 @@ async def get_universe(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=100, le=500),
 ):
-    q = select(Ticker).where(Ticker.is_active == True)
+    q = select(Ticker).where(Ticker.is_active.is_(True))
     if sector:
         q = q.where(Ticker.sector == sector)
     if tag:

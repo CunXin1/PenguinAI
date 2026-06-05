@@ -3,15 +3,15 @@ Metadata-filtered RAG retriever.
 Queries pgvector for ticker-specific posts within a recency window.
 No cross-ticker contamination — ticker + timestamp filter is hardcoded.
 """
+
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ml.rag.embedder import embedder
-from ml.core.config import ml_settings
 
 
 class RAGRetriever:
@@ -33,7 +33,7 @@ class RAGRetriever:
         if db is None:
             return []
 
-        since = datetime.now(timezone.utc) - timedelta(hours=hours)
+        since = datetime.now(UTC) - timedelta(hours=hours)
 
         # If no query text, use ticker as the query
         query = query_text or f"{ticker} stock investment analysis"

@@ -2,6 +2,7 @@
 XGBoost trainer for price direction classification.
 Target: will close be higher N bars from now? (binary classification)
 """
+
 from __future__ import annotations
 
 import logging
@@ -11,24 +12,31 @@ from pathlib import Path
 import duckdb
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import TimeSeriesSplit
 from xgboost import XGBClassifier
 
 logger = logging.getLogger(__name__)
 
 FEATURE_COLS = [
-    "rsi_14", "macd", "macd_signal", "macd_hist",
-    "bb_pct_b", "bb_width", "atr_14_pct",
-    "ema20_slope", "price_vs_sma200",
-    "volume_ratio", "vwap_pct",
+    "rsi_14",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "bb_pct_b",
+    "bb_width",
+    "atr_14_pct",
+    "ema20_slope",
+    "price_vs_sma200",
+    "volume_ratio",
+    "vwap_pct",
 ]
 
 
 def load_training_data(
     db_path: str,
     tickers: list[str] | None = None,
-    horizon_bars: int = 16,   # 16 × 30min = 8 hours ahead
+    horizon_bars: int = 16,  # 16 × 30min = 8 hours ahead
     since: str = "2015-01-01",
 ) -> tuple[pd.DataFrame, pd.Series]:
     """
@@ -51,7 +59,7 @@ def load_training_data(
               AND m.adjusted = TRUE
         )
         SELECT
-            {', '.join(FEATURE_COLS)},
+            {", ".join(FEATURE_COLS)},
             (future_close > close)::INT AS target
         FROM bars
         WHERE future_close IS NOT NULL
@@ -83,7 +91,7 @@ def train(
         use_label_encoder=False,
         eval_metric="auc",
         tree_method="hist",
-        device="cuda",    # uses 4090
+        device="cuda",  # uses 4090
         n_jobs=-1,
         random_state=42,
         early_stopping_rounds=50,
@@ -98,7 +106,8 @@ def train(
         y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
 
         model.fit(
-            X_train, y_train,
+            X_train,
+            y_train,
             eval_set=[(X_val, y_val)],
             verbose=False,
         )
@@ -118,6 +127,10 @@ def train(
         pickle.dump(model, f)
     logger.info("Model saved to %s", output_path)
 
-    return {"mean_cv_auc": mean_auc, "n_samples": len(X), "feature_importance": dict(
-        zip(FEATURE_COLS, model.feature_importances_.tolist())
-    )}
+    return {
+        "mean_cv_auc": mean_auc,
+        "n_samples": len(X),
+        "feature_importance": dict(
+            zip(FEATURE_COLS, model.feature_importances_.tolist(), strict=False)
+        ),
+    }

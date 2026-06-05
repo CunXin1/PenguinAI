@@ -2,6 +2,7 @@
 Text embedder using sentence-transformers (MiniLM-L6, 384-dim).
 Used for both indexing social posts and RAG query embedding.
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
@@ -31,7 +32,9 @@ class Embedder:
 
     def encode_batch(self, texts: list[str]) -> np.ndarray:
         self._ensure_loaded()
-        return self._model.encode(texts, normalize_embeddings=True, batch_size=64, show_progress_bar=False)
+        return self._model.encode(
+            texts, normalize_embeddings=True, batch_size=64, show_progress_bar=False
+        )
 
 
 embedder = Embedder()

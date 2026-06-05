@@ -3,9 +3,10 @@ Celery tasks for signal cache management.
 - refresh_top100: runs every hour (market hours), pre-computes Top-100 signals
 - compute_single_signal: on-demand for cold tickers
 """
+
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import redis
 from sqlalchemy import text
@@ -26,14 +27,54 @@ def _get_top100_tickers() -> list[str]:
 def _hardcoded_top100() -> list[str]:
     """Fallback Top-100 while Redis is warming up."""
     return [
-        "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AVGO", "PLTR",
-        "AMD", "ORCL", "NFLX", "CRM", "ADBE", "QCOM", "INTC", "MU", "MRVL",
-        "SPY", "QQQ", "IWM", "DIA", "XLK", "XLF", "GLD", "TLT",
-        "BTC-USD", "ETH-USD",
-        "JPM", "BAC", "GS", "MS", "V", "MA", "PYPL",
-        "JNJ", "LLY", "PFE", "ABBV", "UNH",
-        "XOM", "CVX", "COP",
-        "COST", "WMT", "HD", "AMGN", "HON",
+        "NVDA",
+        "AAPL",
+        "MSFT",
+        "AMZN",
+        "GOOGL",
+        "META",
+        "TSLA",
+        "AVGO",
+        "PLTR",
+        "AMD",
+        "ORCL",
+        "NFLX",
+        "CRM",
+        "ADBE",
+        "QCOM",
+        "INTC",
+        "MU",
+        "MRVL",
+        "SPY",
+        "QQQ",
+        "IWM",
+        "DIA",
+        "XLK",
+        "XLF",
+        "GLD",
+        "TLT",
+        "BTC-USD",
+        "ETH-USD",
+        "JPM",
+        "BAC",
+        "GS",
+        "MS",
+        "V",
+        "MA",
+        "PYPL",
+        "JNJ",
+        "LLY",
+        "PFE",
+        "ABBV",
+        "UNH",
+        "XOM",
+        "CVX",
+        "COP",
+        "COST",
+        "WMT",
+        "HD",
+        "AMGN",
+        "HON",
     ]
 
 
@@ -44,8 +85,9 @@ def refresh_top100():
 
 
 async def _async_refresh_top100():
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
     from ml.inference.signal_engine import signal_engine
-    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
     engine = create_async_engine(ml_settings.DATABASE_URL)
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -56,12 +98,12 @@ async def _async_refresh_top100():
     # Each ticker gets its own session — async sessions must not be shared across coroutines
     BATCH_SIZE = 10
     for i in range(0, len(tickers), BATCH_SIZE):
-        batch = tickers[i:i + BATCH_SIZE]
+        batch = tickers[i : i + BATCH_SIZE]
         results = await asyncio.gather(
             *[_compute_and_save(ticker, SessionLocal, signal_engine) for ticker in batch],
             return_exceptions=True,
         )
-        for ticker, result in zip(batch, results):
+        for ticker, result in zip(batch, results, strict=False):
             if isinstance(result, Exception):
                 logger.error("Failed signal for %s: %s", ticker, result)
 
@@ -73,7 +115,7 @@ async def _compute_and_save(ticker: str, SessionLocal, signal_engine) -> None:
     async with SessionLocal() as db:
         try:
             signal_data = await signal_engine.compute(ticker, db)
-            signal_data["expires_at"] = datetime.now(timezone.utc) + timedelta(
+            signal_data["expires_at"] = datetime.now(UTC) + timedelta(
                 seconds=ml_settings.CACHE_TTL_TOP100
             )
             await _upsert_signal(db, signal_data)
@@ -91,8 +133,9 @@ def compute_single_signal(ticker: str):
 
 
 async def _async_compute_single(ticker: str):
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
     from ml.inference.signal_engine import signal_engine
-    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 
     engine = create_async_engine(ml_settings.DATABASE_URL)
     SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

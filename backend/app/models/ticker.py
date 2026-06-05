@@ -1,6 +1,5 @@
-from sqlalchemy import Boolean, Column, BigInteger, Date, DateTime, Text, func
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
-import uuid
+from sqlalchemy import BigInteger, Boolean, Column, Date, DateTime, Text, func
+from sqlalchemy.dialects.postgresql import ARRAY
 
 from app.core.database import Base
 

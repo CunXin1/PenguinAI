@@ -3,7 +3,6 @@ from sqlalchemy.orm import DeclarativeBase
 
 from app.core.config import settings
 
-
 engine = create_async_engine(
     settings.DATABASE_URL,
     pool_size=settings.DATABASE_POOL_SIZE,
@@ -23,7 +22,7 @@ class Base(DeclarativeBase):
 
 
 async def init_db() -> None:
-    async with engine.begin() as conn:
+    async with engine.begin():
         # Schema is managed by SQL migration files in db/schema/
         # Alembic handles subsequent migrations
         pass

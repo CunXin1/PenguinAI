@@ -7,6 +7,7 @@ Agent 2 (Quant Reasoner):   Takes structured context → outputs final signal JS
 
 No free-text user input anywhere in this pipeline. All prompts are backend-assembled.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -25,11 +26,14 @@ logger = logging.getLogger(__name__)
 AGENT2_OUTPUT_SCHEMA = {
     "type": "object",
     "properties": {
-        "direction":      {"type": "string", "enum": ["LONG", "SHORT", "NEUTRAL"]},
-        "confidence":     {"type": "number", "minimum": 0.0, "maximum": 1.0},
-        "holding_period": {"type": "string", "enum": ["INTRADAY", "SHORT_TERM", "SWING", "POSITION"]},
+        "direction": {"type": "string", "enum": ["LONG", "SHORT", "NEUTRAL"]},
+        "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "holding_period": {
+            "type": "string",
+            "enum": ["INTRADAY", "SHORT_TERM", "SWING", "POSITION"],
+        },
         "ai_attribution": {"type": "string", "maxLength": 300},
-        "ai_analysis":    {"type": "string", "maxLength": 600},
+        "ai_analysis": {"type": "string", "maxLength": 600},
     },
     "required": ["direction", "confidence", "holding_period", "ai_attribution", "ai_analysis"],
     "additionalProperties": False,
@@ -68,8 +72,8 @@ class GemmaAgent:
         finbert_score: float | None,
         post_count: int,
         hawk_dove_score: float | None,
-        top_posts: list[str],          # RAG-retrieved recent posts (text snippets)
-        celebrity_actions: list[dict], # [{"who": "cathie_wood", "action": "BUY", "date": "..."}]
+        top_posts: list[str],  # RAG-retrieved recent posts (text snippets)
+        celebrity_actions: list[dict],  # [{"who": "cathie_wood", "action": "BUY", "date": "..."}]
         earnings_surprise_pct: float | None,
         pe_ratio: float | None,
     ) -> dict:
@@ -90,13 +94,13 @@ class GemmaAgent:
             "sentiment": {
                 "finbert_mean_score": finbert_score,
                 "post_count_72h": post_count,
-                "sample_posts": top_posts[:5],          # max 5 for context length
+                "sample_posts": top_posts[:5],  # max 5 for context length
             },
             "macro_filter": {
                 "fomc_hawk_dove_score": hawk_dove_score,
                 "interpretation": _interpret_hawk_dove(hawk_dove_score),
             },
-            "smart_money": celebrity_actions[:3],       # max 3 recent actions
+            "smart_money": celebrity_actions[:3],  # max 3 recent actions
             "fundamentals": {
                 "earnings_surprise_pct": earnings_surprise_pct,
                 "pe_ratio": pe_ratio,
@@ -121,11 +125,13 @@ class GemmaAgent:
                 return self._validate_output(raw)
             except Exception as e:
                 last_exc = e
-                wait = 2 ** attempt
-                logger.warning("Gemma inference attempt %d failed: %s — retrying in %ds", attempt + 1, e, wait)
+                wait = 2**attempt
+                logger.warning(
+                    "Gemma inference attempt %d failed: %s — retrying in %ds", attempt + 1, e, wait
+                )
                 await asyncio.sleep(wait)
 
-        raise RuntimeError(f"Gemma inference failed after 3 attempts") from last_exc
+        raise RuntimeError("Gemma inference failed after 3 attempts") from last_exc
 
     def _validate_output(self, raw: dict) -> GemmaSignalOutput:
         """Validate Gemma JSON output against expected schema before unpacking."""

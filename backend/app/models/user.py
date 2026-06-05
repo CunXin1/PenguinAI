@@ -1,6 +1,7 @@
+import uuid
+
 from sqlalchemy import Boolean, Column, DateTime, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
-import uuid
 
 from app.core.database import Base
 
@@ -12,7 +13,7 @@ class User(Base):
     email = Column(Text, unique=True, nullable=False, index=True)
     password_hash = Column(Text, nullable=True)
     display_name = Column(Text, nullable=True)
-    oauth_provider = Column(String(20), nullable=True)   # 'google' | 'apple' | None
+    oauth_provider = Column(String(20), nullable=True)  # 'google' | 'apple' | None
     oauth_sub = Column(Text, nullable=True)
     tier = Column(String(20), nullable=False, default="FREE")  # FREE | PRO | PREMIUM | ADMIN
     is_active = Column(Boolean, nullable=False, default=True)

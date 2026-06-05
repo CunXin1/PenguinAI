@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +13,7 @@ async def get_ticker_sentiment(
     Aggregate FinBERT scores from social_posts for a ticker over the past N hours.
     Returns (mean_score, post_count). Score is None if no posts found.
     """
-    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+    since = datetime.now(UTC) - timedelta(hours=hours)
     row = await db.execute(
         text("""
             SELECT
