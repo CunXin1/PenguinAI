@@ -3,13 +3,14 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { LayoutDashboard, Telescope, Star, Newspaper, User, Search } from "lucide-react";
+import { LayoutDashboard, Telescope, CalendarDays, Star, Newspaper, User, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/screener", label: "Screener", icon: Telescope },
+  { href: "/earnings", label: "Earnings", icon: CalendarDays },
   { href: "/watchlist", label: "Watchlist", icon: Star },
   { href: "/news", label: "News", icon: Newspaper },
   { href: "/profile", label: "Profile", icon: User },

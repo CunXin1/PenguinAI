@@ -2,7 +2,6 @@
 
 import { MarketPulse } from "@/components/dashboard/MarketPulse";
 import { MarketChart } from "@/components/dashboard/MarketChart";
-import { QuoteBoard } from "@/components/dashboard/QuoteBoard";
 import { TopSignals } from "@/components/dashboard/TopSignals";
 import { TrendingTickers } from "@/components/dashboard/TrendingTickers";
 import { NewsPreview } from "@/components/dashboard/NewsPreview";
@@ -20,12 +19,9 @@ export default function DashboardPage() {
 
       <MarketPulse />
 
-      <MarketChart />
-
-      <QuoteBoard />
-
       <div className="grid lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-2 space-y-6">
+          <MarketChart />
           <TopSignals />
         </div>
         <div className="space-y-6">

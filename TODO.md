@@ -10,8 +10,8 @@
 
 ## 0. Critical path — what blocks a real end-to-end run
 
-- 🔴 **Historical data import** — there is no loader for the 30-min Parquet (the primary training source). `CLAUDE.md` literally says *"Import script TBD"*. `data/ingestion/` only has `ibkr_stream.py` (realtime) and `polygon_loader.py` (supplemental). **Need a bulk importer: Parquet → TimescaleDB `market_data_30min`.**
-- 🔴 **Data-quality bug in the Parquet** — the first bar of each series is **unadjusted** (`adj_* == raw_*`), producing a fake ~−99% return (`ret_1bar`) that poisons EMA/MACD/RSI/ATR/OBV/VWAP during warm-up. **Validate the scope** (only the first row per symbol vs. an off-by-one at every split/dividend boundary) before importing ~170M rows. Then decide storage: **store `raw` + an adjustment factor** (recommended — precision-safe, sidesteps the bug) vs. storing `adj` directly (`NUMERIC(14,4)` loses precision on deeply-adjusted small prices).
+- 🔴 **Historical data import** — a bulk loader now **exists** (`db/market_data/import_features_to_timescale.py`: per-symbol Parquet → `bars_30m`/`bars_1d` via `COPY` + index drop/rebuild). Remaining: **reconcile table names** (`bars_30m` vs the project's `market_data_30min`/`market_data_daily`/`indicators_30min`) and **actually run it** on the cleaned `data/30min_data` + `data/daily_data`. See §1.
+- 🟡 **Data-quality in the Parquet** — largely addressed (2026-06-05, see §1): ticker-reuse seams truncated, coverage holes backfilled, and `compute_indicators._segment_id` resets recursive indicators (EMA/MACD/RSI/ATR/OBV/ret_1bar) at adj-discontinuities so a bad boundary bar can't pollute across eras. **Still decide storage before the 170M-row import:** `raw` + adjustment factor (recommended, precision-safe) vs. storing `adj` directly (`NUMERIC(14,4)` loses precision on deeply-adjusted small prices). Re-validate the warm-up `ret_1bar` after import.
 - 🔴 **No trained model artifacts** — `/models/penguinai/xgboost_prod.pkl` and `rf_prod.pkl` don't exist, so `ml/models/model_registry.py` returns `None` and all ML probabilities are `None`. **Need a first training run.**
 - 🔴 **Training not wired to data** — `ml/tasks/daily_pipeline.py:32` passes `db_path=":memory:"`; the trainer expects a DuckDB/Parquet feature store that doesn't exist yet.
 - 🔴 **Trainer ↔ indicators feature mismatch** — `ml/models/xgboost_trainer.py:FEATURE_COLS` are *normalized/derived* features (`bb_pct_b`, `atr_14_pct`, `ema20_slope`, `price_vs_sma200`, `volume_ratio`, `vwap_pct`) that do **not** match the raw-level columns in the `indicators_30min` table **or** the Parquet field names (`bb_pctb`, `bb_bw`, `atr_14`, …). The training `JOIN` will fail or return the wrong columns. Reconcile `ml/features/technical.py`, the `indicators_30min` schema, and the Parquet.
@@ -20,7 +20,13 @@
 
 ## 1. Data layer
 
-- 🔴 Parquet → TimescaleDB importer (see §0). Use `COPY` / `timescaledb-parallel-copy`, drop-and-rebuild indexes, chunk by symbol — **never** row-by-row INSERT for 170M rows.
+- ✅ **Per-symbol Parquet cleanup (2026-06-05)** — the 6,300-symbol 30-min/daily set was audited and repaired:
+  - **Ticker-reuse seams** (one file = two unrelated companies, e.g. `SII` = Smith Intl→Sprott, `FG` = old Fidelity&Guaranty→F&G): **26 symbols truncated** to the new entity (old pre-gap segment dropped). Reversible backups in `30min_data/_reuse_backup/`.
+  - **Coverage holes** (continuous issuer missing mid-history, e.g. `CAG` missing 2017-01→2025-09): backfilled from **IBKR 30-min** (raw paged backward; adj rebuilt whole-series from IBKR daily factor = "Option B"; vol calibrated). 4 safety gates auto-skip reuse/SPAC/degraded tickers. CAG+BWXT+PEG+NVDW+ETH done; batch running for the rest (~20 legit holes). Backups in `30min_data/_backfill_backup/`.
+  - Indicators recomputed per repaired symbol (`backend/scripts/market_data/compute_indicators.py`, which already resets indicators at adj-discontinuities via `_segment_id`).
+  - Tooling (host has no Python): duckdb CLI for parquet + `uv`-managed venv with `ib_async`.
+  - **Still pending:** the 7 "uncertain" reuse/relist symbols (PAYS/ACIC/TROO/CORZ/AEHL/GSOL/NBIS) await a truncate-vs-backfill decision; and the bulk import below.
+- 🔴 Parquet → TimescaleDB importer — **code exists** at `db/market_data/import_features_to_timescale.py` (loads `by_symbol`/`features_daily` Parquet → `bars_30m`/`bars_1d`), but (a) it has **not been run** on the cleaned data, and (b) its table names (`bars_30m`/`bars_1d`) **don't match** the project's expected `market_data_30min`/`market_data_daily`/`indicators_30min` — reconcile names (rename in importer, or point the backend at `bars_30m`) before importing. Uses `COPY` + drop/rebuild indexes (good).
 - 🟡 `data/scrapers/sec_scraper.py:39` — 13F holdings parsing is a `TODO` (returns `[]`). `celebrity_holdings` stays empty until done.
 - 🟡 FOMC ingestion + hawk/dove scoring — no clear population path for `fomc_statements` (the macro filter reads it).
 - 🟡 `data/requirements.txt` is **missing** (the `data/Dockerfile` inlines deps). Add for parity / non-Docker runs.
@@ -38,7 +44,7 @@
 
 ## 3. Backend
 
-- 🟡 **Alembic isn't actually set up** — `backend/README.md` documents `alembic.ini` + `db/migrations/versions/`, but `alembic.ini` and the `versions/` dir are **missing**. Schema is currently created from `db/schema/*.sql` via `docker-entrypoint-initdb.d`. Either wire Alembic up or fix the docs.
+- 🟡 **Alembic baseline missing** — `backend/alembic.ini` now **exists** and `db/migrations/` has `env.py` + template, but there are **no version files** (no baseline migration). Schema is still created from `db/schema/*.sql` via `docker-entrypoint-initdb.d`. Generate a baseline migration aligned to the ORM models + `db/schema`, then wire `alembic upgrade head` into deploy.
 - 🟡 **No `/api/news` endpoint** — `news_articles` is unused by the API; the frontend News pages are mock-only.
 - 🟡 `GET /api/signals/{ticker}` requires auth (`CurrentUser`) — anonymous users get **401** on the detail page even though `/signals/top` is public. Decide gating (use `OptionalUser`, or gate by tier only).
 - 🟢 OAuth — `auth.py:59` returns **501** (Google / Apple, future).

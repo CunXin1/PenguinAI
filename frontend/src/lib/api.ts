@@ -1,5 +1,6 @@
 import type {
   Candle,
+  EarningsEvent,
   Quote,
   Signal,
   SignalListItem,
@@ -107,4 +108,14 @@ export const marketData = {
     apiFetch<{ quotes: Quote[] }>(
       `/market-data/quotes?tickers=${encodeURIComponent(tickers.join(","))}`
     ),
+};
+
+// ── Earnings API ─────────────────────────────────────────────────────────────
+export const earnings = {
+  /** Calendar window. `from`/`to` are ISO dates (YYYY-MM-DD). */
+  calendar: (from: string, to: string) =>
+    apiFetch<EarningsEvent[]>(`/earnings/calendar?from=${from}&to=${to}`),
+
+  byTicker: (ticker: string) =>
+    apiFetch<EarningsEvent[]>(`/earnings/${ticker.toUpperCase()}`),
 };

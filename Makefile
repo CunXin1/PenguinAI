@@ -1,4 +1,4 @@
-.PHONY: up down logs backend frontend ml-worker ibkr-stream lint type-check test db-init bootstrap
+.PHONY: up down logs backend frontend ml-worker ibkr-stream massive-backfill massive-update lint type-check test db-init bootstrap
 
 # ── Docker Compose ────────────────────────────────────────────────────────────
 up:
@@ -26,6 +26,15 @@ ml-worker:
 # Live IBKR 1-min bars → market_data_1min (needs TWS/Gateway + DB). Run from repo root.
 ibkr-stream:
 	python -m data.ingestion.ibkr_stream
+
+# Massive (massive.com) minute-bar history → market_data_1min. Run from repo root
+# with a venv that has httpx+sqlalchemy+asyncpg (e.g. backend/.venv) and
+# MASSIVE_API_KEY set in .env. Backfill is resumable (Ctrl-C safe).
+massive-backfill:
+	python -m data.ingestion.massive_loader backfill
+
+massive-update:
+	python -m data.ingestion.massive_loader update --days 1
 
 celery-beat:
 	cd . && celery -A ml.tasks.celery_app beat --loglevel=info

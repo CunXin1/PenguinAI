@@ -1,8 +1,9 @@
 # Backend TODO — 走向成熟可部署的工业化后端
 
 > 目标:把当前「MVP 骨架」推进到「生产就绪 / 工业化」。
-> 现状基线(2026-06):API 网关骨架完整,与 CLAUDE.md 设计约束一致;CI/CD(AWS)/docker-compose/nginx/.env.example 均已就位。
-> 缺口集中在:**测试、迁移版本、安全加固、可观测性、可靠性、部署加固**。
+> 现状基线(2026-06-05 复核):API 网关骨架完整,与 CLAUDE.md 设计约束一致;CI/CD(AWS,已 gate 为手动)/docker-compose/nginx/.env.example 均已就位。
+> **已完成(自基线起):** P0 lint 清零(`== True`→`.is_(True)`,CI 绿,commit 6c12b1a);`backend/alembic.ini` 已落地(但无 baseline 迁移);数据层 per-symbol 清洗见根 `TODO.md` §1。
+> 缺口集中在:**鉴权/tier 正确性、测试、迁移版本、安全加固、可观测性、可靠性、部署加固**。
 >
 > 优先级:**P0 阻断**(CI 红 / 正确性 / 安全漏洞)→ **P1 基线**(测试 / 迁移)→ **P2 工业化**(安全 / 观测 / 可靠性)→ **P3 部署加固** → **P4 功能补全**。
 > 勾选规则:每项都带**验收标准**,达成才勾。
@@ -11,10 +12,8 @@
 
 ## P0 — 阻断项(必须先做)
 
-### 修复 CI 会失败的 lint
-- [ ] **`== True` → `.is_(True)`**(触发 ruff **E712**,CI `ruff check app/` 直接红;且 `make lint-fix` 会自动改成 `is True` 破坏 SQLAlchemy 语义)
-  - 位置:`app/api/deps.py:27`、`app/api/routes/auth.py:42`、`app/api/routes/tickers.py:21`、`app/api/routes/tickers.py:41`
-  - 验收:`ruff check app/` 与 `ruff format --check app/` 全绿。
+### ✅ 修复 CI 会失败的 lint(已完成 2026-06-05,commit 6c12b1a)
+- [x] **`== True` → `.is_(True)`** — 已全部改为 `.is_(True)`(`deps.py:26`、`auth.py:43`、`tickers.py:21`、`tickers.py:41`),`ruff check app/` 绿。
 
 ### 修复权限 / 正确性
 - [ ] **冷门股缺 PRO 门控** — `GET /api/signals/{ticker}`(`app/api/routes/signals.py:55`)当前任意登录用户即可触发任意 ticker 的 Celery 计算。按 CLAUDE.md「全 2000 股 = PRO」,应对非 Top-100 标的加 `require_tier("PRO","PREMIUM")` 或在触发前判定。
@@ -47,7 +46,7 @@
   - 验收:`make test` 实跑且 CI 中 backend job 跑测试通过,覆盖率达标。
 
 ### 数据库迁移
-- [ ] **生成 Alembic baseline 迁移** — 目前 `db/migrations/` 只有 `env.py`/模板,无版本文件;线上靠 `make db-init` 直灌 SQL,无可追踪历史。基于现有 4 张 ORM 表生成初版迁移,并与 `db/schema/*.sql` 对齐(TimescaleDB hypertable / pgvector 的特殊 DDL 用迁移内 `op.execute()` 显式写)。
+- [ ] **生成 Alembic baseline 迁移** — `backend/alembic.ini` 已落地,但 `db/migrations/` 仍只有 `env.py`/模板、**无版本文件**;线上靠 `make db-init` 直灌 SQL,无可追踪历史。基于现有 4 张 ORM 表生成初版迁移,并与 `db/schema/*.sql` 对齐(TimescaleDB hypertable / pgvector 的特殊 DDL 用迁移内 `op.execute()` 显式写)。
   - 验收:`alembic upgrade head` 在空库可重建出与 `db/schema` 一致的关系表;`alembic check`(autogenerate diff)为空。
 - [ ] **部署期自动迁移** — 容器 entrypoint 或 CD 步骤执行 `alembic upgrade head`(幂等),取代手工 `db-init`。
   - 验收:CD 部署流程包含迁移且失败可回滚。

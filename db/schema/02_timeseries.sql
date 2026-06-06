@@ -105,7 +105,9 @@ CREATE TABLE IF NOT EXISTS news_articles (
     ticker        TEXT,
     headline      TEXT            NOT NULL,
     source        TEXT,
-    url           TEXT            UNIQUE,
+    -- No inline UNIQUE: a hypertable's unique indexes must include the
+    -- partition column `time`. URL lookups/dedup go through idx_news_url below.
+    url           TEXT,
     finbert_score NUMERIC(5, 4),
     finbert_label TEXT,
     embedding     VECTOR(384),

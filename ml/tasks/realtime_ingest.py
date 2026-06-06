@@ -16,6 +16,20 @@ def scrape_social_media():
     asyncio.run(_async_scrape())
 
 
+@celery_app.task(name="ml.tasks.realtime_ingest.update_minute_bars", queue="default")
+def update_minute_bars(days: int = 1):
+    """After-close top-up: refresh the most recent `days` of 1-min bars from Massive.
+
+    Delegates to data.ingestion.massive_loader (idempotent upserts into
+    market_data_1min). Scheduled by Celery Beat at 20:30 ET on weekdays —
+    after the 20:00 ET extended-hours close + the $29 plan's 15-min delay.
+    """
+    from data.ingestion.massive_loader import run_update_default
+
+    logger.info("Massive minute-bar update: last %d day(s)", days)
+    asyncio.run(run_update_default(days=days))
+
+
 async def _async_scrape():
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine

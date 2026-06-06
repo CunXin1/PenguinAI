@@ -31,6 +31,8 @@ class Settings(BaseSettings):
 
     # ── Data APIs ─────────────────────────────────────────────────
     POLYGON_API_KEY: str = ""
+    MASSIVE_API_KEY: str = ""
+    MASSIVE_BASE_URL: str = "https://api.massive.com"
     IBKR_HOST: str = "127.0.0.1"
     IBKR_PORT: int = 7497
     IBKR_CLIENT_ID: int = 1

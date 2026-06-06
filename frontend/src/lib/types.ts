@@ -162,3 +162,22 @@ export interface Quote {
   change_pct: number;
   time?: string; // ISO timestamp of the latest bar
 }
+
+// ── Earnings ──────────────────────────────────────────────────────────────────
+/** Reporting session — display-only hint, not stored in the `earnings` table. */
+export type EarningsSession = "BMO" | "AMC" | "TBD";
+
+/** One row of the `earnings` table (+ display-only joins). */
+export interface EarningsEvent {
+  ticker: string;
+  report_date: string; // ISO date, e.g. "2026-06-08"
+  eps_actual: number | null;
+  eps_estimate: number | null;
+  eps_surprise_pct: number | null;
+  revenue_actual: number | null; // absolute USD
+  revenue_estimate: number | null;
+  guidance_text: string | null;
+  // ── display-only (joined from `tickers`, not part of the earnings row) ──
+  name?: string;
+  session?: EarningsSession;
+}

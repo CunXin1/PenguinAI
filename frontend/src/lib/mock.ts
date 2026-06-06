@@ -15,7 +15,7 @@ import type {
   ProfileUser,
   UniverseRow,
   CandleBar,
-  Quote,
+  EarningsEvent,
 } from "./types";
 
 const NOW = "2026-06-05T14:30:00Z";
@@ -202,26 +202,30 @@ export const MOCK_UNIVERSE: UniverseRow[] = [
   { ticker: "CRM", name: "Salesforce Inc.", sector: "Technology", price: 276.3, change_pct: 0.6, direction: "LONG", confidence: 0.58 },
 ];
 
-/** Top-30 board (ETFs first), mirrors the IBKR stream's IBKR_TICKERS. */
-export const TOP30: string[] = [
-  "QQQ", "SPY", "IWM", "DIA", "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META",
-  "TSLA", "AVGO", "AMD", "NFLX", "PLTR", "COIN", "MU", "QCOM", "JPM", "V",
-  "GS", "LLY", "UNH", "XOM", "CVX", "COST", "WMT", "BAC", "ORCL", "CRM",
-];
+// ── Earnings calendar ─────────────────────────────────────────────────────────
+// Anchored to NOW (2026-06-05). Past dates carry actuals ("reported"); future
+// dates have estimates only ("upcoming"). Tickers exist in MOCK_UNIVERSE so the
+// name resolves and the row links to a real /signals/[ticker] page.
+const B = 1_000_000_000;
 
-/** Deterministic demo quotes for the live board when the backend is offline. */
-export function mockQuotes(tickers: string[]): Quote[] {
-  return tickers.map((ticker) => {
-    const u = MOCK_UNIVERSE.find((x) => x.ticker === ticker);
-    if (u) return { ticker, price: u.price, change_pct: u.change_pct };
-    // Fallback synth (seeded by ticker) for any symbol not in the demo universe.
-    let seed = 11;
-    for (let i = 0; i < ticker.length; i++) seed = (seed * 31 + ticker.charCodeAt(i)) & 0x7fffffff;
-    const price = r2(20 + (seed % 60000) / 100);
-    const change_pct = r2(((seed % 700) / 100) - 3.5);
-    return { ticker, price, change_pct };
-  });
-}
+export const MOCK_EARNINGS: EarningsEvent[] = [
+  // ── Reported ──
+  { ticker: "PLTR", name: "Palantir Technologies", report_date: "2026-06-01", session: "AMC", eps_estimate: 0.09, eps_actual: 0.11, eps_surprise_pct: 22.2, revenue_estimate: 0.84 * B, revenue_actual: 0.87 * B, guidance_text: "Raised FY revenue guidance on accelerating US commercial bookings." },
+  { ticker: "AAPL", name: "Apple Inc.", report_date: "2026-06-02", session: "BMO", eps_estimate: 1.42, eps_actual: 1.51, eps_surprise_pct: 6.3, revenue_estimate: 94.5 * B, revenue_actual: 96.2 * B, guidance_text: "Q4 revenue seen up low-double-digits on services strength." },
+  { ticker: "TSLA", name: "Tesla Inc.", report_date: "2026-06-03", session: "AMC", eps_estimate: 0.71, eps_actual: 0.62, eps_surprise_pct: -12.7, revenue_estimate: 25.1 * B, revenue_actual: 24.3 * B, guidance_text: "Reiterated full-year delivery target; flagged near-term margin pressure." },
+  { ticker: "AMD", name: "Advanced Micro Devices", report_date: "2026-06-03", session: "AMC", eps_estimate: 0.84, eps_actual: 0.79, eps_surprise_pct: -6.0, revenue_estimate: 6.4 * B, revenue_actual: 6.31 * B, guidance_text: null },
+  { ticker: "COST", name: "Costco Wholesale", report_date: "2026-06-04", session: "AMC", eps_estimate: 4.1, eps_actual: 4.28, eps_surprise_pct: 4.4, revenue_estimate: 62.1 * B, revenue_actual: 63.0 * B, guidance_text: null },
+
+  // ── Upcoming ──
+  { ticker: "NVDA", name: "NVIDIA Corp.", report_date: "2026-06-05", session: "AMC", eps_estimate: 1.12, eps_actual: null, eps_surprise_pct: null, revenue_estimate: 41.2 * B, revenue_actual: null, guidance_text: null },
+  { ticker: "AVGO", name: "Broadcom Inc.", report_date: "2026-06-06", session: "AMC", eps_estimate: 1.36, eps_actual: null, eps_surprise_pct: null, revenue_estimate: 14.9 * B, revenue_actual: null, guidance_text: null },
+  { ticker: "MU", name: "Micron Technology", report_date: "2026-06-08", session: "AMC", eps_estimate: 1.21, eps_actual: null, eps_surprise_pct: null, revenue_estimate: 7.6 * B, revenue_actual: null, guidance_text: null },
+  { ticker: "ORCL", name: "Oracle Corp.", report_date: "2026-06-09", session: "AMC", eps_estimate: 1.58, eps_actual: null, eps_surprise_pct: null, revenue_estimate: 15.3 * B, revenue_actual: null, guidance_text: null },
+  { ticker: "COIN", name: "Coinbase Global", report_date: "2026-06-09", session: "AMC", eps_estimate: 1.04, eps_actual: null, eps_surprise_pct: null, revenue_estimate: 1.6 * B, revenue_actual: null, guidance_text: null },
+  { ticker: "CRM", name: "Salesforce Inc.", report_date: "2026-06-10", session: "AMC", eps_estimate: 2.61, eps_actual: null, eps_surprise_pct: null, revenue_estimate: 9.8 * B, revenue_actual: null, guidance_text: null },
+  { ticker: "LLY", name: "Eli Lilly & Co.", report_date: "2026-06-11", session: "BMO", eps_estimate: 5.42, eps_actual: null, eps_surprise_pct: null, revenue_estimate: 12.7 * B, revenue_actual: null, guidance_text: null },
+  { ticker: "META", name: "Meta Platforms", report_date: "2026-06-12", session: "AMC", eps_estimate: 5.1, eps_actual: null, eps_surprise_pct: null, revenue_estimate: 42.5 * B, revenue_actual: null, guidance_text: null },
+];
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const r4 = (n: number) => Math.round(n * 10000) / 10000;
