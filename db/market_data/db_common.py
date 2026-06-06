@@ -246,12 +246,13 @@ def parse_symbols(spec: str | None) -> set[str] | None:
 def connect() -> psycopg.Connection:
     if psycopg is None:
         raise RuntimeError("psycopg is required for database import. Run this script with the loader container.")
+    # Defaults target the app DB (penguinai docker container). Override via PG* env.
     return psycopg.connect(
         host=os.getenv("PGHOST", "localhost"),
         port=int(os.getenv("PGPORT", "5432")),
-        dbname=os.getenv("PGDATABASE", "market"),
-        user=os.getenv("PGUSER", "postgres"),
-        password=os.getenv("PGPASSWORD", "postgres"),
+        dbname=os.getenv("PGDATABASE", "penguinai"),
+        user=os.getenv("PGUSER", "penguinai"),
+        password=os.getenv("PGPASSWORD", "penguinai_dev"),
     )
 
 

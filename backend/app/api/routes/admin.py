@@ -21,8 +21,8 @@ async def pipeline_status(
     row_counts = await db.execute(
         text("""
             SELECT
-                (SELECT count(*) FROM market_data_30min) AS bars_30min,
-                (SELECT count(*) FROM market_data_1min)  AS bars_1min,
+                (SELECT count(*) FROM bars_30m)           AS bars_30min,
+                (SELECT count(*) FROM market_data_1min)   AS bars_1min,
                 (SELECT count(*) FROM social_posts)       AS social_posts,
                 (SELECT count(*) FROM signal_cache)       AS cached_signals
         """)

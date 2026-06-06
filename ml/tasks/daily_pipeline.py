@@ -27,22 +27,16 @@ async def _async_daily_pipeline():
     from ml.models.rf_trainer import train as train_rf
     from ml.models.xgboost_trainer import train as train_xgb
 
-    # Retrain XGBoost
+    # Retrain XGBoost (reads the 30-min parquet under data/30min_data via DuckDB)
     try:
-        metrics = train_xgb(
-            db_path=":memory:",  # replace with DuckDB Parquet path
-            output_path=MODEL_DIR / "xgboost_prod.pkl",
-        )
+        metrics = train_xgb(output_path=MODEL_DIR / "xgboost_prod.pkl")
         logger.info("XGBoost retrained: %s", metrics)
     except Exception as e:
         logger.error("XGBoost training failed: %s", e)
 
     # Retrain RF
     try:
-        metrics = train_rf(
-            db_path=":memory:",
-            output_path=MODEL_DIR / "rf_prod.pkl",
-        )
+        metrics = train_rf(output_path=MODEL_DIR / "rf_prod.pkl")
         logger.info("RF retrained: %s", metrics)
     except Exception as e:
         logger.error("RF training failed: %s", e)

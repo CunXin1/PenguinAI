@@ -2,6 +2,12 @@
 -- by_symbol (30-min) + features_daily (daily) parquet. Reuses instruments + the
 -- import bookkeeping tables from 001_schema.sql; recreates bars_30m with indicator
 -- columns and adds a new daily hypertable bars_1d.
+--
+-- NOTE: db/schema/02_timeseries.sql is the canonical definition for the app DB
+-- (penguinai) and creates these same tables. This file is the STANDALONE schema
+-- (legacy `market` DB). Do NOT run it (or the loader's --init-schema) against the
+-- app DB: the DROP TABLE bars_30m CASCADE below would also drop the
+-- market_data_30min / indicators_30min compatibility views.
 
 DROP VIEW IF EXISTS v_bars_30m_long;
 DROP VIEW IF EXISTS v_bars_30m;

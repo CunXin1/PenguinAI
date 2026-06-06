@@ -21,10 +21,13 @@ db/schema/  → TimescaleDB + pgvector SQL
 
 | Table | Purpose |
 |-------|---------|
-| `market_data_30min` | Historical 30-min bars (2000–present, ~170M rows) — PRIMARY training source |
-| `market_data_1min`  | Real-time IBKR stream, accumulates forward from today |
-| `market_data_daily` | Daily bars for macro context |
-| `indicators_30min`  | Pre-computed technical indicators aligned to 30-min bars |
+| `bars_30m` | Historical 30-min bars + inline indicators (2000–present, ~236M rows) — PRIMARY 30-min store, loaded from `data/30min_data` parquet |
+| `bars_1d` | Daily bars + indicators + multi-horizon returns (from `data/daily_data`) |
+| `instruments` | symbol ↔ instrument_id dimension (bars_* FK here) |
+| `market_data_30min` *(view)* | adj OHLCV over `bars_30m` — compat name for app/ML |
+| `market_data_daily` *(view)* | adj OHLCV over `bars_1d` — compat name for macro context |
+| `indicators_30min` *(view)* | model-ready features over `bars_30m` (matches `FEATURE_COLS`) |
+| `market_data_1min`  | Real-time IBKR + Massive minute stream, accumulates forward from today (real table) |
 | `social_posts`      | Twitter VIPs + Reddit WSB, FinBERT-scored, pgvector-embedded |
 | `signal_cache`      | Computed signals with TTL (Top-100: 1h, cold: 4h) |
 | `users`             | Auth + tier (FREE/PRO/PREMIUM/ADMIN) |
@@ -35,6 +38,8 @@ db/schema/  → TimescaleDB + pgvector SQL
 | `fomc_statements`   | Hawk/dove scores, global macro filter |
 
 DuckDB is used ONLY for local ML feature engineering (reads Parquet exports). Never write user or live data to DuckDB.
+
+**Train/serve parity:** training reads the `data/30min_data` parquet via DuckDB; serving reads the `indicators_30min` view. Both derive features through the *same* SQL — `xgboost_trainer.FEATURE_SQL` mirrors `04_compat_views.sql:indicators_30min` — so there is no train/serve skew. Load the parquet into `bars_30m`/`bars_1d` with `make import-30min` (after `make db-init`).
 
 ## Signal Generation Pipeline
 
@@ -77,7 +82,7 @@ Do not change this schema without updating `signal_cache` table, `schemas/signal
 - Feature names are the single source of truth in `ml/models/xgboost_trainer.py:FEATURE_COLS`.
 - Models saved as pickle at `/models/penguinai/xgboost_prod.pkl` and `rf_prod.pkl`.
 - Hot-reload via `model_registry.reload()` — no restart needed after retraining.
-- Target horizon: 16 × 30-min bars = 8 hours ahead (adjustable in trainer).
+- Target horizon: 16 RTH 30-min bars ahead (~1.2 trading days; adjustable in trainer).
 
 ## User Tiers
 

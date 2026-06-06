@@ -16,14 +16,27 @@ PenguinAI uses **TimescaleDB** (PostgreSQL 16 with the TimescaleDB extension) as
 ```
 db/
 ├── schema/
-│   ├── 01_extensions.sql    Enable timescaledb, vector, uuid-ossp
-│   ├── 02_timeseries.sql    Hypertable definitions (market_data_*, social_posts, etc.)
-│   └── 03_relational.sql    Regular tables (users, tickers, watchlists, signal_cache, etc.)
+│   ├── 01_extensions.sql      Enable timescaledb, vector, uuid-ossp
+│   ├── 02_timeseries.sql      Real model: instruments + bars_30m + bars_1d (indicators
+│   │                          inline) + import bookkeeping; market_data_1min; social/news/fomc
+│   ├── 03_relational.sql      Regular tables (users, tickers, watchlists, signal_cache, etc.)
+│   └── 04_compat_views.sql    Views market_data_30min / market_data_daily / indicators_30min
+│                              (+ v_bars_30m / v_bars_1d) over the real model
+├── market_data/              Parquet → TimescaleDB loader (import_features_to_timescale.py)
 └── migrations/
-    ├── env.py               Alembic async migration environment
-    ├── script.py.mako       Migration file template
-    └── versions/            Generated migration files (git-tracked)
+    ├── env.py                 Alembic async migration environment
+    ├── script.py.mako         Migration file template
+    └── versions/              Generated migration files (git-tracked)
 ```
+
+> **Data model note.** The real market data lives in `instruments` / `bars_30m` /
+> `bars_1d` (loaded from `data/30min_data` + `data/daily_data` parquet via
+> `make import-30min`). The app/ML query the familiar `market_data_30min`,
+> `market_data_daily`, `indicators_30min` names, which are now **compatibility
+> views** (`04_compat_views.sql`) over that model — prices are the adjusted
+> (`adj_*`) series and `indicators_30min` exposes model-ready features matching
+> `ml/models/xgboost_trainer.FEATURE_COLS`. `market_data_1min` stays a real table
+> (IBKR + Massive minute streams).
 
 ### Tables Reference
 
@@ -31,13 +44,24 @@ db/
 
 | Table | Partition | Primary Index | Size Estimate |
 |-------|-----------|---------------|---------------|
-| `market_data_30min` | time | (ticker, time DESC) | ~170M rows, ~10 GB |
-| `market_data_1min` | time | (ticker, time DESC) | Growing from today |
-| `market_data_daily` | time | (ticker, time DESC) | ~2M rows |
-| `indicators_30min` | time | (ticker, time DESC) | ~170M rows |
+| `bars_30m` | ts (1 mo) | (instrument_id, ts DESC) | ~236M rows — PRIMARY 30-min store + inline indicators |
+| `bars_1d` | ts (1 yr) | (instrument_id, ts DESC) | ~19M rows — daily bars + indicators + returns |
+| `market_data_1min` | time | (ticker, time DESC) | Growing from today (IBKR + Massive) |
 | `social_posts` | time | (ticker, time DESC) + ivfflat vector | Grows with scraping |
 | `news_articles` | time | (ticker, time DESC) | Grows with scraping |
 | `fomc_statements` | time | — | < 1000 rows |
+
+`instruments` (symbol ↔ instrument_id) is the dimension; `import_runs` /
+`import_files` / `dataset_metadata` are load bookkeeping.
+
+#### Compatibility Views (app/ML names → real model)
+
+| View | Backed by | Exposes |
+|------|-----------|---------|
+| `market_data_30min` | `bars_30m` ⋈ `instruments` | time, ticker, OHLCV (adjusted), vwap |
+| `market_data_daily` | `bars_1d` ⋈ `instruments` | time, ticker, OHLCV, adjusted_close |
+| `indicators_30min` | `bars_30m` ⋈ `instruments` | time, ticker, FEATURE_COLS (incl. derived scale-free feats) |
+| `v_bars_30m` / `v_bars_1d` | `bars_*` ⋈ `instruments` | symbol, asset_type, et_time, all columns |
 
 #### Relational Tables
 

@@ -18,6 +18,11 @@ from xgboost import XGBClassifier
 
 logger = logging.getLogger(__name__)
 
+# Repo-root parquet (the real 30-min data with precomputed indicators).
+DEFAULT_PARQUET_ROOT = Path(__file__).resolve().parents[2] / "data" / "30min_data"
+
+# The model's input features. Order here IS the on-wire order (model_registry
+# builds the inference vector from this list).
 FEATURE_COLS = [
     "rsi_14",
     "macd",
@@ -26,44 +31,70 @@ FEATURE_COLS = [
     "bb_pct_b",
     "bb_width",
     "atr_14_pct",
-    "ema20_slope",
     "price_vs_sma200",
-    "volume_ratio",
+    "price_vs_ema50",
     "vwap_pct",
+    "ret_1bar",
 ]
+
+# SQL that derives each FEATURE_COL from the raw parquet / bars_30m columns.
+# MUST stay byte-for-byte equivalent to db/schema/04_compat_views.sql
+# (indicators_30min) so training (DuckDB over parquet) and serving (the Postgres
+# view) compute identical features — no train/serve skew.
+FEATURE_SQL: dict[str, str] = {
+    "rsi_14": "rsi_14",
+    "macd": "macd",
+    "macd_signal": "macd_signal",
+    "macd_hist": "macd_hist",
+    "bb_pct_b": "bb_pctb",
+    "bb_width": "bb_bw",
+    "atr_14_pct": "atr_14 / NULLIF(adj_close, 0)",
+    "price_vs_sma200": "adj_close / NULLIF(sma_200, 0) - 1",
+    "price_vs_ema50": "adj_close / NULLIF(ema_50, 0) - 1",
+    "vwap_pct": "(adj_close - vwap_day) / NULLIF(vwap_day, 0)",
+    "ret_1bar": "ret_1bar",
+}
 
 
 def load_training_data(
-    db_path: str,
+    parquet_root: str | Path = DEFAULT_PARQUET_ROOT,
     tickers: list[str] | None = None,
-    horizon_bars: int = 16,  # 16 × 30min = 8 hours ahead
+    horizon_bars: int = 16,  # 16 RTH 30-min bars ahead (~1.2 trading days)
     since: str = "2015-01-01",
+    scope: str = "all",  # 'all' | 'stock' | 'etf'
 ) -> tuple[pd.DataFrame, pd.Series]:
     """
-    Load feature matrix X and binary target y from DuckDB (Parquet-backed).
-    Uses 30-min indicator data joined with forward return.
-    """
-    con = duckdb.connect(db_path, read_only=True)
+    Load feature matrix X and binary target y straight from the 30-min parquet
+    (one file per symbol, RTH rows, with precomputed indicators). Features are
+    derived in SQL via FEATURE_SQL — identical to the indicators_30min view.
 
-    ticker_filter = f"AND ticker IN ({','.join(repr(t) for t in tickers)})" if tickers else ""
+    Target: will adj_close be higher `horizon_bars` RTH bars from now?
+    """
+    assets = ["stock", "etf"] if scope == "all" else [scope]
+    globs = [str(Path(parquet_root) / a / "*.parquet") for a in assets]
+    glob_literal = "[" + ", ".join(f"'{g}'" for g in globs) + "]"
+
+    feat_select = ",\n                ".join(f"{expr} AS {name}" for name, expr in FEATURE_SQL.items())
+    ticker_filter = (
+        "AND symbol IN (" + ",".join(repr(t) for t in tickers) + ")" if tickers else ""
+    )
 
     query = f"""
         WITH bars AS (
             SELECT
-                i.*,
-                m.close,
-                LEAD(m.close, {horizon_bars}) OVER (PARTITION BY i.ticker ORDER BY i.time) AS future_close
-            FROM indicators_30min i
-            JOIN market_data_30min m USING (ticker, time)
-            WHERE i.time >= '{since}' {ticker_filter}
-              AND m.adjusted = TRUE
+                {feat_select},
+                adj_close,
+                LEAD(adj_close, {horizon_bars}) OVER (PARTITION BY symbol ORDER BY ts) AS future_close
+            FROM read_parquet({glob_literal}, union_by_name=true)
+            WHERE rth AND ts >= TIMESTAMP '{since}' {ticker_filter}
         )
         SELECT
             {", ".join(FEATURE_COLS)},
-            (future_close > close)::INT AS target
+            (future_close > adj_close)::INT AS target
         FROM bars
         WHERE future_close IS NOT NULL
     """
+    con = duckdb.connect()
     df = con.execute(query).df()
     con.close()
 
@@ -73,13 +104,13 @@ def load_training_data(
 
 
 def train(
-    db_path: str,
-    output_path: Path,
+    parquet_root: str | Path = DEFAULT_PARQUET_ROOT,
+    output_path: Path = Path("/models/penguinai/xgboost_prod.pkl"),
     tickers: list[str] | None = None,
     horizon_bars: int = 16,
 ) -> dict:
     logger.info("Loading training data...")
-    X, y = load_training_data(db_path, tickers=tickers, horizon_bars=horizon_bars)
+    X, y = load_training_data(parquet_root, tickers=tickers, horizon_bars=horizon_bars)
     logger.info("Dataset: %d samples, %.1f%% positive", len(X), y.mean() * 100)
 
     model = XGBClassifier(

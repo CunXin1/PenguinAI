@@ -85,6 +85,12 @@ def _init_worker():
 def _copy_file(task):
     path_str, table, cols, ts_col, iid, rth_only = task
     t = pq.read_table(path_str)
+    # Some symbols (~32) are base-OHLC parquet without indicator/rth columns
+    # (backfilled but never re-indicatored). Skip rather than crash on t.column().
+    missing = [c for c in (*cols, ts_col) if c not in t.column_names]
+    if missing:
+        print(f"  skip {path_str}: missing {missing[:4]}", file=sys.stderr, flush=True)
+        return 0
     if rth_only and "rth" in t.column_names:
         t = t.filter(pc.field("rth"))
     n = t.num_rows
@@ -136,10 +142,12 @@ def run_pool(tasks, workers, label):
     return total
 
 
+_REPO = Path(__file__).resolve().parents[2]
+
 def parse_args():
     p = argparse.ArgumentParser()
-    p.add_argument("--by-symbol-root", default=r"D:\BaiduNetdiskDownload\30min\30min_data")
-    p.add_argument("--daily-root", default=r"D:\BaiduNetdiskDownload\30min\daily_data")
+    p.add_argument("--by-symbol-root", default=str(_REPO / "data" / "30min_data"))
+    p.add_argument("--daily-root", default=str(_REPO / "data" / "daily_data"))
     p.add_argument("--scope", choices=["all", "stock", "etf"], default="all")
     p.add_argument("--symbols")
     p.add_argument("--limit", type=int)
@@ -147,8 +155,10 @@ def parse_args():
     p.add_argument("--no-30min", action="store_true")
     p.add_argument("--no-daily", action="store_true")
     p.add_argument("--all-bars", action="store_true")
+    # Schema is normally created by `make db-init` (db/schema/). --init-schema is for
+    # standalone use; against the app DB it would DROP bars_30m (cascading the views).
     p.add_argument("--init-schema", action="store_true")
-    p.add_argument("--schema-file", default=r"D:\BaiduNetdiskDownload\30min\timescale_market\sql\002_features_schema.sql")
+    p.add_argument("--schema-file", default=str(_REPO / "db" / "market_data" / "sql" / "002_features_schema.sql"))
     return p.parse_args()
 
 

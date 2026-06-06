@@ -6,6 +6,13 @@
 Three queryable forms: **① Parquet files (no server, easiest)**, **② TimescaleDB
 (PostgreSQL extension, for SQL / cross-sectional / serving)**, **③ other DBs (planned)**.
 
+> **应用库 / App DB (canonical):** 后端/ML 实际连的是 **`penguinai`** 库(docker
+> `penguinai-timescaledb-1`, `db/schema/`)。它用**同样的** `instruments` / `bars_30m`
+> / `bars_1d` 模型,并额外提供兼容视图 `market_data_30min` / `market_data_daily` /
+> `indicators_30min`(`db/schema/04_compat_views.sql`)。装载:`make db-init` 后
+> `make import-30min`(把 `data/30min_data` + `data/daily_data` 灌进 `bars_*`)。
+> 下面的独立 `market` 库(`db/market_data/sql/001,002`)是早期/可选的离线工作流。
+
 ---
 
 ## 中文

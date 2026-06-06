@@ -164,7 +164,7 @@ export interface Quote {
 }
 
 // ── Earnings ──────────────────────────────────────────────────────────────────
-/** Reporting session — display-only hint, not stored in the `earnings` table. */
+/** Reporting session — backend derives it from `earnings.report_hour` (Finnhub `hour`). */
 export type EarningsSession = "BMO" | "AMC" | "TBD";
 
 /** One row of the `earnings` table (+ display-only joins). */
@@ -177,7 +177,7 @@ export interface EarningsEvent {
   revenue_actual: number | null; // absolute USD
   revenue_estimate: number | null;
   guidance_text: string | null;
-  // ── display-only (joined from `tickers`, not part of the earnings row) ──
+  // ── enriched server-side (name joined from `tickers`; session from report_hour) ──
   name?: string;
   session?: EarningsSession;
 }

@@ -65,19 +65,10 @@ class ModelRegistry:
             return None
 
     def _feature_names(self) -> list[str]:
-        return [
-            "rsi_14",
-            "macd",
-            "macd_signal",
-            "macd_hist",
-            "bb_pct_b",
-            "bb_width",
-            "atr_14_pct",
-            "ema20_slope",
-            "price_vs_sma200",
-            "volume_ratio",
-            "vwap_pct",
-        ]
+        # Single source of truth — must match training feature order.
+        from ml.models.xgboost_trainer import FEATURE_COLS
+
+        return FEATURE_COLS
 
     def reload(self, model_dir: Path = MODEL_DIR) -> None:
         logger.info("Hot-reloading models from %s", model_dir)

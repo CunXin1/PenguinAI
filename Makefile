@@ -1,4 +1,4 @@
-.PHONY: up down logs backend frontend ml-worker ibkr-stream massive-backfill massive-update lint type-check test db-init bootstrap
+.PHONY: up down logs backend frontend ml-worker ibkr-stream minute-parquet fetch-earnings lint type-check test db-init bootstrap
 
 # ── Docker Compose ────────────────────────────────────────────────────────────
 up:
@@ -27,14 +27,17 @@ ml-worker:
 ibkr-stream:
 	python -m data.ingestion.ibkr_stream
 
-# Massive (massive.com) minute-bar history → market_data_1min. Run from repo root
-# with a venv that has httpx+sqlalchemy+asyncpg (e.g. backend/.venv) and
-# MASSIVE_API_KEY set in .env. Backfill is resumable (Ctrl-C safe).
-massive-backfill:
-	python -m data.ingestion.massive_loader backfill
+# Massive (massive.com) 1-min history → data/minute_data/ parquet (Nasdaq-100 +
+# Top-20 ETF, ~2yr). Run from repo root with a venv that has httpx+pyarrow
+# (e.g. backend/.venv) and MASSIVE_API_KEY in .env. Resumable (skips existing).
+minute-parquet:
+	python -m data.ingestion.massive_minute_parquet
 
-massive-update:
-	python -m data.ingestion.massive_loader update --days 1
+# Finnhub (free tier) earnings calendar → earnings table. Run from repo root with
+# a venv that has httpx+sqlalchemy+asyncpg and FINNHUB_API_KEY set in .env.
+# Idempotent: re-run to backfill actuals once results publish.
+fetch-earnings:
+	python -m data.ingestion.finnhub_earnings
 
 celery-beat:
 	cd . && celery -A ml.tasks.celery_app beat --loglevel=info
@@ -65,6 +68,13 @@ db-init:
 	docker-compose exec timescaledb psql -U penguinai -d penguinai -f /docker-entrypoint-initdb.d/01_extensions.sql
 	docker-compose exec timescaledb psql -U penguinai -d penguinai -f /docker-entrypoint-initdb.d/02_timeseries.sql
 	docker-compose exec timescaledb psql -U penguinai -d penguinai -f /docker-entrypoint-initdb.d/03_relational.sql
+	docker-compose exec timescaledb psql -U penguinai -d penguinai -f /docker-entrypoint-initdb.d/04_compat_views.sql
+
+# Load the 30-min + daily parquet (data/30min_data, data/daily_data) → bars_30m /
+# bars_1d in penguinai. Run after `make db-init`. Needs a Python with pyarrow +
+# psycopg (the loader connects via PG* env, defaulting to the penguinai container).
+import-30min:
+	python db/market_data/import_features_to_timescale.py
 
 bootstrap:
 	python scripts/bootstrap_universe.py

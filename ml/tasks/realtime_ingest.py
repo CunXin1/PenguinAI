@@ -16,18 +16,22 @@ def scrape_social_media():
     asyncio.run(_async_scrape())
 
 
-@celery_app.task(name="ml.tasks.realtime_ingest.update_minute_bars", queue="default")
-def update_minute_bars(days: int = 1):
-    """After-close top-up: refresh the most recent `days` of 1-min bars from Massive.
+@celery_app.task(name="ml.tasks.realtime_ingest.fetch_earnings", queue="default")
+def fetch_earnings(days_back: int = 7, days_ahead: int = 30):
+    """Pull the Finnhub (free tier) earnings calendar into the earnings table.
 
-    Delegates to data.ingestion.massive_loader (idempotent upserts into
-    market_data_1min). Scheduled by Celery Beat at 20:30 ET on weekdays —
-    after the 20:00 ET extended-hours close + the $29 plan's 15-min delay.
+    Delegates to data.ingestion.finnhub_earnings (idempotent upserts; re-runs
+    fill in actuals as results publish). Scheduled by Celery Beat 3x/weekday
+    (08:00 / 14:00 / 21:00 ET) to catch the forward calendar plus BMO (pre-open)
+    and AMC (after-close) actuals. Logged no-op when FINNHUB_API_KEY is unset.
     """
-    from data.ingestion.massive_loader import run_update_default
+    from data.ingestion.finnhub_earnings import run_default
 
-    logger.info("Massive minute-bar update: last %d day(s)", days)
-    asyncio.run(run_update_default(days=days))
+    logger.info("Finnhub earnings fetch: -%dd .. +%dd", days_back, days_ahead)
+    try:
+        asyncio.run(run_default(days_back=days_back, days_ahead=days_ahead))
+    except RuntimeError as exc:  # missing key / 401 / 429 — don't crash the beat
+        logger.warning("earnings fetch skipped: %s", exc)
 
 
 async def _async_scrape():

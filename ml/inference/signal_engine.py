@@ -8,14 +8,13 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 
-import pandas as pd
-
 from ml.core.config import ml_settings
 from ml.features.fundamental import get_fundamentals
 from ml.features.sentiment import get_ticker_sentiment
-from ml.features.technical import compute_features, features_to_dict
+from ml.features.technical import features_to_dict
 from ml.inference.gemma_agent import GemmaSignalOutput, gemma_agent
 from ml.models.model_registry import model_registry
+from ml.models.xgboost_trainer import FEATURE_COLS
 from ml.rag.retriever import rag_retriever
 
 logger = logging.getLogger(__name__)
@@ -35,15 +34,14 @@ class SignalEngine:
         """
         logger.info("Computing signal for %s", ticker)
 
-        # ── 1. Load recent 30-min bars from TimescaleDB ───────────────────────
-        df = await self._load_bars(ticker, db_session)
-        if df.empty or len(df) < 20:
-            logger.warning("Insufficient bar data for %s", ticker)
+        # ── 1. Load the latest precomputed feature row (indicators_30min view) ─
+        feature_row = await self._load_features(ticker, db_session)
+        if feature_row is None:
+            logger.warning("No indicator data for %s", ticker)
             return self._neutral_signal(ticker, reason="insufficient_data")
 
-        # ── 2. Technical features ─────────────────────────────────────────────
-        features = compute_features(df)
-        feature_dict = features_to_dict(features)
+        # ── 2. Technical features (already model-ready; no recomputation) ──────
+        feature_dict = features_to_dict(feature_row)
 
         # ── 3. ML model inference ─────────────────────────────────────────────
         xgb_prob_up = model_registry.predict_xgb(ticker, feature_dict)
@@ -135,23 +133,26 @@ class SignalEngine:
             "expires_at": now + timedelta(hours=1),
         }
 
-    async def _load_bars(self, ticker: str, db_session) -> pd.DataFrame:
+    async def _load_features(self, ticker: str, db_session) -> dict | None:
+        """Latest model-ready feature row for `ticker` from the indicators_30min view.
+
+        The view already exposes FEATURE_COLS (precomputed indicators + scale-free
+        derivations) identical to what the trainer saw — no recomputation needed.
+        """
         from sqlalchemy import text
 
-        rows = await db_session.execute(
-            text("""
-                SELECT time, open, high, low, close, volume, vwap
-                FROM market_data_30min
-                WHERE ticker = :ticker AND adjusted = TRUE
+        row = await db_session.execute(
+            text(f"""
+                SELECT {", ".join(FEATURE_COLS)}
+                FROM indicators_30min
+                WHERE ticker = :ticker
                 ORDER BY time DESC
-                LIMIT :limit
+                LIMIT 1
             """),
-            {"ticker": ticker, "limit": ml_settings.LOOKBACK_BARS_30MIN},
+            {"ticker": ticker},
         )
-        df = pd.DataFrame(rows.mappings().all())
-        if df.empty:
-            return df
-        return df.sort_values("time").reset_index(drop=True)
+        mapping = row.mappings().first()
+        return dict(mapping) if mapping is not None else None
 
     async def _get_celebrity_actions(self, ticker: str, db_session) -> list[dict]:
         from sqlalchemy import text

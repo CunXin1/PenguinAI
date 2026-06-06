@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS earnings (
     revenue_actual    BIGINT,
     revenue_estimate  BIGINT,
     guidance_text     TEXT,
+    report_hour       TEXT,       -- 'bmo' | 'amc' | 'dmh' (Finnhub hour) → UI session badge
     PRIMARY KEY (ticker, report_date)
 );
 

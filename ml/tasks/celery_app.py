@@ -44,15 +44,15 @@ celery_app.conf.beat_schedule = {
         "task": "ml.tasks.realtime_ingest.scrape_social_media",
         "schedule": crontab(minute="*/30"),
     },
-    # After-close: top up market_data_1min with the just-closed day from Massive
-    # (20:30 ET = after the 20:00 extended-hours close + the plan's 15-min delay)
-    "update-minute-bars": {
-        "task": "ml.tasks.realtime_ingest.update_minute_bars",
-        "schedule": crontab(minute=30, hour=20, day_of_week="1-5"),
-    },
     # Fetch FOMC and fundamentals daily at 8am ET
     "fetch-fundamentals": {
         "task": "ml.tasks.daily_pipeline.fetch_fundamentals",
         "schedule": crontab(minute=0, hour=8, day_of_week="1-5"),
+    },
+    # Earnings calendar 3x/weekday (08:00 / 14:00 / 21:00 ET): forward calendar
+    # + BMO (pre-open) and AMC (after-close) actuals as results publish.
+    "fetch-earnings": {
+        "task": "ml.tasks.realtime_ingest.fetch_earnings",
+        "schedule": crontab(minute=0, hour="8,14,21", day_of_week="1-5"),
     },
 }
