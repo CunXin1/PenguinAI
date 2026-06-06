@@ -1,5 +1,6 @@
 "use client";
 
+import { MarketIndices } from "@/components/dashboard/MarketIndices";
 import { MarketPulse } from "@/components/dashboard/MarketPulse";
 import { MarketChart } from "@/components/dashboard/MarketChart";
 import { TopSignals } from "@/components/dashboard/TopSignals";
