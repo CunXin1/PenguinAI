@@ -7,8 +7,9 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import CurrentUser, get_db
+from app.api.deps import OptionalUser, get_db
 from app.models.signal_cache import SignalCache
+from app.models.ticker import Ticker
 from app.models.user import User
 from app.schemas.signal import SignalListItem, SignalResponse
 
@@ -60,32 +61,65 @@ async def get_top_signals(
 async def get_signal(
     ticker: str,
     db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: CurrentUser,
+    current_user: OptionalUser,
+    poll: bool = False,
 ):
     """
     Return signal for a ticker.
-    - Cache hit  → 200 with signal (top-100 pre-computed, instant)
-    - Cache miss → 202, triggers background computation, frontend polls
+    - Not in universe → 404 (reason: not_in_universe | delisted) — no compute fired
+    - Cache hit       → 200 with signal (top-100 pre-computed, instant)
+    - Cache miss      → 202, triggers background computation, frontend polls
+
+    ``poll=true`` only checks the cache without re-triggering computation — the
+    frontend uses it for follow-up polls so a single cold ticker doesn't queue a
+    duplicate compute job on every poll.
     """
     ticker = _validate_ticker(ticker)
     now = datetime.now(UTC)
+
+    # Universe gate: only symbols we actually cover can produce a signal. This
+    # both prevents misleading output for junk symbols and stops us from firing
+    # Celery compute jobs (and 202-polling forever) on tickers with no data.
+    instrument = await db.get(Ticker, ticker)
+    if instrument is None:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={
+                "detail": f"{ticker} is not in PenguinAI's coverage universe",
+                "reason": "not_in_universe",
+                "ticker": ticker,
+            },
+        )
+    if not instrument.is_active:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content={
+                "detail": f"{ticker} is delisted or inactive",
+                "reason": "delisted",
+                "ticker": ticker,
+            },
+        )
 
     cached = await db.get(SignalCache, ticker)
     if cached and cached.expires_at > now:
         _check_tier_access(current_user, cached.tier_required)
         return SignalResponse.model_validate(cached)
 
-    # Cache miss: trigger computation asynchronously
-    _trigger_signal_computation(ticker)
+    # Cache miss on a covered ticker: trigger computation asynchronously.
+    # Follow-up polls (poll=true) skip the trigger — they just await the result.
+    if not poll:
+        _trigger_signal_computation(ticker)
     return JSONResponse(
         status_code=status.HTTP_202_ACCEPTED,
         content={"message": "Signal computation triggered", "ticker": ticker, "retry_after": 5},
     )
 
 
-def _check_tier_access(user: User, required: str) -> None:
+def _check_tier_access(user: User | None, required: str) -> None:
+    """Anonymous callers are treated as FREE (rank 0)."""
     tier_rank = {"FREE": 0, "PRO": 1, "PREMIUM": 2, "ADMIN": 99}
-    if tier_rank.get(user.tier, 0) < tier_rank.get(required, 0):
+    user_tier = user.tier if user else "FREE"
+    if tier_rank.get(user_tier, 0) < tier_rank.get(required, 0):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Tier '{required}' required",

@@ -37,6 +37,10 @@ class MLSettings(BaseSettings):
 
     # Data APIs
     POLYGON_API_KEY: str = ""
+    # Massive (massive.com) — Polygon-compatible REST; used to validate
+    # user-requested symbols (reference/tickers) in symbol_validation task.
+    MASSIVE_API_KEY: str = ""
+    MASSIVE_BASE_URL: str = "https://api.massive.com"
     REDDIT_CLIENT_ID: str = ""
     REDDIT_CLIENT_SECRET: str = ""
     REDDIT_USER_AGENT: str = "PenguinAI/0.1"

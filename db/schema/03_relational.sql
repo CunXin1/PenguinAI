@@ -118,3 +118,25 @@ CREATE TABLE IF NOT EXISTS ml_models (
     trained_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_ml_models_prod ON ml_models (model_type, is_production);
+
+-- User-requested symbols not in our universe (data-demand queue).
+-- A search for a symbol we don't cover lands here; a background job validates
+-- it against Massive (Polygon-compatible reference API) and classifies it.
+CREATE TABLE IF NOT EXISTS symbol_requests (
+    symbol             TEXT        PRIMARY KEY,
+    request_count      INT         NOT NULL DEFAULT 1,
+    status             TEXT        NOT NULL DEFAULT 'pending',
+        -- pending            : awaiting validation
+        -- real_pending_ingest: Massive confirms a live ticker we simply lack data for
+        -- delisted           : Massive knows it but it is inactive/delisted
+        -- rejected_junk      : Massive has no record → typo / non-existent
+        -- ingested           : data backfilled + promoted into `tickers`
+    resolved_name      TEXT,       -- company/ETF name from Massive (if real)
+    resolved_exchange  TEXT,       -- primary exchange from Massive (if real)
+    note               TEXT,       -- classifier detail (e.g. Massive `type`)
+    first_requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_requested_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    validated_at       TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_symbol_requests_status ON symbol_requests (status);
+CREATE INDEX IF NOT EXISTS idx_symbol_requests_demand ON symbol_requests (request_count DESC);

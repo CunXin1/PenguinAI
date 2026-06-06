@@ -6,9 +6,11 @@ import { Telescope, ArrowUpDown, Search } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { DirectionBadge } from "@/components/ui/Badge";
 import { MOCK_UNIVERSE } from "@/lib/mock";
+import { useLiveQuotes } from "@/hooks/useLiveQuotes";
 import { money, signedPct, cn } from "@/lib/utils";
 
 const SECTORS = ["All", ...Array.from(new Set(MOCK_UNIVERSE.map((u) => u.sector)))];
+const UNIVERSE_TICKERS = MOCK_UNIVERSE.map((u) => u.ticker);
 
 type SortKey = "ticker" | "price" | "change_pct" | "confidence";
 
@@ -18,8 +20,20 @@ export default function ScreenerPage() {
   const [sortKey, setSortKey] = useState<SortKey>("confidence");
   const [dir, setDir] = useState<"asc" | "desc">("desc");
 
+  // Overlay real DB prices (market_data_1min) onto the demo universe; tickers
+  // without minute data keep their demo price.
+  const { data: quoteMap } = useLiveQuotes(UNIVERSE_TICKERS);
+  const universe = useMemo(
+    () =>
+      MOCK_UNIVERSE.map((u) => {
+        const qd = quoteMap[u.ticker];
+        return qd ? { ...u, price: qd.price, change_pct: qd.change_pct } : u;
+      }),
+    [quoteMap]
+  );
+
   const rows = useMemo(() => {
-    const filtered = MOCK_UNIVERSE.filter(
+    const filtered = universe.filter(
       (u) =>
         (sector === "All" || u.sector === sector) &&
         (q === "" || u.ticker.includes(q.toUpperCase()) || u.name.toLowerCase().includes(q.toLowerCase()))
@@ -30,7 +44,7 @@ export default function ScreenerPage() {
       const cmp = typeof av === "string" ? String(av).localeCompare(String(bv)) : (av as number) - (bv as number);
       return dir === "asc" ? cmp : -cmp;
     });
-  }, [q, sector, sortKey, dir]);
+  }, [universe, q, sector, sortKey, dir]);
 
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setDir((d) => (d === "asc" ? "desc" : "asc"));

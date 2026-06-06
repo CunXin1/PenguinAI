@@ -1,9 +1,13 @@
 import type {
   Candle,
+  CandleBar,
+  ChartRange,
   EarningsEvent,
+  MiniQuote,
   Quote,
   Signal,
   SignalListItem,
+  SymbolRequestResult,
   Ticker,
   TickerSearchResult,
   TokenResponse,
@@ -70,8 +74,18 @@ export const signals = {
   getTop: (limit = 100) =>
     apiFetch<SignalListItem[]>(`/signals/top?limit=${limit}`),
 
-  getByTicker: (ticker: string) =>
-    apiFetch<Signal>(`/signals/${ticker.toUpperCase()}`),
+  getByTicker: (ticker: string, poll = false) =>
+    apiFetch<Signal>(`/signals/${ticker.toUpperCase()}${poll ? "?poll=1" : ""}`),
+};
+
+// ── Symbol request API ───────────────────────────────────────────────────────
+export const symbolRequests = {
+  /** Log demand for a symbol we don't cover (deduped server-side by symbol). */
+  create: (symbol: string) =>
+    apiFetch<SymbolRequestResult>("/symbols/request", {
+      method: "POST",
+      body: JSON.stringify({ symbol: symbol.toUpperCase() }),
+    }),
 };
 
 // ── Ticker API ─────────────────────────────────────────────────────────────────
@@ -107,6 +121,18 @@ export const marketData = {
   quotes: (tickers: string[]) =>
     apiFetch<{ quotes: Quote[] }>(
       `/market-data/quotes?tickers=${encodeURIComponent(tickers.join(","))}`
+    ),
+
+  /** Range-bucketed OHLC series (server-aggregated from 1-min bars). Powers PriceChart. */
+  series: (ticker: string, range: ChartRange = "1W") =>
+    apiFetch<{ ticker: string; range: ChartRange; bars: CandleBar[] }>(
+      `/market-data/${ticker.toUpperCase()}/series?range=${range}`
+    ),
+
+  /** Batch index-strip data: price + same-session %chg + intraday spark per ticker. */
+  mini: (tickers: string[]) =>
+    apiFetch<{ items: MiniQuote[] }>(
+      `/market-data/mini?tickers=${encodeURIComponent(tickers.join(","))}`
     ),
 };
 

@@ -78,7 +78,7 @@ queryFn: async () => {
 }
 ```
 
-Mock generators in `lib/mock.ts` (`mockCandles`, `mockSignalDetail`) are **deterministic** (seeded by ticker, fixed time anchor) so server and client render identically — no hydration mismatch. Sections with no endpoint yet (news, trending, market stats) read mock directly.
+Mock generators in `lib/mock.ts` (e.g. `mockSignalDetail`) are **deterministic** (seeded by ticker, fixed time anchor) so server and client render identically — no hydration mismatch. Sections with no endpoint yet (news, trending, market stats) read mock directly. The price chart has **no** mock fallback — `PriceChart` renders real `/market-data/{ticker}/series` bars only, with an explicit empty state when there's no data.
 
 ### Charts
 
@@ -152,7 +152,7 @@ PenguinAI 前端是基于 **Next.js 15（App Router）、React 19、TypeScript�
 
 ### Demo 数据回退
 
-`lib/mock.ts` 里的生成器(`mockCandles`、`mockSignalDetail`)是**确定性的**(用 ticker 做种子 + 固定时间锚点),保证 SSR 与客户端渲染一致、不会水合错位。没有对应后端接口的板块(新闻、热门、市场概览)直接用 mock。
+`lib/mock.ts` 里的生成器(如 `mockSignalDetail`)是**确定性的**(用 ticker 做种子 + 固定时间锚点),保证 SSR 与客户端渲染一致、不会水合错位。没有对应后端接口的板块(新闻、热门、市场概览)直接用 mock。价格图表**不再**有 mock 兜底——`PriceChart` 只渲染真实的 `/market-data/{ticker}/series` 数据,没数据时显示空状态。
 
 ### 在本机环境运行(Docker)
 

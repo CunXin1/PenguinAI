@@ -17,6 +17,7 @@ Run on the host against the compose DB. Apply sql/002 with --init-schema.
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import sys
 import time
@@ -25,6 +26,7 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.compute as pc
+import pyarrow.csv as pacsv
 import pyarrow.parquet as pq
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -79,6 +81,8 @@ def _init_worker():
     global _CONN
     _CONN = connect()
     _CONN.execute("SET synchronous_commit TO off")
+    # Interpret any tz-naive CSV timestamp (daily last_ts) as UTC — all our ts are UTC.
+    _CONN.execute("SET TIME ZONE 'UTC'")
     _CONN.commit()
 
 
@@ -96,20 +100,26 @@ def _copy_file(task):
     n = t.num_rows
     if n == 0:
         return 0
-    ts_vals = t.column(ts_col).to_pylist()
-    col_lists = []
+    # Build (ts, instrument_id, *cols) as one Arrow table and stream it as a single
+    # CSV buffer. Vectorized in Arrow + one COPY write — ~10x faster than a per-row
+    # write_row loop (which materialized 30 columns via to_pylist per file).
+    arrays = [t.column(ts_col), pa.array([iid] * n, type=pa.int64())]
+    names = ["ts", "instrument_id"]
     for c in cols:
         arr = t.column(c)
-        if pa.types.is_floating(arr.type):
+        if pa.types.is_floating(arr.type):  # NaN -> NULL (else COPY rejects it)
             arr = pc.if_else(pc.is_nan(arr), pa.scalar(None, type=arr.type), arr)
         if c in INT_COLS:
             arr = pc.cast(arr, pa.int64(), safe=False)
-        col_lists.append(arr.to_pylist())
-    sql = f"COPY {table} (ts, instrument_id, {', '.join(cols)}) FROM STDIN"
-    with _CONN.cursor() as cur:
-        with cur.copy(sql) as copy:
-            for row in zip(ts_vals, [iid] * n, *col_lists):
-                copy.write_row(row)
+        arrays.append(arr)
+        names.append(c)
+    buf = io.BytesIO()
+    pacsv.write_csv(
+        pa.table(arrays, names=names), buf, write_options=pacsv.WriteOptions(include_header=False)
+    )
+    sql = f"COPY {table} (ts, instrument_id, {', '.join(cols)}) FROM STDIN WITH (FORMAT csv)"
+    with _CONN.cursor() as cur, cur.copy(sql) as copy:
+        copy.write(buf.getvalue())
     _CONN.commit()
     return n
 

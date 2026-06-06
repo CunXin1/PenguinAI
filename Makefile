@@ -69,6 +69,7 @@ db-init:
 	docker-compose exec timescaledb psql -U penguinai -d penguinai -f /docker-entrypoint-initdb.d/02_timeseries.sql
 	docker-compose exec timescaledb psql -U penguinai -d penguinai -f /docker-entrypoint-initdb.d/03_relational.sql
 	docker-compose exec timescaledb psql -U penguinai -d penguinai -f /docker-entrypoint-initdb.d/04_compat_views.sql
+	docker-compose exec timescaledb psql -U penguinai -d penguinai -f /docker-entrypoint-initdb.d/05_continuous_aggregates.sql
 
 # Load the 30-min + daily parquet (data/30min_data, data/daily_data) → bars_30m /
 # bars_1d in penguinai. Run after `make db-init`. Needs a Python with pyarrow +

@@ -11,6 +11,7 @@ celery_app = Celery(
         "ml.tasks.hourly_signal_cache",
         "ml.tasks.daily_pipeline",
         "ml.tasks.realtime_ingest",
+        "ml.tasks.symbol_validation",
     ],
 )
 
@@ -24,6 +25,7 @@ celery_app.conf.update(
         "ml.tasks.hourly_signal_cache.*": {"queue": "ml_inference"},
         "ml.tasks.daily_pipeline.*": {"queue": "ml_inference"},
         "ml.tasks.realtime_ingest.*": {"queue": "default"},
+        "ml.tasks.symbol_validation.*": {"queue": "default"},
     },
 )
 
@@ -54,5 +56,10 @@ celery_app.conf.beat_schedule = {
     "fetch-earnings": {
         "task": "ml.tasks.realtime_ingest.fetch_earnings",
         "schedule": crontab(minute=0, hour="8,14,21", day_of_week="1-5"),
+    },
+    # Classify user-requested (uncovered) symbols via Massive every 6 hours.
+    "validate-symbol-requests": {
+        "task": "ml.tasks.symbol_validation.validate_symbol_requests",
+        "schedule": crontab(minute=30, hour="*/6"),
     },
 }

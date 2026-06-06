@@ -14,7 +14,6 @@ import type {
   MarketStats,
   ProfileUser,
   UniverseRow,
-  CandleBar,
   EarningsEvent,
 } from "./types";
 
@@ -229,38 +228,6 @@ export const MOCK_EARNINGS: EarningsEvent[] = [
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const r4 = (n: number) => Math.round(n * 10000) / 10000;
-
-/**
- * Deterministic OHLC bars for a ticker (seeded by symbol, fixed time anchor)
- * so server and client render identically — no hydration mismatch.
- */
-export function mockCandles(ticker: string, bars = 64): CandleBar[] {
-  let seed = 7;
-  for (let i = 0; i < ticker.length; i++) seed = (seed * 31 + ticker.charCodeAt(i)) & 0x7fffffff;
-  const rand = () => {
-    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-    return seed / 0x7fffffff;
-  };
-
-  const base = MOCK_UNIVERSE.find((u) => u.ticker === ticker)?.price ?? 100;
-  const anchor = 1749129600; // fixed unix seconds (~2026-06-05)
-  const step = 1800; // 30 minutes
-
-  let price = base * 0.94;
-  let t = anchor - (bars - 1) * step;
-  const out: CandleBar[] = [];
-  for (let i = 0; i < bars; i++) {
-    const open = price;
-    const drift = (base - open) * 0.04;
-    const close = Math.max(0.1, open + drift + (rand() - 0.5) * base * 0.018);
-    const high = Math.max(open, close) + rand() * base * 0.008;
-    const low = Math.min(open, close) - rand() * base * 0.008;
-    out.push({ time: t, open: r2(open), high: r2(high), low: r2(low), close: r2(close) });
-    price = close;
-    t += step;
-  }
-  return out;
-}
 
 const HOLDING_BY_DIR: Record<Direction, HoldingPeriod> = {
   LONG: "SWING",

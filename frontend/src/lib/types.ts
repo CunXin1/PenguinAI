@@ -56,6 +56,33 @@ export interface TickerSearchResult {
   exchange: string | null;
 }
 
+// ── Symbol request (data-demand queue) ────────────────────────────────────────
+export type SymbolRequestStatus =
+  | "pending"
+  | "real_pending_ingest"
+  | "delisted"
+  | "rejected_junk"
+  | "ingested"
+  | "already_covered";
+
+export interface SymbolRequestResult {
+  symbol: string;
+  status: SymbolRequestStatus;
+  request_count: number;
+  message: string;
+}
+
+/** Error thrown by `apiFetch` — carries the HTTP status and parsed body. */
+export interface ApiError extends Error {
+  status?: number;
+  data?: {
+    detail?: string;
+    reason?: "not_in_universe" | "delisted";
+    ticker?: string;
+    [k: string]: unknown;
+  };
+}
+
 // ── Candle types (TradingView Lightweight Charts) ─────────────────────────────
 export interface Candle {
   time: string;   // ISO or Unix timestamp
@@ -155,12 +182,24 @@ export interface CandleBar {
   close: number;
 }
 
+/** User-facing chart ranges (shared PriceChart). Default is 1W. */
+export type ChartRange = "1D" | "1W" | "1M" | "3M" | "1Y";
+
 /** A latest-quote board row (live price + same-session % change). */
 export interface Quote {
   ticker: string;
   price: number;
   change_pct: number;
   time?: string; // ISO timestamp of the latest bar
+}
+
+/** One cell of the homepage index strip — quote + a downsampled intraday spark. */
+export interface MiniQuote {
+  ticker: string;
+  price: number;
+  change_pct: number;
+  time?: string;
+  spark: number[]; // session closes (5-min buckets) for the thumbnail
 }
 
 // ── Earnings ──────────────────────────────────────────────────────────────────

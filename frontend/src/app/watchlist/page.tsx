@@ -2,21 +2,26 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { Star, Plus, X, Search } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Star, Plus, X, Search, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { DirectionBadge } from "@/components/ui/Badge";
 import { ConfidenceBar } from "@/components/ui/ConfidenceBar";
 import { Sparkline } from "@/components/ui/Sparkline";
+import { tickers as tickerApi } from "@/lib/api";
 import { MOCK_UNIVERSE, MOCK_SIGNALS } from "@/lib/mock";
 import { money, signedPct } from "@/lib/utils";
+import type { ApiError } from "@/lib/types";
 
 const KEY = "penguinai_watchlist";
 const DEFAULT = ["NVDA", "TSLA", "AAPL", "PLTR"];
 
 export default function WatchlistPage() {
+  const router = useRouter();
   const [tickers, setTickers] = useState<string[]>([]);
   const [input, setInput] = useState("");
   const [ready, setReady] = useState(false);
+  const [adding, setAdding] = useState(false);
 
   useEffect(() => {
     try {
@@ -32,11 +37,36 @@ export default function WatchlistPage() {
     if (ready) localStorage.setItem(KEY, JSON.stringify(tickers));
   }, [tickers, ready]);
 
-  const add = (e: React.FormEvent) => {
+  // Only add symbols we actually cover. Anything else navigates to the signal
+  // page, which renders the UnknownSymbol view — never silently added here.
+  const add = async (e: React.FormEvent) => {
     e.preventDefault();
     const t = input.trim().toUpperCase();
-    if (t && !tickers.includes(t)) setTickers([t, ...tickers]);
-    setInput("");
+    if (!t || adding) return;
+    if (tickers.includes(t)) {
+      setInput("");
+      return;
+    }
+
+    setAdding(true);
+    let covered: boolean;
+    try {
+      const row = await tickerApi.get(t);
+      covered = row.is_active; // delisted/inactive → treat as not covered
+    } catch (err) {
+      const status = (err as ApiError).status;
+      // 404 → genuinely not in universe; other errors (backend down) → fall
+      // back to the demo universe so the page still works offline.
+      covered = status === 404 ? false : MOCK_UNIVERSE.some((u) => u.ticker === t);
+    }
+    setAdding(false);
+
+    if (covered) {
+      setTickers([t, ...tickers]);
+      setInput("");
+    } else {
+      router.push(`/signals/${t}`);
+    }
   };
   const remove = (t: string) => setTickers((prev) => prev.filter((x) => x !== t));
 
@@ -71,11 +101,17 @@ export default function WatchlistPage() {
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
+            disabled={adding}
             placeholder="Add ticker..."
-            className="bg-transparent outline-none text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-600 w-28"
+            className="bg-transparent outline-none text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-600 w-28 disabled:opacity-60"
           />
-          <button type="submit" className="text-sky-500 dark:text-sky-400 hover:text-sky-600 dark:hover:text-sky-300 transition-colors" aria-label="Add">
-            <Plus size={16} />
+          <button
+            type="submit"
+            disabled={adding}
+            className="text-sky-500 dark:text-sky-400 hover:text-sky-600 dark:hover:text-sky-300 disabled:opacity-60 transition-colors"
+            aria-label="Add"
+          >
+            {adding ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
           </button>
         </form>
       </div>
