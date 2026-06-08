@@ -98,18 +98,22 @@ async def main() -> None:
 
     ibkr_set = {x.upper() for x in IBKR_SYMBOLS} if s.IBKR_ENABLED else set()
     poll_symbols = sorted(await _distinct_1min_tickers(engine) - ibkr_set)
+    xv = CrossValidator()
 
     async def watched_symbols() -> list[str]:
         return sorted((await _distinct_1min_tickers(engine)) | ibkr_set)
 
     factory_kw = dict(
-        ibkr_symbols=IBKR_SYMBOLS, poll_symbols=poll_symbols, watched_symbols=watched_symbols,
+        ibkr_symbols=IBKR_SYMBOLS, poll_symbols=poll_symbols,
+        watched_symbols=watched_symbols, cross_validator=xv,
     )
 
     services: dict[str, _ServiceState] = {}
     svc_names = []
     if s.IBKR_ENABLED:
         svc_names.append("ibkr")
+    if s.FINNHUB_WS_ENABLED and s.FINNHUB_API_KEY:
+        svc_names.append("finnhub")
     svc_names += ["massive", "close30m"]
 
     for name in svc_names:
@@ -118,7 +122,9 @@ async def main() -> None:
         services[name] = _ServiceState(name, task)
 
     logger.info(
-        "supervisor up: ibkr=%s(%d) massive_poll=%d", s.IBKR_ENABLED, len(IBKR_SYMBOLS), len(poll_symbols)
+        "supervisor up: ibkr=%s(%d) finnhub=%s massive_poll=%d",
+        s.IBKR_ENABLED, len(IBKR_SYMBOLS),
+        s.FINNHUB_WS_ENABLED and bool(s.FINNHUB_API_KEY), len(poll_symbols),
     )
 
     # Periodically print health to stdout so the FastAPI watchdog can read it.
