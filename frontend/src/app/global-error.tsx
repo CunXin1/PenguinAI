@@ -13,9 +13,9 @@ export default function GlobalError({
         <div className="min-h-screen flex flex-col items-center justify-center px-4 text-center">
           <h1 className="text-2xl font-bold">Something went wrong</h1>
           <p className="mt-2 text-sm text-zinc-400">A critical error occurred.</p>
-          <pre className="mt-4 max-w-lg overflow-x-auto rounded-lg bg-zinc-900 border border-zinc-800 px-4 py-3 text-left text-xs text-zinc-400">
-            {error.message}
-          </pre>
+          {error.digest && (
+            <p className="mt-4 text-xs text-zinc-500">Error ID: {error.digest}</p>
+          )}
           <div className="mt-8 flex gap-3">
             <button
               onClick={reset}

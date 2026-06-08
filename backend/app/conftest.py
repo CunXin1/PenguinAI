@@ -185,6 +185,8 @@ async def test_user(db_session: AsyncSession) -> User:
         display_name="Free User",
         tier="FREE",
         is_active=True,
+        email_verified=False,
+        token_version=0,
     )
     db_session.add(user)
     await db_session.commit()
@@ -201,6 +203,8 @@ async def pro_user(db_session: AsyncSession) -> User:
         display_name="Pro User",
         tier="PRO",
         is_active=True,
+        email_verified=False,
+        token_version=0,
     )
     db_session.add(user)
     await db_session.commit()
@@ -217,6 +221,8 @@ async def admin_user(db_session: AsyncSession) -> User:
         display_name="Admin User",
         tier="ADMIN",
         is_active=True,
+        email_verified=True,
+        token_version=0,
     )
     db_session.add(user)
     await db_session.commit()

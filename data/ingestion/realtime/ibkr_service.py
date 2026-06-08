@@ -76,7 +76,7 @@ def _bar_to_row(ticker: str, bar: object) -> dict | None:
     }
 
 
-def _make_handler(ticker: str, queue: asyncio.Queue, last_bar_at: dict):
+def _make_handler(ticker: str, queue: asyncio.Queue, last_bar_at: dict, cross_validator=None):
     def _on_update(bars, has_new_bar: bool) -> None:  # noqa: FBT001 (ib_async signature)
         global _dropped_bars  # noqa: PLW0603
         if not bars:
@@ -86,6 +86,8 @@ def _make_handler(ticker: str, queue: asyncio.Queue, last_bar_at: dict):
         for b in recent:
             row = _bar_to_row(ticker, b)
             if row is not None:
+                if cross_validator is not None:
+                    cross_validator.update_ibkr(ticker, row["close"])
                 try:
                     queue.put_nowait(row)
                 except asyncio.QueueFull:
