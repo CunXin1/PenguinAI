@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
@@ -13,7 +14,15 @@ router = APIRouter()
 
 # Cached market status — avoid hitting SELECT max(time) FROM market_data_1min on every request.
 _status_cache: dict = {"data": None, "ts": 0.0}
+_status_lock: asyncio.Lock | None = None
 _STATUS_CACHE_TTL = 5.0  # seconds
+
+
+def _get_status_lock() -> asyncio.Lock:
+    global _status_lock  # noqa: PLW0603
+    if _status_lock is None:
+        _status_lock = asyncio.Lock()
+    return _status_lock
 
 
 @router.get("/status")
@@ -27,9 +36,16 @@ async def market_status(response: Response, db: AsyncSession = Depends(get_db)):
     if _status_cache["data"] is not None and (now_mono - _status_cache["ts"]) < _STATUS_CACHE_TTL:
         response.headers["Cache-Control"] = "public, max-age=5"
         return _status_cache["data"]
-    result = await get_market_status(db)
-    _status_cache["data"] = result
-    _status_cache["ts"] = now_mono
+
+    async with _get_status_lock():
+        now_mono = time.monotonic()
+        if _status_cache["data"] is not None and (now_mono - _status_cache["ts"]) < _STATUS_CACHE_TTL:
+            response.headers["Cache-Control"] = "public, max-age=5"
+            return _status_cache["data"]
+        result = await get_market_status(db)
+        _status_cache["data"] = result
+        _status_cache["ts"] = now_mono
+
     response.headers["Cache-Control"] = "public, max-age=5"
     return result
 

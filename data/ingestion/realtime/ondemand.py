@@ -55,14 +55,13 @@ async def warm_ticker(engine, ticker: str, *, days: int = 5, settings: RealtimeS
         return 0
 
     lock = await _get_ticker_lock(ticker)
-    if not lock.acquire_nowait():
-        async with lock:
-            return 0
-
-    try:
-        return await _warm_ticker_inner(engine, ticker, days=days, settings=s)
-    finally:
+    if lock.locked():
+        await lock.acquire()
         lock.release()
+        return 0
+
+    async with lock:
+        return await _warm_ticker_inner(engine, ticker, days=days, settings=s)
 
 
 async def _warm_ticker_inner(engine, ticker: str, *, days: int, settings: RealtimeSettings) -> int:

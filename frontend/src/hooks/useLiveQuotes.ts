@@ -13,7 +13,7 @@ import type { Quote } from "@/lib/types";
 export function useLiveQuotes(tickers: string[]) {
   const key = [...tickers].sort().join(",");
   const { isOpen } = useMarketStatus();
-  return useQuery<Record<string, Quote>>({
+  const query = useQuery<Record<string, Quote>>({
     queryKey: ["quotes", key],
     queryFn: async () => {
       if (tickers.length === 0) return {};
@@ -24,9 +24,9 @@ export function useLiveQuotes(tickers: string[]) {
         return {};
       }
     },
-    initialData: {},
-    staleTime: 0, // with initialData, any non-zero staleTime suppresses the fetch
-    // Refresh prices while the market is open; freeze on the last close when shut.
+    placeholderData: {},
+    refetchOnMount: "always",
     refetchInterval: isOpen ? 60_000 : false,
   });
+  return { ...query, data: query.data ?? {} };
 }

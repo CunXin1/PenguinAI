@@ -25,7 +25,10 @@ export function useAuth() {
     queryFn: () => auth.me(),
     enabled: !!token,
     staleTime: 5 * 60_000,
-    retry: false,
+    retry: (count, error) => {
+      if ((error as { status?: number }).status === 401) return false;
+      return count < 2;
+    },
   });
 
   // Token present but rejected (expired / invalid) → drop it so the UI shows logged-out.
@@ -39,8 +42,7 @@ export function useAuth() {
   const logout = () => {
     if (typeof window !== "undefined") localStorage.removeItem(TOKEN_KEY);
     setToken(null);
-    qc.removeQueries({ queryKey: ["me"] });
-    qc.removeQueries({ queryKey: ["watchlist"] });
+    qc.clear();
     router.push("/");
   };
 

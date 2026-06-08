@@ -1,4 +1,4 @@
-.PHONY: up down logs backend frontend ml-worker ibkr-stream minute-parquet fetch-earnings lint type-check test db-init bootstrap
+.PHONY: up down logs backend frontend ml-worker ibkr-stream minute-parquet fetch-earnings lint type-check test test-backend test-frontend db-init bootstrap
 
 # ── Docker Compose ────────────────────────────────────────────────────────────
 up:
@@ -57,10 +57,14 @@ type-check:
 
 # ── Tests ─────────────────────────────────────────────────────────────────────
 test:
-	pytest backend/tests/ ml/tests/ -v
+	python3 -m pytest backend/app/ ml/tests/ -v
+	cd frontend && npx vitest run
 
 test-backend:
-	pytest backend/tests/ -v
+	python3 -m pytest backend/app/ -v
+
+test-frontend:
+	cd frontend && npx vitest run
 
 # ── Database ──────────────────────────────────────────────────────────────────
 db-init:

@@ -79,8 +79,8 @@ export function useTopSignals() {
       }
       return withRealMarketData(base);
     },
-    initialData: MOCK_SIGNALS,
-    staleTime: 0,
+    placeholderData: MOCK_SIGNALS,
+    refetchOnMount: "always",
     refetchInterval: isOpen ? 60_000 : false,
   });
 }

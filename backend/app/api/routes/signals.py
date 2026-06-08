@@ -30,6 +30,7 @@ def _validate_ticker(ticker: str) -> str:
 _celery_app = None
 _inflight: dict[str, float] = {}
 _INFLIGHT_TTL = 300.0  # don't re-trigger same ticker within 5 minutes
+_INFLIGHT_MAX = 2000
 
 
 def _trigger_signal_computation(ticker: str) -> None:
@@ -41,6 +42,12 @@ def _trigger_signal_computation(ticker: str) -> None:
     prev = _inflight.get(ticker)
     if prev is not None and (now - prev) < _INFLIGHT_TTL:
         return
+
+    if len(_inflight) > _INFLIGHT_MAX:
+        cutoff = now - _INFLIGHT_TTL
+        expired = [k for k, v in _inflight.items() if v < cutoff]
+        for k in expired:
+            del _inflight[k]
 
     global _celery_app  # noqa: PLW0603
     if _celery_app is None:

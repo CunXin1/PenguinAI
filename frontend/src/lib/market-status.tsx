@@ -33,8 +33,8 @@ export function MarketStatusProvider({ children }: { children: React.ReactNode }
   const { data, isLoading } = useQuery<MarketStatus>({
     queryKey: ["marketStatus"],
     queryFn: () => marketData.status(),
-    refetchInterval: 60_000, // heartbeat: keeps the badge fresh + drives CLOSED→LIVE
-    staleTime: 30_000,
+    refetchInterval: 15_000,
+    staleTime: 10_000,
   });
 
   // `?? fallback` only triggers on null/undefined (no data yet / backend down) —

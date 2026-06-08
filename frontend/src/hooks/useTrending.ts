@@ -46,8 +46,8 @@ export function useTrending(limit = 6) {
         return fallback;
       }
     },
-    initialData: fallback,
-    staleTime: 0,
+    placeholderData: fallback,
+    refetchOnMount: "always",
     refetchInterval: isOpen ? 60_000 : false,
   });
 }
