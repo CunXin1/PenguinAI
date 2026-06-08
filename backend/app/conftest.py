@@ -235,7 +235,7 @@ def auth_headers():
     """Returns a callable: auth_headers(user) -> {"Authorization": "Bearer <token>"}"""
 
     def _make(user: User) -> dict[str, str]:
-        token = create_access_token(str(user.id))
+        token = create_access_token(str(user.id), getattr(user, "token_version", 0))
         return {"Authorization": f"Bearer {token}"}
 
     return _make

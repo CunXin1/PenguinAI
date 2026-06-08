@@ -131,7 +131,10 @@ async def _indicator_refresher(engine, dirty: set[str], stop: asyncio.Event) -> 
                 logger.error("ibkr indicator refresh %s: %r", tk, exc)
 
 
-async def _subscribe_all(ib, symbols: list[str], queue: asyncio.Queue, last_bar_at: dict, dirty: set):
+async def _subscribe_all(
+    ib, symbols: list[str], queue: asyncio.Queue, last_bar_at: dict, dirty: set,
+    cross_validator=None,
+):
     """Subscribe to keepUpToDate 1-min bars for all symbols. Returns count of successful subs."""
     from ib_async import Stock
 
@@ -149,12 +152,14 @@ async def _subscribe_all(ib, symbols: list[str], queue: asyncio.Queue, last_bar_
         for b in bars:
             row = _bar_to_row(tk, b)
             if row is not None:
+                if cross_validator is not None:
+                    cross_validator.update_ibkr(tk, row["close"])
                 try:
                     queue.put_nowait(row)
                 except asyncio.QueueFull:
                     global _dropped_bars  # noqa: PLW0603
                     _dropped_bars += 1
-        bars.updateEvent += _make_handler(tk, queue, last_bar_at)
+        bars.updateEvent += _make_handler(tk, queue, last_bar_at, cross_validator)
         dirty.add(tk)
         subscribed += 1
     return subscribed
@@ -169,7 +174,7 @@ async def _heartbeat(ib) -> bool:
         return False
 
 
-async def run(engine, settings, stop: asyncio.Event, symbols: list[str]) -> None:
+async def run(engine, settings, stop: asyncio.Event, symbols: list[str], cross_validator=None) -> None:
     try:
         from ib_async import IB
     except ModuleNotFoundError:
@@ -223,7 +228,7 @@ async def run(engine, settings, stop: asyncio.Event, symbols: list[str]) -> None
                 ib.disconnectedEvent += _on_disconnect
 
                 last_bar_at: dict = {"t": monotonic()}
-                n = await _subscribe_all(ib, symbols, queue, last_bar_at, dirty)
+                n = await _subscribe_all(ib, symbols, queue, last_bar_at, dirty, cross_validator)
                 logger.info("IBKR streaming %d/%d symbols → market_data_1min", n, len(symbols))
 
                 connected_at = monotonic()
@@ -240,7 +245,7 @@ async def run(engine, settings, stop: asyncio.Event, symbols: list[str]) -> None
                                 ib.cancelHistoricalData(bars_obj)
                         await asyncio.sleep(2.0)
                         last_bar_at["t"] = monotonic()
-                        n = await _subscribe_all(ib, symbols, queue, last_bar_at, dirty)
+                        n = await _subscribe_all(ib, symbols, queue, last_bar_at, dirty, cross_validator)
                         logger.info("Resubscribed %d/%d symbols", n, len(symbols))
                         connected_at = monotonic()
 

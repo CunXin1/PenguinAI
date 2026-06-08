@@ -22,8 +22,9 @@ from time import monotonic
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from data.ingestion.realtime import close_30min, ibkr_service, massive_poller
+from data.ingestion.realtime import close_30min, finnhub_ws, ibkr_service, massive_poller
 from data.ingestion.realtime.config import IBKR_SYMBOLS, RealtimeSettings
+from data.ingestion.realtime.finnhub_ws import CrossValidator
 
 logger = logging.getLogger("realtime.supervisor")
 
@@ -37,12 +38,17 @@ async def _distinct_1min_tickers(engine) -> set[str]:
     return {t.upper() for t in rows}
 
 
-def _service_factory(name: str, engine, settings, stop, *, ibkr_symbols, poll_symbols, watched_symbols):
+def _service_factory(
+    name: str, engine, settings, stop, *,
+    ibkr_symbols, poll_symbols, watched_symbols, cross_validator,
+):
     """Return the coroutine for a named service."""
     if name == "ibkr":
-        return ibkr_service.run(engine, settings, stop, ibkr_symbols)
+        return ibkr_service.run(engine, settings, stop, ibkr_symbols, cross_validator)
     if name == "massive":
         return massive_poller.run(engine, settings, stop, poll_symbols)
+    if name == "finnhub":
+        return finnhub_ws.run(engine, settings, stop, ibkr_symbols, cross_validator)
     if name == "close30m":
         return close_30min.run(engine, settings, stop, watched_symbols)
     raise ValueError(f"unknown service: {name}")
