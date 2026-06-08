@@ -15,12 +15,16 @@ import asyncio
 import contextlib
 import logging
 from datetime import UTC, date, datetime
+from time import monotonic
 
 from sqlalchemy import text
 
 from data.ingestion.realtime.indicators import update_indicators
 
 logger = logging.getLogger("realtime.ibkr")
+
+_dropped_bars = 0
+_ZOMBIE_TIMEOUT = 120.0  # seconds with no data before forced reconnect
 
 _UPSERT_SQL = text(
     """
@@ -63,16 +67,24 @@ def _bar_to_row(ticker: str, bar: object) -> dict | None:
     }
 
 
-def _make_handler(ticker: str, queue: asyncio.Queue):
+def _make_handler(ticker: str, queue: asyncio.Queue, last_bar_at: dict):
     def _on_update(bars, has_new_bar: bool) -> None:  # noqa: FBT001 (ib_async signature)
+        global _dropped_bars  # noqa: PLW0603
         if not bars:
             return
+        last_bar_at["t"] = monotonic()
         recent = bars[-2:] if (has_new_bar and len(bars) >= 2) else bars[-1:]
         for b in recent:
             row = _bar_to_row(ticker, b)
             if row is not None:
-                with contextlib.suppress(asyncio.QueueFull):
+                try:
                     queue.put_nowait(row)
+                except asyncio.QueueFull:
+                    _dropped_bars += 1
+                    if _dropped_bars % 100 == 1:
+                        logger.warning(
+                            "queue full — dropped bar for %s (total dropped: %d)", ticker, _dropped_bars
+                        )
     return _on_update
 
 
@@ -120,6 +132,8 @@ async def run(engine, settings, stop: asyncio.Event, symbols: list[str]) -> None
     consumer = asyncio.create_task(_consumer(engine, queue, dirty))
     refresher = asyncio.create_task(_indicator_refresher(engine, dirty, stop))
     ib = IB()
+    backoff = 10.0
+    max_backoff = 300.0
     try:
         while not stop.is_set():
             try:
@@ -128,6 +142,7 @@ async def run(engine, settings, stop: asyncio.Event, symbols: list[str]) -> None
                     settings.IBKR_HOST, settings.IBKR_PORT,
                     clientId=settings.IBKR_CLIENT_ID, timeout=20.0, readonly=True,
                 )
+                last_bar_at: dict = {"t": monotonic()}
                 for tk in symbols:
                     contract = Stock(tk, "SMART", "USD")
                     if not await ib.qualifyContractsAsync(contract):
@@ -141,22 +156,33 @@ async def run(engine, settings, stop: asyncio.Event, symbols: list[str]) -> None
                     for b in bars:
                         row = _bar_to_row(tk, b)
                         if row is not None:
-                            with contextlib.suppress(asyncio.QueueFull):
+                            try:
                                 queue.put_nowait(row)
-                    bars.updateEvent += _make_handler(tk, queue)
+                            except asyncio.QueueFull:
+                                global _dropped_bars  # noqa: PLW0603
+                                _dropped_bars += 1
+                    bars.updateEvent += _make_handler(tk, queue, last_bar_at)
                     dirty.add(tk)
                 logger.info("IBKR streaming %d symbols → market_data_1min", len(symbols))
+                backoff = 10.0  # reset on successful connect
                 while ib.isConnected() and not stop.is_set():
                     await asyncio.sleep(1.0)
+                    idle = monotonic() - last_bar_at["t"]
+                    if idle > _ZOMBIE_TIMEOUT:
+                        logger.warning(
+                            "IBKR zombie detected: no data for %.0fs — forcing reconnect", idle
+                        )
+                        break
             except Exception as exc:  # noqa: BLE001 — reconnect on any IB/socket error
                 logger.error("IBKR stream error: %r", exc)
             finally:
                 if ib.isConnected():
                     ib.disconnect()
             if not stop.is_set():
-                logger.info("IBKR reconnecting in 10s ...")
+                logger.info("IBKR reconnecting in %.0fs ...", backoff)
                 with contextlib.suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(stop.wait(), timeout=10.0)
+                    await asyncio.wait_for(stop.wait(), timeout=backoff)
+                backoff = min(backoff * 2, max_backoff)
     finally:
         consumer.cancel()
         refresher.cancel()

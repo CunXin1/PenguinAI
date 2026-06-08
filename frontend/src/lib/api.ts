@@ -18,6 +18,7 @@ import type {
 } from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api";
+const DEFAULT_TIMEOUT_MS = 10_000;
 
 // ── Auth token management ──────────────────────────────────────────────────────
 function getToken(): string | null {
@@ -30,11 +31,28 @@ function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
-async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    headers: { "Content-Type": "application/json", ...authHeaders(), ...options?.headers },
-    ...options,
-  });
+async function apiFetch<T>(path: string, options?: RequestInit & { timeoutMs?: number }): Promise<T> {
+  const controller = new AbortController();
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  let res: globalThis.Response;
+  try {
+    res = await fetch(`${BASE_URL}${path}`, {
+      headers: { "Content-Type": "application/json", ...authHeaders(), ...options?.headers },
+      ...options,
+      signal: options?.signal ?? controller.signal,
+    });
+  } catch (err: unknown) {
+    clearTimeout(timer);
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw Object.assign(new Error(`Request timeout after ${timeoutMs}ms`), { status: 0, timeout: true });
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+
   if (res.status === 204) {
     return undefined as T;
   }
@@ -69,6 +87,24 @@ export const auth = {
     }),
 
   me: () => apiFetch<User>("/auth/me"),
+
+  forgotPassword: (email: string) =>
+    apiFetch<{ message: string }>("/auth/forgot-password", {
+      method: "POST",
+      body: JSON.stringify({ email }),
+    }),
+
+  resetPassword: (token: string, password: string) =>
+    apiFetch<{ message: string }>("/auth/reset-password", {
+      method: "POST",
+      body: JSON.stringify({ token, password }),
+    }),
+
+  changePassword: (current_password: string, new_password: string) =>
+    apiFetch<{ message: string }>("/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({ current_password, new_password }),
+    }),
 };
 
 // ── Signal API ─────────────────────────────────────────────────────────────────

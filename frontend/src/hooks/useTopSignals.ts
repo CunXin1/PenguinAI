@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { marketData, signals } from "@/lib/api";
+import { useMarketStatus } from "@/lib/market-status";
 import { MOCK_SIGNALS } from "@/lib/mock";
 import type { Quote, SignalView } from "@/lib/types";
 
@@ -62,6 +63,7 @@ async function withRealMarketData(base: SignalView[]): Promise<SignalView[]> {
  * values match the database regardless of whether the signals are live or demo.
  */
 export function useTopSignals() {
+  const { isOpen } = useMarketStatus();
   return useQuery<SignalView[]>({
     queryKey: ["topSignals"],
     queryFn: async () => {
@@ -78,7 +80,7 @@ export function useTopSignals() {
       return withRealMarketData(base);
     },
     initialData: MOCK_SIGNALS,
-    staleTime: 0, // with initialData, any non-zero staleTime suppresses the fetch
-    refetchInterval: 60_000,
+    staleTime: 0,
+    refetchInterval: isOpen ? 60_000 : false,
   });
 }

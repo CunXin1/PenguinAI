@@ -1,61 +1,86 @@
 """Single source of truth for "is the US market open right now?".
 
-Combines a clock-based regular-session check (ET weekday 09:30–16:00) with a
-clock-INDEPENDENT fallback: if the live minute feed's newest bar is actually
-advancing in real (monotonic) time, the market is live regardless of the wall
-clock. Shared by the /market-data/status endpoint and the heatmap so every
-surface agrees on ONE answer. Holidays are not modeled.
+Combines exchange_calendars (authoritative NYSE schedule including holidays,
+early closes, and special sessions) with a clock-INDEPENDENT fallback: if the
+live minute feed's newest bar is actually advancing in real (monotonic) time,
+the market is live regardless of the wall clock. Shared by the /market-data/status
+endpoint and the heatmap so every surface agrees on ONE answer.
 """
 
 from __future__ import annotations
 
+import logging
+import threading
 from datetime import UTC, datetime
 from time import monotonic
 from zoneinfo import ZoneInfo
 
+import exchange_calendars as xcals
+import pandas as pd
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-ET = ZoneInfo("America/New_York")  # US market session timezone
+logger = logging.getLogger(__name__)
+
+ET = ZoneInfo("America/New_York")
+
+_nyse = xcals.get_calendar("XNYS")
 
 
 def is_regular_session(now_utc: datetime) -> bool:
-    """US regular session: weekdays 09:30–16:00 ET (holidays not modeled)."""
-    et = now_utc.astimezone(ET)
-    if et.weekday() >= 5:  # Sat/Sun
+    """True when `now_utc` falls inside an NYSE regular trading session,
+    respecting all holidays, early closes, and special sessions."""
+    ts = pd.Timestamp(now_utc, tz="UTC") if now_utc.tzinfo is None else pd.Timestamp(now_utc).tz_convert("UTC")
+    if not _nyse.is_session(ts.normalize().tz_localize(None)):
         return False
-    open_t = et.replace(hour=9, minute=30, second=0, microsecond=0)
-    close_t = et.replace(hour=16, minute=0, second=0, microsecond=0)
-    return open_t <= et < close_t
+    try:
+        open_t = _nyse.session_open(ts.normalize().tz_localize(None))
+        close_t = _nyse.session_close(ts.normalize().tz_localize(None))
+    except ValueError:
+        return False
+    return open_t <= ts <= close_t
 
 
-# Tracks whether the live minute feed is advancing, using a MONOTONIC clock so it
-# works even if the system wall-clock is wrong. Process-global (one API worker).
-_LIVE_TICKS: dict = {"max": None, "advanced_at": None}
-# Stay "live" if a new bar arrived within this many real seconds. Bars land ~1/min
-# during a session (with jitter / 15-min Massive delay), so a generous window keeps
-# the badge stable; it flips to closed only after the feed truly stops (~6 min).
+def is_early_close(d: datetime) -> bool:
+    """True if the given date is an NYSE early-close session."""
+    ts = pd.Timestamp(d, tz="UTC") if d.tzinfo is None else pd.Timestamp(d).tz_convert("UTC")
+    ts_naive = ts.normalize().tz_localize(None)
+    if not _nyse.is_session(ts_naive):
+        return False
+    close_t = _nyse.session_close(ts_naive)
+    return close_t.hour < 16
+
+
 _LIVE_WINDOW_S = 360.0
+_tick_lock = threading.Lock()
+
+
+class _TickState:
+    __slots__ = ("max_tick", "advanced_at")
+
+    def __init__(self):
+        self.max_tick: datetime | None = None
+        self.advanced_at: float | None = None
+
+
+_tick_state = _TickState()
 
 
 def ticks_advancing(latest_tick: datetime | None) -> bool:
     """True if the newest minute bar grew within the last _LIVE_WINDOW_S seconds.
 
-    Robust to a wrong system clock: it requires an actual *advance* between
-    observations, not just recency vs a (possibly-bad) now(), so stale data can't
-    fool it either. Process-global state — safe to call from multiple endpoints;
-    every caller just contributes another observation.
+    Thread-safe: uses a lock to ensure atomic read-modify-write of the shared state.
     """
     if latest_tick is None:
         return False
     mono = monotonic()
-    prev = _LIVE_TICKS["max"]
-    if prev is None:
-        _LIVE_TICKS["max"] = latest_tick  # seed (can't tell on first observation)
-    elif latest_tick > prev:
-        _LIVE_TICKS["max"] = latest_tick
-        _LIVE_TICKS["advanced_at"] = mono
-    at = _LIVE_TICKS["advanced_at"]
+    with _tick_lock:
+        if _tick_state.max_tick is None:
+            _tick_state.max_tick = latest_tick
+        elif latest_tick > _tick_state.max_tick:
+            _tick_state.max_tick = latest_tick
+            _tick_state.advanced_at = mono
+        at = _tick_state.advanced_at
     return at is not None and (mono - at) <= _LIVE_WINDOW_S
 
 

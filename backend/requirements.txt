@@ -13,3 +13,5 @@ celery[redis]==5.6.3
 redis==5.2.1
 httpx==0.28.1
 python-dotenv==1.0.1
+pandas>=2.2
+exchange-calendars>=4.5

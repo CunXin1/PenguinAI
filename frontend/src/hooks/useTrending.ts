@@ -2,6 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { marketData } from "@/lib/api";
+import { useMarketStatus } from "@/lib/market-status";
 import { MOCK_TRENDING } from "@/lib/mock";
 
 export interface TrendRow {
@@ -24,6 +25,7 @@ const TRENDING_WATCH = [
  * graceful fallback to demo data when the backend is unavailable.
  */
 export function useTrending(limit = 6) {
+  const { isOpen } = useMarketStatus();
   const fallback = MOCK_TRENDING.slice(0, limit).map((t) => ({
     ticker: t.ticker,
     price: t.price,
@@ -45,7 +47,7 @@ export function useTrending(limit = 6) {
       }
     },
     initialData: fallback,
-    staleTime: 0, // with initialData, any non-zero staleTime suppresses the fetch
-    refetchInterval: 60_000,
+    staleTime: 0,
+    refetchInterval: isOpen ? 60_000 : false,
   });
 }

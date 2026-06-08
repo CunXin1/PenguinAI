@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import random
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -31,15 +32,20 @@ _UPSERT_SQL = text(
     """
 )
 
+_RETRYABLE_STATUSES = {429, 500, 502, 503, 504}
+
 
 async def poll_symbol(engine, client: httpx.AsyncClient, base: str, key: str, sym: str) -> int:
-    """Fetch today's new 1-min bars for `sym`, upsert, recompute indicators."""
+    """Fetch today's new 1-min bars for `sym`, upsert, recompute indicators.
+
+    Returns:
+        positive int = bars written
+        0  = no new data (normal)
+        -1 = retryable error (rate-limited or server error)
+    """
     async with engine.connect() as conn:
         last = (await conn.execute(_LAST_SQL, {"t": sym})).scalar()
     last_ms = int(last.timestamp() * 1000) if last else 0
-    # Trailing range, not a single "today": on weekends / holidays / pre-open the
-    # current ET day has no data and Massive 403s a single-day query. A few days
-    # back always spans the latest trading day; last_ms below skips already-stored.
     today = datetime.now(ET).date()
     frm = (today - timedelta(days=4)).isoformat()
     url = (
@@ -49,11 +55,19 @@ async def poll_symbol(engine, client: httpx.AsyncClient, base: str, key: str, sy
     try:
         resp = await client.get(url)
     except httpx.HTTPError as exc:
-        logger.warning("massive %s: %r", sym, exc)
-        return 0
+        logger.warning("massive %s http error: %r", sym, exc)
+        return -1
+    if resp.status_code in _RETRYABLE_STATUSES:
+        logger.warning("massive %s: HTTP %d (retryable)", sym, resp.status_code)
+        return -1
     if resp.status_code != 200:
+        logger.debug("massive %s: HTTP %d (non-retryable, skipping)", sym, resp.status_code)
         return 0
-    results = (resp.json() or {}).get("results") or []
+    try:
+        results = (resp.json() or {}).get("results") or []
+    except Exception:  # noqa: BLE001
+        logger.warning("massive %s: malformed JSON response", sym)
+        return -1
 
     rows: list[dict] = []
     for b in results:
@@ -88,23 +102,39 @@ async def run(engine, settings, stop: asyncio.Event, symbols: list[str]) -> None
     base = settings.MASSIVE_BASE_URL.rstrip("/")
     key = settings.MASSIVE_API_KEY
     sem = asyncio.Semaphore(8)
-    logger.info("Massive poller: %d symbols every %ds", len(symbols), settings.MASSIVE_POLL_INTERVAL)
+    interval = settings.MASSIVE_POLL_INTERVAL
+    logger.info("Massive poller: %d symbols every %ds", len(symbols), interval)
 
-    async def one(client, sym):
+    consecutive_failures: dict[str, int] = {}
+
+    async def one(client: httpx.AsyncClient, sym: str, jitter: float) -> int:
+        await asyncio.sleep(jitter)
         async with sem:
             try:
-                return await poll_symbol(engine, client, base, key, sym)
-            except Exception as exc:  # noqa: BLE001 — keep the loop alive
+                result = await poll_symbol(engine, client, base, key, sym)
+            except Exception as exc:  # noqa: BLE001
                 logger.error("poll %s: %r", sym, exc)
+                result = -1
+
+            if result < 0:
+                consecutive_failures[sym] = consecutive_failures.get(sym, 0) + 1
+                n = consecutive_failures[sym]
+                if n == 5:
+                    logger.warning("massive %s: 5 consecutive failures", sym)
+                elif n == 20:
+                    logger.error("massive %s: 20 consecutive failures — possible permanent issue", sym)
                 return 0
+            consecutive_failures.pop(sym, None)
+            return result
 
     async with httpx.AsyncClient(
         timeout=30.0, headers={"Authorization": f"Bearer {key}"}
     ) as client:
         while not stop.is_set():
-            res = await asyncio.gather(*(one(client, s) for s in symbols))
+            jitters = [random.uniform(0, interval * 0.3) for _ in symbols]
+            res = await asyncio.gather(*(one(client, s, j) for s, j in zip(symbols, jitters)))
             total = sum(res)
             if total:
                 logger.info("massive poll: +%d bars across %d symbols", total, sum(1 for x in res if x))
             with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=settings.MASSIVE_POLL_INTERVAL)
+                await asyncio.wait_for(stop.wait(), timeout=interval)

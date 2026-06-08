@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,13 +11,27 @@ from app.core.market_clock import ET, get_market_status, is_regular_session, tic
 
 router = APIRouter()
 
+# Cached market status — avoid hitting SELECT max(time) FROM market_data_1min on every request.
+_status_cache: dict = {"data": None, "ts": 0.0}
+_STATUS_CACHE_TTL = 5.0  # seconds
+
 
 @router.get("/status")
-async def market_status(db: AsyncSession = Depends(get_db)):
+async def market_status(response: Response, db: AsyncSession = Depends(get_db)):
     """Global "is the US market open right now" — the single source of truth the
     frontend uses for the LIVE/CLOSED badge and to gate live-poll cadence across
     every market-data surface. Public (no auth)."""
-    return await get_market_status(db)
+    import time
+
+    now_mono = time.monotonic()
+    if _status_cache["data"] is not None and (now_mono - _status_cache["ts"]) < _STATUS_CACHE_TTL:
+        response.headers["Cache-Control"] = "public, max-age=5"
+        return _status_cache["data"]
+    result = await get_market_status(db)
+    _status_cache["data"] = result
+    _status_cache["ts"] = now_mono
+    response.headers["Cache-Control"] = "public, max-age=5"
+    return result
 
 
 @router.post("/{ticker}/warm")
@@ -40,6 +54,8 @@ async def get_candles(
 ):
     """Return OHLCV bars for charting. Frontend uses TradingView Lightweight Charts."""
     ticker = ticker.upper()
+    if timeframe == "1min" and days > 30:
+        days = 30
     since = datetime.now(UTC) - timedelta(days=days)
 
     table_map = {
@@ -70,7 +86,7 @@ async def get_candles(
         }
         for row in rows.mappings()
     ]
-    return {"ticker": ticker, "timeframe": timeframe, "candles": candles}
+    return {"ticker": ticker, "timeframe": timeframe, "candles": candles, "count": len(candles)}
 
 
 @router.get("/quotes")
@@ -341,7 +357,10 @@ async def get_series(
             GROUP BY t
             ORDER BY t ASC
         """
-        bars = _bars_from_rows(await db.execute(text(fallback_sql), params))
+        try:
+            bars = _bars_from_rows(await db.execute(text(fallback_sql), params))
+        except Exception:
+            bars = []
 
     return {"ticker": tkr, "range": rng, "bars": bars}
 
@@ -357,7 +376,10 @@ _INDEX_TILES = (
 )
 
 # Last 2 daily bars per instrument + the stored return horizons, via the
-# (instrument_id, ts) index — cheap. Reused by the map tiles and the index tiles.
+# (instrument_id, ts) index — cheap.
+# NOTE: `{inst}` is a SQL column reference (e.g. "top.instrument_id"), NOT user
+# input — the only callers are the heatmap queries below with hardcoded column
+# names. Still, mark it clearly so future edits don't pass user strings here.
 _DAILY_LATERAL = """
     LEFT JOIN LATERAL (
         SELECT max(adj_close) FILTER (WHERE rn = 1) AS last_close,
@@ -373,6 +395,13 @@ _DAILY_LATERAL = """
         ) x
     ) lc ON TRUE
 """
+_ALLOWED_LATERAL_INST = {"top.instrument_id", "i.instrument_id"}
+
+
+def _daily_lateral(inst: str) -> str:
+    if inst not in _ALLOWED_LATERAL_INST:
+        raise ValueError(f"invalid lateral column: {inst}")
+    return _DAILY_LATERAL.format(inst=inst)
 
 
 def _period_change(
@@ -398,6 +427,7 @@ def _period_change(
 
 @router.get("/heatmap")
 async def get_heatmap(
+    response: Response,
     db: AsyncSession = Depends(get_db),
     limit: int = Query(default=100, ge=10, le=500),
     period: str = Query(default="1D", description="1D | 1W | 1M | 3M | 1Y"),
@@ -441,7 +471,7 @@ async def get_heatmap(
             SELECT top.ticker, top.name, top.sector, top.market_cap,
                    lc.last_close, lc.prev_close, lc.ret_5d, lc.ret_21d, lc.ret_63d, lc.ret_252d
             FROM top
-            {_DAILY_LATERAL.format(inst="top.instrument_id")}
+            {_daily_lateral("top.instrument_id")}
             ORDER BY top.market_cap DESC
         """),
         {"limit": limit},
@@ -455,7 +485,7 @@ async def get_heatmap(
             SELECT i.symbol, lc.last_close, lc.prev_close,
                    lc.ret_5d, lc.ret_21d, lc.ret_63d, lc.ret_252d
             FROM instruments i
-            {_DAILY_LATERAL.format(inst="i.instrument_id")}
+            {_daily_lateral("i.instrument_id")}
             WHERE i.symbol = ANY(:syms)
         """),
         {"syms": idx_syms},
@@ -505,6 +535,7 @@ async def get_heatmap(
         price, change_pct = res
         indices.append({"ticker": sym, "label": label, "price": price, "change_pct": change_pct})
 
+    response.headers["Cache-Control"] = "public, max-age=10" if is_open else "public, max-age=60"
     return {
         "market_open": is_open,
         "as_of": now.isoformat(),

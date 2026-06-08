@@ -18,8 +18,8 @@ class Settings(BaseSettings):
 
     # ── Database ──────────────────────────────────────────────────
     DATABASE_URL: str = "postgresql+asyncpg://penguinai:penguinai_dev@localhost:5432/penguinai"
-    DATABASE_POOL_SIZE: int = 20
-    DATABASE_MAX_OVERFLOW: int = 10
+    DATABASE_POOL_SIZE: int = 40
+    DATABASE_MAX_OVERFLOW: int = 20
 
     # ── Redis ─────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"

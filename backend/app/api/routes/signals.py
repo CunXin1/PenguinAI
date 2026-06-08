@@ -27,18 +27,35 @@ def _validate_ticker(ticker: str) -> str:
     return t
 
 
+_celery_app = None
+_inflight: dict[str, float] = {}
+_INFLIGHT_TTL = 300.0  # don't re-trigger same ticker within 5 minutes
+
+
 def _trigger_signal_computation(ticker: str) -> None:
-    """Send Celery task by name string — no ML imports in the API process."""
-    from celery import Celery
+    """Send Celery task by name string — no ML imports in the API process.
+    Deduplicates: won't re-trigger the same ticker within _INFLIGHT_TTL seconds."""
+    import time
 
-    from app.core.config import settings
+    now = time.monotonic()
+    prev = _inflight.get(ticker)
+    if prev is not None and (now - prev) < _INFLIGHT_TTL:
+        return
 
-    app = Celery(broker=settings.REDIS_URL)
-    app.send_task(
+    global _celery_app  # noqa: PLW0603
+    if _celery_app is None:
+        from celery import Celery
+
+        from app.core.config import settings
+
+        _celery_app = Celery(broker=settings.REDIS_URL)
+
+    _celery_app.send_task(
         "ml.tasks.hourly_signal_cache.compute_single_signal",
         args=[ticker],
         queue="ml_inference",
     )
+    _inflight[ticker] = now
 
 
 @router.get("/top", response_model=list[SignalListItem])
