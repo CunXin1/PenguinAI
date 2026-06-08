@@ -126,25 +126,10 @@ export function Navbar() {
     function handleClickOutside(e: MouseEvent) {
       const target = e.target as Node;
       if (
-        desktopDropdownRef.current &&
-        !desktopDropdownRef.current.contains(target) &&
-        mobileDropdownRef.current &&
-        !mobileDropdownRef.current.contains(target)
-      ) {
-        setDropdownOpen(false);
-      } else if (
-        desktopDropdownRef.current &&
-        !desktopDropdownRef.current.contains(target) &&
-        !mobileDropdownRef.current
-      ) {
-        setDropdownOpen(false);
-      } else if (
-        !desktopDropdownRef.current &&
-        mobileDropdownRef.current &&
-        !mobileDropdownRef.current.contains(target)
-      ) {
-        setDropdownOpen(false);
-      }
+        desktopDropdownRef.current?.contains(target) ||
+        mobileDropdownRef.current?.contains(target)
+      ) return;
+      setDropdownOpen(false);
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
