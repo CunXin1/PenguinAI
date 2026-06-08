@@ -18,11 +18,14 @@ class RealtimeSettings(BaseSettings):
     IBKR_PORT: int = 7497  # 7496/7497 TWS live/paper · 4001/4002 Gateway
     IBKR_CLIENT_ID: int = 3  # distinct from ibkr_stream.py (2) and the API (1)
 
+    FINNHUB_API_KEY: str = ""
+
     # Master switch the FastAPI lifespan checks before spawning the supervisor.
     REALTIME_ENABLED: bool = True
     # Poll cadences (seconds)
     MASSIVE_POLL_INTERVAL: int = 60
     IBKR_ENABLED: bool = True  # set false to run Massive-only (no TWS)
+    FINNHUB_WS_ENABLED: bool = True  # Finnhub WebSocket hot-standby for IBKR
 
 
 # ── IBKR-streamed set: 10 ETFs + 40 stocks, by 60-day ADDV (dollar volume) ────

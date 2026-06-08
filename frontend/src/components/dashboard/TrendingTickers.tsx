@@ -16,7 +16,7 @@ export function TrendingTickers() {
         Trending
       </h3>
       <div className="space-y-0.5">
-        {data.map((t) => {
+        {data?.map((t) => {
           const up = t.change_pct >= 0;
           return (
             <Link

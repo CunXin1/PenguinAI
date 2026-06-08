@@ -1,8 +1,14 @@
 import json
+import logging
+import secrets
 from functools import lru_cache
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_logger = logging.getLogger(__name__)
+
+_INSECURE_KEYS = {"change_me", "change_me_to_a_long_random_string_in_production", ""}
 
 
 class Settings(BaseSettings):
@@ -16,6 +22,23 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
 
+    @model_validator(mode="after")
+    def _check_secret_key(self) -> "Settings":
+        if self.SECRET_KEY not in _INSECURE_KEYS:
+            return self
+        self.SECRET_KEY = secrets.token_urlsafe(64)
+        if self.DEBUG:
+            _logger.warning(
+                "SECRET_KEY not set — using ephemeral random key (dev only, tokens reset on restart)"
+            )
+        else:
+            _logger.critical(
+                "SECRET_KEY is insecure in non-DEBUG mode! All tokens will reset on restart. "
+                "Set a strong SECRET_KEY in .env for production. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+            )
+        return self
+
     # ── Database ──────────────────────────────────────────────────
     DATABASE_URL: str = "postgresql+asyncpg://penguinai:penguinai_dev@localhost:5432/penguinai"
     DATABASE_POOL_SIZE: int = 40
@@ -23,6 +46,18 @@ class Settings(BaseSettings):
 
     # ── Redis ─────────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
+
+    # ── Rate limiting (per IP, Redis-backed) ─────────────────────
+    RATE_LIMIT_LOGIN_TIMES: int = 10       # max attempts per window
+    RATE_LIMIT_LOGIN_WINDOW: int = 60      # seconds
+    RATE_LIMIT_REGISTER_TIMES: int = 5
+    RATE_LIMIT_REGISTER_WINDOW: int = 3600
+    RATE_LIMIT_FORGOT_PW_TIMES: int = 5
+    RATE_LIMIT_FORGOT_PW_WINDOW: int = 3600
+    RATE_LIMIT_RESET_PW_TIMES: int = 5
+    RATE_LIMIT_RESET_PW_WINDOW: int = 3600
+    RATE_LIMIT_ACCOUNT_LOGIN_TIMES: int = 20   # per account (any IP)
+    RATE_LIMIT_ACCOUNT_LOGIN_WINDOW: int = 3600
 
     # ── Signal cache TTL (seconds) ────────────────────────────────
     CACHE_TTL_TOP100: int = 3600  # 1 hour

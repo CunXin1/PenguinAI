@@ -1,6 +1,10 @@
 """Massive 1-min poller — keeps market_data_1min fresh for the symbols the IBKR
 stream does NOT cover (the rest of the watched 1-min universe), then recomputes
 indicators. ~15-min delayed (Starter plan), no TWS needed.
+
+Also acts as HOT STANDBY for IBKR symbols: if any IBKR-covered ticker's latest
+bar is older than _IBKR_STALE_THRESHOLD, Massive polls it as a fallback so core
+symbols (SPY, NVDA, etc.) are never dark for more than ~2 minutes.
 """
 
 from __future__ import annotations
@@ -21,6 +25,13 @@ logger = logging.getLogger("realtime.massive")
 ET = ZoneInfo("America/New_York")
 
 _LAST_SQL = text("SELECT max(time) FROM market_data_1min WHERE ticker = :t")
+_STALE_SQL = text(
+    "SELECT ticker FROM market_data_1min"
+    " WHERE ticker = ANY(:syms)"
+    " GROUP BY ticker"
+    " HAVING max(time) < now() - :threshold"
+)
+_IBKR_STALE_THRESHOLD = timedelta(minutes=2)
 _UPSERT_SQL = text(
     """
     INSERT INTO market_data_1min (time, ticker, open, high, low, close, volume, vwap, source)
@@ -92,18 +103,31 @@ async def poll_symbol(engine, client: httpx.AsyncClient, base: str, key: str, sy
     return len(rows)
 
 
-async def run(engine, settings, stop: asyncio.Event, symbols: list[str]) -> None:
+async def run(
+    engine,
+    settings,
+    stop: asyncio.Event,
+    symbols: list[str],
+    ibkr_fallback_symbols: list[str] | None = None,
+) -> None:
+    """Poll Massive for `symbols` every interval. If `ibkr_fallback_symbols` is
+    provided, also check those tickers each cycle and poll any whose latest bar
+    is older than _IBKR_STALE_THRESHOLD — hot standby for IBKR outages."""
     if not settings.MASSIVE_API_KEY:
         logger.warning("MASSIVE_API_KEY empty — Massive poller disabled")
         return
-    if not symbols:
+    if not symbols and not ibkr_fallback_symbols:
         logger.info("Massive poller: no symbols to poll")
         return
     base = settings.MASSIVE_BASE_URL.rstrip("/")
     key = settings.MASSIVE_API_KEY
     sem = asyncio.Semaphore(8)
     interval = settings.MASSIVE_POLL_INTERVAL
-    logger.info("Massive poller: %d symbols every %ds", len(symbols), interval)
+    ibkr_fb = ibkr_fallback_symbols or []
+    logger.info(
+        "Massive poller: %d symbols every %ds + %d IBKR fallback",
+        len(symbols), interval, len(ibkr_fb),
+    )
 
     consecutive_failures: dict[str, int] = {}
 
@@ -127,14 +151,36 @@ async def run(engine, settings, stop: asyncio.Event, symbols: list[str]) -> None
             consecutive_failures.pop(sym, None)
             return result
 
+    async def _stale_ibkr_tickers() -> list[str]:
+        """Return IBKR-assigned tickers whose latest bar is older than the threshold."""
+        if not ibkr_fb:
+            return []
+        async with engine.connect() as conn:
+            rows = (
+                await conn.execute(_STALE_SQL, {"syms": ibkr_fb, "threshold": _IBKR_STALE_THRESHOLD})
+            ).scalars().all()
+        return list(rows)
+
     async with httpx.AsyncClient(
         timeout=30.0, headers={"Authorization": f"Bearer {key}"}
     ) as client:
         while not stop.is_set():
-            jitters = [random.uniform(0, interval * 0.3) for _ in symbols]
-            res = await asyncio.gather(*(one(client, s, j) for s, j in zip(symbols, jitters)))
+            stale = await _stale_ibkr_tickers()
+            if stale:
+                logger.warning("IBKR fallback: %d stale tickers → Massive: %s", len(stale), stale[:10])
+            batch = symbols + stale
+            if not batch:
+                with contextlib.suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(stop.wait(), timeout=interval)
+                continue
+            jitters = [random.uniform(0, interval * 0.3) for _ in batch]
+            res = await asyncio.gather(*(one(client, s, j) for s, j in zip(batch, jitters)))
             total = sum(res)
             if total:
-                logger.info("massive poll: +%d bars across %d symbols", total, sum(1 for x in res if x))
+                fb_total = sum(res[len(symbols):])
+                msg = f"massive poll: +{total} bars across {sum(1 for x in res if x)} symbols"
+                if fb_total:
+                    msg += f" (incl. {fb_total} IBKR-fallback bars)"
+                logger.info(msg)
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=interval)

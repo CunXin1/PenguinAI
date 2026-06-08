@@ -101,9 +101,20 @@ export const auth = {
     }),
 
   changePassword: (current_password: string, new_password: string) =>
-    apiFetch<{ message: string }>("/auth/change-password", {
+    apiFetch<{ message: string; access_token?: string }>("/auth/change-password", {
       method: "POST",
       body: JSON.stringify({ current_password, new_password }),
+    }),
+
+  verifyEmail: (token: string) =>
+    apiFetch<{ message: string }>("/auth/verify-email", {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    }),
+
+  resendVerification: () =>
+    apiFetch<{ message: string }>("/auth/resend-verification", {
+      method: "POST",
     }),
 };
 

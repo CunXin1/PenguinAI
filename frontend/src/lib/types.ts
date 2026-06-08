@@ -99,6 +99,7 @@ export interface User {
   email: string;
   display_name: string | null;
   tier: UserTier;
+  email_verified: boolean;
   created_at: string;
 }
 

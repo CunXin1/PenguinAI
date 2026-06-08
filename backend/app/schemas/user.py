@@ -37,7 +37,7 @@ class RegisterRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(max_length=128)
 
 
 class TokenResponse(BaseModel):
@@ -69,11 +69,16 @@ class ChangePasswordRequest(BaseModel):
         return _validate_password_strength(v)
 
 
+class VerifyEmailRequest(BaseModel):
+    token: str
+
+
 class UserResponse(BaseModel):
     id: str
     email: str
     display_name: str | None
     tier: Literal["FREE", "PRO", "PREMIUM", "ADMIN"]
+    email_verified: bool
     created_at: datetime
 
     model_config = {"from_attributes": True}

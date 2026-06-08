@@ -1,71 +1,267 @@
 # Backend — FastAPI API Gateway
 
-## English
+## Overview
 
-### Overview
+The backend is the API gateway for PenguinAI. It handles authentication (with password reset flow), signal retrieval, watchlist management, market-data serving, the earnings calendar, market status (NYSE calendar-aware), realtime ingestion supervision, and the user symbol-request (data-demand) queue. It deliberately contains **no ML logic** — all signal computation is dispatched to the ML layer via Celery task names.
 
-The backend is the API gateway for PenguinAI. It handles authentication, signal retrieval, watchlist management, market-data serving, the earnings calendar, and the user symbol-request (data-demand) queue. It deliberately contains **no ML logic** — all signal computation is dispatched to the ML layer via Celery task names.
-
-### Structure
+## Project Structure
 
 ```
 backend/
 ├── app/
-│   ├── main.py              Entry point — FastAPI app, middleware, router registration
+│   ├── main.py                  Entry point — FastAPI app, CORS, lifespan, SupervisorWatchdog
+│   ├── conftest.py              Shared test fixtures (SQLite in-memory, PG-type patches, users/tickers)
 │   ├── api/
-│   │   ├── deps.py          Dependency injection: get_db, get_current_user, require_tier
+│   │   ├── deps.py              Dependency injection: get_db, get_current_user, get_optional_user, require_tier
 │   │   └── routes/
-│   │       ├── signals.py   GET /api/signals/{ticker}, GET /api/signals/top
-│   │       ├── auth.py      POST /api/auth/register, /login, GET /me
-│   │       ├── tickers.py   GET /api/tickers/search, /universe, /{ticker}
-│   │       ├── watchlist.py GET/POST/DELETE /api/watchlist
-│   │       ├── market_data.py GET /api/market-data/{ticker}/candles, /{ticker}/series, /quotes, /mini, /heatmap
-│   │       ├── earnings.py  GET /api/earnings/calendar, /api/earnings/{ticker}
-│   │       ├── symbols.py   POST /api/symbols/request, GET /api/symbols/requests (ADMIN)
-│   │       └── admin.py     GET /api/admin/pipeline/status, POST /api/admin/cache/refresh (ADMIN tier only)
+│   │       ├── auth.py          Register, login, me, forgot/reset/change password, OAuth placeholder
+│   │       ├── signals.py       GET /api/signals/{ticker}, GET /api/signals/top
+│   │       ├── tickers.py       GET /api/tickers/search, /universe, /{ticker}
+│   │       ├── watchlist.py     GET/POST/DELETE /api/watchlist
+│   │       ├── market_data.py   Candles, series, quotes, mini, heatmap, market status, on-demand warm
+│   │       ├── earnings.py      GET /api/earnings/calendar, /api/earnings/{ticker}
+│   │       ├── symbols.py       POST /api/symbols/request, GET /api/symbols/requests (ADMIN)
+│   │       ├── admin.py         GET /api/admin/pipeline/status, POST /api/admin/cache/refresh (ADMIN)
+│   │       └── tests/           Route-level integration tests
+│   │           ├── conftest.py
+│   │           ├── test_auth.py
+│   │           ├── test_signals.py
+│   │           ├── test_watchlist.py
+│   │           ├── test_tickers_symbols.py
+│   │           ├── test_market_data.py
+│   │           └── test_admin.py
 │   ├── core/
-│   │   ├── config.py        Pydantic Settings — all config via environment variables
-│   │   ├── database.py      Async SQLAlchemy engine + session factory
-│   │   └── security.py      JWT creation/decoding, bcrypt password hashing
-│   ├── models/              SQLAlchemy ORM models (mapped to DB tables)
+│   │   ├── config.py            Pydantic Settings — all config via environment variables
+│   │   ├── database.py          Async SQLAlchemy engine + session factory (asyncpg / aiosqlite)
+│   │   ├── security.py          JWT creation/decoding, bcrypt password hashing, reset tokens
+│   │   ├── market_clock.py      NYSE session detection via exchange_calendars, tick-advancing fallback
+│   │   ├── rate_limit.py        Redis-backed sliding-window rate limiter (INCR + EXPIRE)
+│   │   └── tests/
+│   │       └── test_core.py     Unit tests for market_clock, security, JWT
+│   ├── models/                  SQLAlchemy ORM models (mapped to DB tables)
 │   │   ├── user.py
 │   │   ├── ticker.py
 │   │   ├── signal_cache.py
-│   │   ├── symbol_request.py   Data-demand queue (user-requested uncovered symbols)
+│   │   ├── symbol_request.py    Data-demand queue (user-requested uncovered symbols)
 │   │   └── watchlist.py
-│   └── schemas/             Pydantic request/response schemas
-│       ├── signal.py        SignalResponse, SignalListItem, MLScores, SentimentInfo
-│       ├── user.py          RegisterRequest, LoginRequest, TokenResponse, UserResponse
-│       ├── symbol_request.py   SymbolRequestInput, SymbolRequestResult, SymbolRequestRow
-│       └── ticker.py        TickerResponse, TickerSearchResult
-├── alembic.ini              Alembic config (points to db/migrations/)
+│   └── schemas/                 Pydantic request/response schemas
+│       ├── signal.py            SignalResponse, SignalListItem, MLScores, SentimentInfo
+│       ├── user.py              RegisterRequest, LoginRequest, TokenResponse, UserResponse,
+│       │                        ForgotPasswordRequest, ResetPasswordRequest, ChangePasswordRequest
+│       ├── symbol_request.py    SymbolRequestInput, SymbolRequestResult, SymbolRequestRow
+│       └── ticker.py            TickerResponse, TickerSearchResult
+├── alembic.ini
 ├── requirements.txt
-└── Dockerfile
+├── Dockerfile
+└── scripts/
 ```
 
-### Key Design Decisions
+## API Endpoints
 
-**Authentication**
-- JWT Bearer tokens, 7-day expiry
-- `get_current_user` dependency raises 401 on invalid/missing token
-- `get_optional_user` returns `None` for unauthenticated requests (for public endpoints)
-- `require_tier("PRO", "PREMIUM")` factory creates tier-gated dependencies
+### Auth (`/api/auth`)
 
-**Signal Retrieval Flow**
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/auth/register` | No | Create account, returns JWT. Rate-limited: 5/hour per IP |
+| POST | `/api/auth/login` | No | Authenticate, returns JWT. Rate-limited: 10/min per IP |
+| GET | `/api/auth/me` | Yes | Return current user profile |
+| POST | `/api/auth/forgot-password` | No | Generate password reset token (always returns 200). Rate-limited: 5/hour |
+| POST | `/api/auth/reset-password` | No | Reset password using a token (1-hour expiry). Rate-limited: 5/hour |
+| POST | `/api/auth/change-password` | Yes | Change password (requires current password) |
+| GET | `/api/auth/oauth/{provider}` | No | OAuth placeholder (returns 501) |
+
+### Signals (`/api/signals`)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/signals/top` | No | Pre-computed Top-N signals ordered by confidence (limit param, max 200) |
+| GET | `/api/signals/{ticker}` | Optional | Signal for a ticker: 200 cache hit, 202 triggers compute, 404 not in universe. `poll=true` skips re-trigger |
+
+### Tickers (`/api/tickers`)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/tickers/search` | No | Search by ticker prefix or name substring (q param, limit 20) |
+| GET | `/api/tickers/universe` | No | Browse active tickers with optional `sector`/`tag` filter and pagination |
+| GET | `/api/tickers/{ticker}` | No | Single ticker detail |
+
+### Watchlist (`/api/watchlist`)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/watchlist` | Yes | User's watchlist tickers with latest cached signals |
+| POST | `/api/watchlist/{ticker}` | Yes | Add ticker to watchlist (409 if duplicate, 404 if unknown) |
+| DELETE | `/api/watchlist/{ticker}` | Yes | Remove ticker from watchlist (idempotent, 204) |
+
+### Market Data (`/api/market-data`)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/market-data/status` | No | Is the US market open right now (used by frontend LIVE/CLOSED badge). 5s server cache |
+| GET | `/api/market-data/{ticker}/candles` | No | OHLCV bars for charting (timeframe: 1min/30min/1day, days: 1-365) |
+| GET | `/api/market-data/{ticker}/series` | No | OHLC series for range (1D/1W/1M/3M/1Y), time_bucket-aggregated. Falls back to 30min/daily bars if no minute data |
+| GET | `/api/market-data/quotes` | No | Batch latest price + % change for comma-separated tickers (max 60) |
+| GET | `/api/market-data/mini` | No | Index-strip data: price + % change + intraday spark per ticker (max 12) |
+| GET | `/api/market-data/heatmap` | No | Market-cap heatmap tiles + index ETFs (SPY/QQQ/IWM), period: 1D/1W/1M/3M/1Y |
+| POST | `/api/market-data/{ticker}/warm` | No | On-demand: pull recent 1-min bars from Massive into market_data_1min for an uncovered symbol |
+
+### Earnings (`/api/earnings`)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/earnings/calendar` | No | Earnings calendar for a date window (default: today-7d to today+30d) |
+| GET | `/api/earnings/{ticker}` | No | Earnings history for one ticker (newest first, limit param, max 40) |
+
+### Symbols (`/api/symbols`)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/api/symbols/request` | No | Request coverage for an uncovered symbol (deduped, bumps count on repeat) |
+| GET | `/api/symbols/requests` | ADMIN | List the data-demand queue, most-requested first |
+
+### Admin (`/api/admin`)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/api/admin/pipeline/status` | ADMIN | DB row counts for pipeline health monitoring |
+| POST | `/api/admin/cache/refresh` | ADMIN | Manually trigger Top-100 signal cache refresh via Celery |
+
+### Health
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/health` | No | Returns `ok`/`degraded` status, app version, and realtime supervisor health |
+
+## Authentication
+
+**JWT Bearer tokens**, HS256-signed with `SECRET_KEY`, 7-day expiry (configurable via `ACCESS_TOKEN_EXPIRE_MINUTES`).
+
+- `get_current_user` — decodes token, looks up user, raises 401 on invalid/missing token
+- `get_optional_user` — returns `None` for unauthenticated requests (for public endpoints that optionally personalize)
+- `require_tier("PRO", "PREMIUM")` — factory that creates tier-gated dependencies. ADMIN tier always passes
+
+**Password validation rules** (enforced by Pydantic validators on `RegisterRequest`, `ResetPasswordRequest`, `ChangePasswordRequest`):
+
+- Minimum 8 characters, maximum 72 (bcrypt limit)
+- At least one uppercase letter
+- At least one lowercase letter
+- At least one digit
+- At least one special character
+
+**Password reset flow:**
+
+1. `POST /api/auth/forgot-password` with email — always returns 200 (no email-enumeration leak). Generates a JWT with `purpose: "reset"` and 1-hour expiry
+2. `POST /api/auth/reset-password` with `{token, password}` — validates the reset token and updates the password
+3. Email delivery is a TODO (token is currently logged server-side)
+
+**Timing-safe login:** The login endpoint always runs bcrypt (against a dummy hash if the user doesn't exist) to prevent timing side-channel attacks that reveal whether an email is registered.
+
+**Rate limiting:** Redis-backed sliding-window limiter (`INCR` + `EXPIRE`). Degrades gracefully when Redis is unavailable (requests pass through with a warning). Applied to login (10/min), register (5/hour), forgot-password (5/hour), reset-password (5/hour).
+
+## Market Clock
+
+`app/core/market_clock.py` provides a single source of truth for "is the US market open right now", shared by `/api/market-data/status` and the heatmap endpoint.
+
+**Two detection methods** (market is considered open if either is true):
+
+1. **`is_regular_session(now_utc)`** — Uses the `exchange_calendars` library (`XNYS` calendar) which knows about all NYSE holidays, early closes, and special sessions. Checks whether `now_utc` falls between session open and close times.
+
+2. **`ticks_advancing(latest_tick)`** — Clock-independent fallback. Tracks whether the newest minute bar from `market_data_1min` has actually advanced within the last 360 seconds of monotonic time. Robust to a wrong system clock and can't be fooled by stale data. Thread-safe (uses a lock for shared state).
+
+**`is_early_close(date)`** — Returns true if a given date is an NYSE early-close session (close before 16:00 ET).
+
+## SupervisorWatchdog
+
+`_SupervisorWatchdog` in `main.py` manages the realtime data ingestion subprocess (`data.ingestion.realtime.supervisor`).
+
+- Starts on app lifespan startup, stops on shutdown
+- Controlled by `REALTIME_ENABLED` env var (default: `true`)
+- Auto-restarts on crash with exponential backoff (1s, 2s, 4s, ... up to 60s)
+- Max 10 restarts within a 1-hour window before giving up
+- Parses `HEALTH:` JSON lines from the subprocess stdout for health reporting
+- Health status exposed via `GET /health` endpoint
+
+## Signal Retrieval Flow
+
 ```
 GET /api/signals/{ticker}
-  ├─ Cache hit (expires_at > now)  → 200 + signal JSON
-  └─ Cache miss                    → send_task to ML worker → 202 + retry_after: 5
+  ├─ Not in universe (Ticker table) → 404 (reason: not_in_universe | delisted)
+  ├─ Cache hit (expires_at > now)   → 200 + SignalResponse JSON
+  └─ Cache miss                     → send_task to ML worker → 202 + retry_after: 5
 ```
-Frontend polls on 202 until it receives 200.
 
-**Tier Access**
-Tiers are ranked: `FREE(0) < PRO(1) < PREMIUM(2) < ADMIN(99)`. Each signal row in `signal_cache` carries a `tier_required` field. The `_check_tier_access` function enforces this at read time.
+Frontend polls on 202 until it receives 200. The `poll=true` query param skips re-triggering the Celery task (deduplication). In-flight tracking prevents the same ticker from being re-dispatched within 5 minutes.
 
-**No ML imports in this process**
-Signal computation is triggered by sending a Celery task **by name string** using a bare `Celery(broker=REDIS_URL)` client. This prevents torch/transformers from being loaded in the API process.
+**Tier access:** Tiers are ranked `FREE(0) < PRO(1) < PREMIUM(2) < ADMIN(99)`. Each signal row carries a `tier_required` field. `_check_tier_access` enforces this at read time — anonymous users are treated as FREE.
 
-### Local Development
+**No ML imports in the API process:** Signal computation is triggered by `Celery.send_task()` with a task name string and a bare `Celery(broker=REDIS_URL)` client. This prevents torch/transformers from being loaded in the API process.
+
+## Testing
+
+Tests live inside each module (co-located with the code they test):
+
+```
+app/
+├── conftest.py                        Shared fixtures: SQLite in-memory DB, PG-type patches,
+│                                      test users (FREE/PRO/ADMIN), test ticker, test signal
+├── api/routes/tests/
+│   ├── conftest.py                    Route-specific fixture overrides
+│   ├── test_auth.py                   Register, login, me, token validation, OAuth 501
+│   ├── test_signals.py                Top signals, cache hit/miss, poll dedup, universe gate,
+│   │                                  tier gating (FREE blocked, PRO allowed, ADMIN bypass)
+│   ├── test_watchlist.py              CRUD lifecycle, auth gating, signal attachment
+│   ├── test_tickers_symbols.py        Search, universe browsing, symbol request + admin list
+│   ├── test_market_data.py            Status, candles, quotes, mini, series, heatmap (mocked DB)
+│   └── test_admin.py                  Pipeline status + cache refresh (admin gating, Celery mock)
+└── core/tests/
+    └── test_core.py                   market_clock (regular session, weekend, after-hours),
+                                       password hashing roundtrip, JWT encode/decode
+```
+
+**Test infrastructure:** Uses SQLite + aiosqlite as an in-memory test database. PostgreSQL-specific column types (UUID, ARRAY, TIMESTAMP WITH TIME ZONE) are patched at the DDL/compilation level so SQLAlchemy can create identical tables in SQLite. Market-data tests that depend on TimescaleDB-specific SQL (time_bucket, DISTINCT ON, LATERAL) use a mocked `AsyncSession`.
+
+**Running tests:**
+
+```bash
+# All backend tests
+make test-backend
+
+# Single test file
+python3 -m pytest backend/app/api/routes/tests/test_auth.py -v
+
+# Single test
+python3 -m pytest backend/app/api/routes/tests/test_signals.py::test_get_signal_cache_hit -v
+```
+
+pytest config is in the repo-root `pyproject.toml` (`asyncio_mode=auto` — async tests need no decorator).
+
+## Configuration
+
+All configuration is via environment variables, loaded by Pydantic Settings (`app/core/config.py`). Reads from `.env` file automatically.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SECRET_KEY` | — | JWT signing key (required in production; auto-generated in DEBUG mode) |
+| `DEBUG` | `false` | Enables `/docs` and `/redoc` endpoints, sets SQLAlchemy echo |
+| `DATABASE_URL` | `postgresql+asyncpg://penguinai:penguinai_dev@localhost:5432/penguinai` | TimescaleDB connection |
+| `DATABASE_POOL_SIZE` | `40` | SQLAlchemy connection pool size |
+| `DATABASE_MAX_OVERFLOW` | `20` | SQLAlchemy max overflow connections |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis for Celery broker + rate limiter |
+| `ALLOWED_ORIGINS` | `http://localhost:3000` | CORS allowed origins (comma-separated or JSON array) |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `10080` (7 days) | JWT access token lifetime |
+| `REALTIME_ENABLED` | `true` | Start the realtime ingestion supervisor subprocess |
+| `POLYGON_API_KEY` | — | Polygon.io API key (legacy) |
+| `MASSIVE_API_KEY` | — | Massive.com API key |
+| `FINNHUB_API_KEY` | — | Finnhub API key (earnings calendar) |
+| `IBKR_HOST` / `IBKR_PORT` / `IBKR_CLIENT_ID` | `127.0.0.1` / `7497` / `1` | Interactive Brokers connection |
+| `GEMMA_MODEL_PATH` / `GEMMA_API_URL` / `GEMMA_API_KEY` | — | Gemma 4 model configuration |
+| `FINBERT_MODEL` | `ProsusAI/finbert` | FinBERT model name |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `APPLE_CLIENT_ID` | — | OAuth (future) |
+| `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | — | Reddit API (planned) |
+
+**SECRET_KEY safety:** In production, an insecure or empty SECRET_KEY raises a `ValueError`. In DEBUG mode, an ephemeral random key is generated with a warning (tokens reset on restart).
+
+## Local Development
 
 ```bash
 cd backend
@@ -75,37 +271,19 @@ uvicorn app.main:app --reload --port 8000
 
 API docs available at `http://localhost:8000/docs` when `DEBUG=true`.
 
-### Environment Variables
+## Dependencies
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SECRET_KEY` | — | JWT signing key (required) |
-| `DATABASE_URL` | `postgresql+asyncpg://...` | TimescaleDB connection |
-| `REDIS_URL` | `redis://localhost:6379/0` | Redis for Celery broker |
-| `DEBUG` | `false` | Enables `/docs` endpoint |
-| `ALLOWED_ORIGINS` | `http://localhost:3000` | CORS allowed origins |
+Key packages in `requirements.txt`:
 
-### Adding a New Route
-
-1. Create `app/api/routes/your_module.py` with an `APIRouter`
-2. Add ORM model in `app/models/` if new table needed
-3. Add Pydantic schema in `app/schemas/`
-4. Register router in `app/main.py`: `app.include_router(your_module.router, prefix="/api/...")`
-5. Create Alembic migration: `cd backend && alembic revision --autogenerate -m "add your_table"`
-
-### Running Migrations
-
-```bash
-cd backend
-# Generate migration from model changes
-alembic revision --autogenerate -m "description"
-
-# Apply migrations
-alembic upgrade head
-
-# Rollback one step
-alembic downgrade -1
-```
+- **fastapi** + **uvicorn** — ASGI web framework + server
+- **sqlalchemy[asyncio]** + **asyncpg** — Async ORM + PostgreSQL driver
+- **pydantic** + **pydantic-settings** — Schema validation + env config
+- **python-jose** — JWT encoding/decoding
+- **bcrypt** (via passlib) — Password hashing
+- **celery[redis]** + **redis** — Task queue client + rate limiter store
+- **exchange-calendars** + **pandas** — NYSE holiday/session calendar
+- **httpx** — Async HTTP client
+- **alembic** — Database migrations
 
 ---
 
@@ -113,26 +291,55 @@ alembic downgrade -1
 
 ### 模块概述
 
-后端是 PenguinAI 的 API 网关层，负责用户认证、信号读取、自选股管理和 K 线数据服务。它**不包含任何 ML 逻辑** — 信号计算通过 Celery 任务名字符串派发到 ML 层。
+后端是 PenguinAI 的 API 网关层，负责用户认证（含密码重置流程）、信号读取、自选股管理、K 线数据服务、收益日历、市场状态检测（NYSE 日历感知）和实时数据采集监控。它**不包含任何 ML 逻辑** — 信号计算通过 Celery 任务名字符串派发到 ML 层。
 
 ### 关键设计决策
 
 **认证机制**
-- JWT Bearer Token，7 天有效期
+- JWT Bearer Token，7 天有效期，HS256 签名
 - `get_current_user`：未认证直接返回 401
 - `get_optional_user`：未认证返回 `None`（用于公开端点）
-- `require_tier("PRO")` 工厂函数生成分层权限依赖
+- `require_tier("PRO")` 工厂函数生成分层权限依赖，ADMIN 始终通过
+- 密码强度验证：最少 8 位，需包含大写、小写、数字和特殊字符
+- 密码重置：JWT 令牌（1 小时有效期），忘记密码接口始终返回 200（防止邮箱枚举）
+- 登录接口始终执行 bcrypt 比对（防止计时侧信道攻击）
+
+**市场状态检测**
+- 使用 `exchange_calendars` 库（XNYS 日历），包含所有 NYSE 假日、提前收盘等
+- `ticks_advancing` 提供时钟无关的后备检测：只要最新 1 分钟数据在单调时间内持续更新，即判定市场开放
+- `/api/market-data/status` 是前端 LIVE/CLOSED 徽章的唯一数据来源
+
+**实时数据采集监控 (SupervisorWatchdog)**
+- 在 FastAPI lifespan 中启动 `data.ingestion.realtime.supervisor` 子进程
+- 崩溃后自动重启（指数退避），1 小时内最多重启 10 次
+- 通过 `REALTIME_ENABLED` 环境变量控制开关
 
 **信号获取流程**
 ```
 GET /api/signals/{ticker}
+  ├─ 不在覆盖范围（Ticker 表）→ 404（原因：not_in_universe | delisted）
   ├─ 缓存命中（expires_at > 当前时间）→ 200 + 信号 JSON（毫秒级）
   └─ 缓存未命中                       → 触发 Celery 任务 → 202 + retry_after: 5
 ```
-前端收到 202 后每 5 秒轮询直到获得 200。
+前端收到 202 后每 5 秒轮询直到获得 200。`poll=true` 参数跳过重复触发。
 
 **API 进程不导入 ML 库**
-触发 Celery 任务时只使用任务名字符串 + 裸 `Celery(broker=...)` 客户端，防止 torch/transformers 在 API 进程中被加载，避免启动内存暴涨。
+触发 Celery 任务时只使用任务名字符串 + 裸 `Celery(broker=...)` 客户端，防止 torch/transformers 在 API 进程中被加载。
+
+**限流**
+基于 Redis 的滑动窗口限流器（INCR + EXPIRE）。Redis 不可用时优雅降级（放行请求并输出警告）。
+
+### 测试
+
+测试与代码共存于各模块内部：
+- `app/api/routes/tests/` — 路由集成测试（auth、signals、watchlist、tickers/symbols、market_data、admin）
+- `app/core/tests/` — 核心模块单元测试（market_clock、security、JWT）
+
+使用 SQLite 内存数据库，PG 特有类型（UUID、ARRAY、带时区时间戳）在 DDL 层面做了 patch。
+
+```bash
+make test-backend          # 运行全部后端测试
+```
 
 ### 新增路由步骤
 
@@ -140,4 +347,5 @@ GET /api/signals/{ticker}
 2. 如需新表：在 `app/models/` 创建 ORM 模型
 3. 在 `app/schemas/` 创建 Pydantic Schema
 4. 在 `app/main.py` 注册路由
-5. 执行 `alembic revision --autogenerate -m "描述"` 生成迁移文件
+5. 在 `app/api/routes/tests/` 添加测试
+6. 执行 `alembic revision --autogenerate -m "描述"` 生成迁移文件

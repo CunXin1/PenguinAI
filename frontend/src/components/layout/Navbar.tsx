@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   LayoutDashboard,
   Telescope,
@@ -15,11 +15,14 @@ import {
   X,
   LayoutGrid,
   LogOut,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { MarketStatusBadge } from "@/components/ui/MarketStatusBadge";
 import { useAuth, userInitial } from "@/hooks/useAuth";
+import { tickers } from "@/lib/api";
+import type { TickerSearchResult } from "@/lib/types";
 
 const NAV = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
@@ -31,6 +34,68 @@ const NAV = [
   { href: "/profile", label: "Profile", icon: User },
 ];
 
+/* ── Autocomplete dropdown (shared by desktop + mobile) ──────────────────── */
+function SearchDropdown({
+  results,
+  loading,
+  open,
+  activeIndex,
+  onSelect,
+}: {
+  results: TickerSearchResult[];
+  loading: boolean;
+  open: boolean;
+  activeIndex: number;
+  onSelect: (ticker: string) => void;
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="absolute left-0 right-0 top-full mt-1 z-50 max-h-80 overflow-y-auto rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-lg">
+      {loading ? (
+        <div className="flex items-center gap-2 px-3 py-3 text-xs text-zinc-500 dark:text-zinc-400">
+          <Loader2 size={14} className="animate-spin shrink-0" />
+          Searching...
+        </div>
+      ) : results.length === 0 ? (
+        <div className="px-3 py-3 text-xs text-zinc-500 dark:text-zinc-400">
+          No matches
+        </div>
+      ) : (
+        results.map((r, i) => (
+          <button
+            key={r.ticker}
+            type="button"
+            onMouseDown={(e) => {
+              // Use mousedown instead of click to fire before input blur
+              e.preventDefault();
+              onSelect(r.ticker);
+            }}
+            className={cn(
+              "w-full flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors text-left",
+              i === activeIndex
+                ? "bg-zinc-100 dark:bg-zinc-800"
+                : "hover:bg-zinc-100 dark:hover:bg-zinc-800/50"
+            )}
+          >
+            <span className="font-semibold text-sm text-zinc-900 dark:text-white shrink-0">
+              {r.ticker}
+            </span>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400 truncate min-w-0">
+              {r.name}
+            </span>
+            {r.sector && (
+              <span className="text-xs text-zinc-400 dark:text-zinc-500 ml-auto shrink-0 whitespace-nowrap">
+                {r.sector}
+              </span>
+            )}
+          </button>
+        ))
+      )}
+    </div>
+  );
+}
+
 export function Navbar() {
   const pathname = usePathname();
   const router = useRouter();
@@ -39,18 +104,138 @@ export function Navbar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
 
+  // Autocomplete state
+  const [results, setResults] = useState<TickerSearchResult[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const desktopDropdownRef = useRef<HTMLDivElement>(null);
+  const mobileDropdownRef = useRef<HTMLDivElement>(null);
+
   // Close menus whenever the route changes.
   useEffect(() => {
     setMenuOpen(false);
     setUserMenuOpen(false);
+    setDropdownOpen(false);
   }, [pathname]);
+
+  // Click-outside detection
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      const target = e.target as Node;
+      if (
+        desktopDropdownRef.current &&
+        !desktopDropdownRef.current.contains(target) &&
+        mobileDropdownRef.current &&
+        !mobileDropdownRef.current.contains(target)
+      ) {
+        setDropdownOpen(false);
+      } else if (
+        desktopDropdownRef.current &&
+        !desktopDropdownRef.current.contains(target) &&
+        !mobileDropdownRef.current
+      ) {
+        setDropdownOpen(false);
+      } else if (
+        !desktopDropdownRef.current &&
+        mobileDropdownRef.current &&
+        !mobileDropdownRef.current.contains(target)
+      ) {
+        setDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Debounced search
+  const performSearch = useCallback((q: string) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    const trimmed = q.trim();
+    if (trimmed.length < 1) {
+      setResults([]);
+      setDropdownOpen(false);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    setDropdownOpen(true);
+
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = await tickers.search(trimmed);
+        setResults(data.slice(0, 8));
+        setActiveIndex(-1);
+        setDropdownOpen(true);
+      } catch {
+        setResults([]);
+      } finally {
+        setLoading(false);
+      }
+    }, 250);
+  }, []);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const v = e.target.value;
+    setQuery(v);
+    performSearch(v);
+  };
+
+  const navigateToTicker = useCallback(
+    (ticker: string) => {
+      router.push(`/signals/${ticker.toUpperCase()}`);
+      setQuery("");
+      setResults([]);
+      setDropdownOpen(false);
+      setMenuOpen(false);
+      setActiveIndex(-1);
+    },
+    [router]
+  );
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!dropdownOpen || results.length === 0) {
+      // Enter with no dropdown: fallback to direct navigation
+      if (e.key === "Enter") return; // let form submit handle it
+      return;
+    }
+
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        setActiveIndex((prev) => (prev < results.length - 1 ? prev + 1 : 0));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setActiveIndex((prev) => (prev > 0 ? prev - 1 : results.length - 1));
+        break;
+      case "Enter":
+        e.preventDefault();
+        if (activeIndex >= 0 && activeIndex < results.length) {
+          navigateToTicker(results[activeIndex].ticker);
+        } else {
+          // No highlighted result — navigate to typed ticker
+          const t = query.trim().toUpperCase();
+          if (t) navigateToTicker(t);
+        }
+        break;
+      case "Escape":
+        e.preventDefault();
+        setDropdownOpen(false);
+        setActiveIndex(-1);
+        break;
+    }
+  };
 
   const submitSearch = (e: React.FormEvent) => {
     e.preventDefault();
     const t = query.trim().toUpperCase();
     if (t) {
-      router.push(`/signals/${t}`);
-      setMenuOpen(false);
+      navigateToTicker(t);
     }
   };
 
@@ -94,18 +279,34 @@ export function Navbar() {
         <div className="flex-1" />
 
         {/* Inline search: shown from md, width grows with the viewport */}
-        <form
-          onSubmit={submitSearch}
-          className="hidden md:flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-1.5 w-36 lg:w-56 focus-within:border-sky-500/60 transition-colors"
-        >
-          <Search size={14} className="text-zinc-500 shrink-0" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search ticker..."
-            className="bg-transparent outline-none text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-600 w-full"
+        <div ref={desktopDropdownRef} className="hidden md:block relative">
+          <form
+            onSubmit={submitSearch}
+            className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-1.5 w-36 lg:w-56 focus-within:border-sky-500/60 transition-colors"
+          >
+            <Search size={14} className="text-zinc-500 shrink-0" />
+            <input
+              value={query}
+              onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              onFocus={() => {
+                if (query.trim().length >= 1 && results.length > 0) {
+                  setDropdownOpen(true);
+                }
+              }}
+              placeholder="Search ticker..."
+              className="bg-transparent outline-none text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-600 w-full"
+              autoComplete="off"
+            />
+          </form>
+          <SearchDropdown
+            results={results}
+            loading={loading}
+            open={dropdownOpen}
+            activeIndex={activeIndex}
+            onSelect={navigateToTicker}
           />
-        </form>
+        </div>
 
         <ThemeToggle />
 
@@ -176,18 +377,34 @@ export function Navbar() {
       {menuOpen && (
         <div className="md:hidden border-t border-zinc-200 dark:border-zinc-800 bg-white/95 dark:bg-zinc-950/95 backdrop-blur">
           <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col gap-1">
-            <form
-              onSubmit={submitSearch}
-              className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-2 mb-2 focus-within:border-sky-500/60 transition-colors"
-            >
-              <Search size={15} className="text-zinc-500 shrink-0" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search ticker..."
-                className="bg-transparent outline-none text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-600 w-full"
+            <div ref={mobileDropdownRef} className="relative mb-2">
+              <form
+                onSubmit={submitSearch}
+                className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-2 focus-within:border-sky-500/60 transition-colors"
+              >
+                <Search size={15} className="text-zinc-500 shrink-0" />
+                <input
+                  value={query}
+                  onChange={handleInputChange}
+                  onKeyDown={handleKeyDown}
+                  onFocus={() => {
+                    if (query.trim().length >= 1 && results.length > 0) {
+                      setDropdownOpen(true);
+                    }
+                  }}
+                  placeholder="Search ticker..."
+                  className="bg-transparent outline-none text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-600 w-full"
+                  autoComplete="off"
+                />
+              </form>
+              <SearchDropdown
+                results={results}
+                loading={loading}
+                open={dropdownOpen}
+                activeIndex={activeIndex}
+                onSelect={navigateToTicker}
               />
-            </form>
+            </div>
 
             {NAV.map(({ href, label, icon: Icon }) => {
               const active = isActive(href);

@@ -89,7 +89,11 @@ export default function LoginPage() {
           : await auth.register(normalizedEmail, password, displayName.trim() || undefined);
 
       localStorage.setItem("access_token", res.access_token);
-      router.push("/");
+      if (mode === "register") {
+        router.push("/auth/verify-pending");
+      } else {
+        router.push("/");
+      }
     } catch (err: any) {
       const detail = err?.data?.detail;
       if (typeof detail === "string") {

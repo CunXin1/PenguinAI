@@ -95,6 +95,108 @@ ADMIN    → internal monitoring, pipeline control
 
 Tier check is done in `backend/app/api/deps.py:require_tier()`. Signal rows carry `tier_required` field.
 
+## Authentication
+
+### Endpoints
+
+| Method | Path | Auth | Rate Limit | Purpose |
+|--------|------|------|------------|---------|
+| POST | `/api/auth/register` | — | 5/hr per IP | Create account, return JWT |
+| POST | `/api/auth/login` | — | 10/min per IP + 20/hr per account | Authenticate, return JWT |
+| GET | `/api/auth/me` | Bearer | — | Current user profile |
+| POST | `/api/auth/verify-email` | — | — | Verify email with token |
+| POST | `/api/auth/resend-verification` | Bearer | — | Resend verification email |
+| POST | `/api/auth/forgot-password` | — | 5/hr per IP | Request password reset |
+| POST | `/api/auth/reset-password` | — | 5/hr per IP | Reset password with token |
+| POST | `/api/auth/change-password` | Bearer | — | Change password (returns new JWT) |
+
+All rate limits configurable via `.env` (`RATE_LIMIT_*` vars). Redis-backed; falls through when Redis is down.
+
+### Registration Flow
+
+```
+Frontend (register form) → POST /register
+  → Pydantic validates (email, password strength, display_name ≤50)
+  → email.lower() normalized
+  → check duplicate → INSERT users (email_verified=false, token_version=0)
+  → generate verify token (JWT, purpose=verify, 24h expiry)
+  → TODO: send verification email (currently logged; returned in DEBUG mode)
+  → return access_token
+  → Frontend stores token → redirect /auth/verify-pending
+```
+
+### Email Verification Flow
+
+```
+User clicks email link → /auth/verify-email?token=xxx
+  → POST /verify-email { token }
+  → decode JWT (purpose=verify) → lookup user by email
+  → set email_verified=true
+  → Frontend shows success → redirect to /auth/login
+```
+
+### Login Flow
+
+```
+Frontend (login form) → POST /login
+  → IP rate limit (10/min) + account rate limit (20/hr, keyed by email SHA256)
+  → email.lower() → SELECT user WHERE is_active=true
+  → bcrypt verify (DUMMY_HASH if user not found — constant-time)
+  → return JWT with { sub: user_id, ver: token_version }
+```
+
+### Password Reset Flow
+
+```
+/auth/forgot-password → POST /forgot-password { email }
+  → always returns same message (no email enumeration)
+  → if user exists: generate reset token (JWT, purpose=reset, 1h expiry)
+
+User clicks email link → /auth/reset-password?token=xxx
+  → POST /reset-password { token, password }
+  → decode JWT → lookup user → update password_hash → token_version += 1
+  → all existing sessions immediately invalidated
+```
+
+### Change Password Flow
+
+```
+POST /change-password { current_password, new_password } (requires Bearer)
+  → verify current password → update password_hash → token_version += 1
+  → return new JWT with updated ver claim
+  → all other sessions immediately invalidated
+```
+
+### Security Measures
+
+- **Password:** bcrypt hash, strength validation (8+ chars, upper, lower, digit, special)
+- **JWT:** HS256, 7-day expiry, `ver` claim tied to `users.token_version`
+- **Token revocation:** `token_version` incremented on password change/reset → old JWTs rejected
+- **Rate limiting:** dual-layer (per IP via Redis INCR + per account via email SHA256 hash)
+- **Timing attack prevention:** bcrypt always runs against DUMMY_HASH when user not found
+- **Email normalization:** `.lower()` at all entry points (register, login, forgot-password)
+- **SECRET_KEY:** auto-generates ephemeral key if insecure; CRITICAL log in non-DEBUG mode
+- **Email verification:** JWT-based token, 24h expiry, `email_verified` column on users table
+
+### Key Files
+
+```
+backend/app/api/routes/auth.py     — all auth endpoints
+backend/app/api/deps.py            — get_current_user, require_tier, token_version check
+backend/app/core/security.py       — bcrypt, JWT create/decode (access, reset, verify)
+backend/app/core/rate_limit.py     — Redis rate limiter + account-level limiter
+backend/app/core/config.py         — SECRET_KEY validation, RATE_LIMIT_* settings
+backend/app/schemas/user.py        — Pydantic request/response models
+backend/app/models/user.py         — SQLAlchemy User model
+frontend/src/app/auth/login/       — login + register (tab toggle)
+frontend/src/app/auth/verify-pending/ — post-registration "check your email"
+frontend/src/app/auth/verify-email/   — token verification landing page
+frontend/src/app/auth/forgot-password/ — request password reset
+frontend/src/app/auth/reset-password/  — set new password with token
+frontend/src/hooks/useAuth.ts      — client-side auth state (token + /me query)
+frontend/src/lib/api.ts            — auth API client methods
+```
+
 ## Celery Schedule
 
 | Task | Schedule | Queue |
