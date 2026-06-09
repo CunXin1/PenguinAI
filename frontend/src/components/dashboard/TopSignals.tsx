@@ -12,6 +12,11 @@ import type { Direction, SignalView } from "@/lib/types";
 
 const FILTERS: ("ALL" | Direction)[] = ["ALL", "LONG", "SHORT", "NEUTRAL"];
 
+const FEATURED_TICKERS = new Set([
+  "AAPL", "MSFT", "GOOGL", "AMZN", "META", "NVDA", "TSLA",
+  "AVGO", "SPY", "QQQ",
+]);
+
 const SPARK_COLOR: Record<Direction, string> = {
   LONG: "#34d399",
   SHORT: "#f87171",
@@ -21,7 +26,8 @@ const SPARK_COLOR: Record<Direction, string> = {
 export function TopSignals() {
   const { data } = useTopSignals();
   const [filter, setFilter] = useState<"ALL" | Direction>("ALL");
-  const list = (data ?? []).filter((s) => filter === "ALL" || s.direction === filter);
+  const featured = (data ?? []).filter((s) => FEATURED_TICKERS.has(s.ticker));
+  const list = featured.filter((s) => filter === "ALL" || s.direction === filter);
 
   return (
     <section className="space-y-3">

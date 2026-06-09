@@ -7,7 +7,6 @@ import { useQuery } from "@tanstack/react-query";
 import { Newspaper, ArrowRight, ExternalLink } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { news as newsApi } from "@/lib/api";
-import { MOCK_NEWS } from "@/lib/mock";
 import { cn, timeAgoUnix } from "@/lib/utils";
 import type { NewsArticle, NewsApiArticle } from "@/lib/types";
 
@@ -48,8 +47,7 @@ export default function NewsPage() {
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
-  // Fall back to mock data when the API fails or is loading
-  const allNews = articles ?? MOCK_NEWS;
+  const allNews = useMemo(() => articles ?? [], [articles]);
 
   const counts = useMemo(
     () => ({
@@ -65,8 +63,7 @@ export default function NewsPage() {
   const [featured, ...rest] = allNews;
   const feed = f === "all" ? rest : allNews.filter((n) => n.sentiment === f);
 
-  /** Resolve the link target for a news card. External URL if available, otherwise internal route. */
-  const articleHref = (n: NewsArticle) => n.url ?? `/news/${n.id}`;
+  const articleHref = (n: NewsArticle) => n.url ?? "#";
   const isExternal = (n: NewsArticle) => Boolean(n.url);
 
   return (

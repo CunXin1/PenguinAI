@@ -69,7 +69,7 @@ export function PriceChart({
   const [range, setRange] = useState<ChartRange>(defaultRange);
   const [type, setType] = useState<SeriesType>(defaultType);
   const cfg = RANGES.find((r) => r.key === range)!;
-  const { isOpen } = useMarketStatus();
+  const { isOpen, sessionPhase } = useMarketStatus();
 
   const qc = useQueryClient();
 
@@ -107,7 +107,14 @@ export function PriceChart({
   // Live only when the market is actually open and we're on an intraday range;
   // daily ranges are historical, and a closed market shows the last close frozen.
   const intradayLive = cfg.intraday && isOpen;
-  const statusLabel = cfg.intraday ? (isOpen ? "Live" : "Closed") : "Daily";
+  const phaseLabels: Record<string, string> = {
+    PRE_MARKET: "Pre-Mkt",
+    REGULAR: "Live",
+    AFTER_HOURS: "After-Hrs",
+    OVERNIGHT: "Overnight",
+    CLOSED: "Closed",
+  };
+  const statusLabel = cfg.intraday ? (phaseLabels[sessionPhase] ?? "Closed") : "Daily";
 
   return (
     <Card className="p-4 sm:p-5">

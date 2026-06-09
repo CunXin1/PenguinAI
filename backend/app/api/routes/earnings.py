@@ -37,7 +37,7 @@ def _to_event(row) -> dict:
         ),
         "guidance_text": row["guidance_text"],
         "name": row["name"],
-        "session": _SESSION.get((row["report_hour"] or "").lower(), "TBD"),
+        "session": _SESSION.get((row["report_hour"] or "").strip().lower(), "TBD"),
     }
 
 

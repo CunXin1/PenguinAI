@@ -2,14 +2,20 @@
 
 import { useMarketStatus } from "@/lib/market-status";
 import { cn } from "@/lib/utils";
+import type { SessionPhase } from "@/lib/types";
 
-/**
- * Global market open/closed pill — green pulsing "LIVE" while open, gray "CLOSED"
- * otherwise. Reads the shared `useMarketStatus()` so it always agrees with every
- * chart's live badge and poll cadence.
- */
+const PHASE_LABEL: Record<SessionPhase, string> = {
+  PRE_MARKET: "PRE-MKT",
+  REGULAR: "LIVE",
+  AFTER_HOURS: "AFTER-HRS",
+  OVERNIGHT: "OVERNIGHT",
+  CLOSED: "CLOSED",
+};
+
 export function MarketStatusBadge({ className }: { className?: string }) {
-  const { isOpen } = useMarketStatus();
+  const { isOpen, sessionPhase } = useMarketStatus();
+  const label = PHASE_LABEL[sessionPhase];
+
   return (
     <span
       className={cn(
@@ -19,7 +25,7 @@ export function MarketStatusBadge({ className }: { className?: string }) {
           : "bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 ring-zinc-500/20",
         className
       )}
-      title={isOpen ? "US market open" : "US market closed"}
+      title={isOpen ? `US market: ${label}` : "US market closed"}
     >
       <span
         className={cn(
@@ -27,7 +33,7 @@ export function MarketStatusBadge({ className }: { className?: string }) {
           isOpen ? "bg-emerald-500 animate-pulse" : "bg-zinc-400 dark:bg-zinc-500"
         )}
       />
-      {isOpen ? "LIVE" : "CLOSED"}
+      {label}
     </span>
   );
 }

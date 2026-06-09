@@ -33,9 +33,8 @@ ibkr-stream:
 minute-parquet:
 	python -m data.ingestion.massive_minute_parquet
 
-# Finnhub (free tier) earnings calendar → earnings table. Run from repo root with
-# a venv that has httpx+sqlalchemy+asyncpg and FINNHUB_API_KEY set in .env.
-# Idempotent: re-run to backfill actuals once results publish.
+# Finnhub (free tier) earnings calendar → earnings table. Idempotent: re-run to
+# backfill actuals once results publish. Requires FINNHUB_API_KEY in .env.
 fetch-earnings:
 	python -m data.earnings.finnhub
 

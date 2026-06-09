@@ -41,7 +41,7 @@ vi.mock("@/lib/api", () => ({
 
 // @/lib/market-status — useLiveQuotes imports useMarketStatus
 vi.mock("@/lib/market-status", () => ({
-  useMarketStatus: () => ({ isOpen: false, isLoading: false, status: undefined }),
+  useMarketStatus: () => ({ isOpen: false, sessionPhase: "CLOSED", isLoading: false, status: undefined }),
   MarketStatusProvider: ({ children }: { children: ReactNode }) => children,
 }));
 
@@ -177,11 +177,8 @@ describe("useLiveQuotes", () => {
 describe("useTopSignals", () => {
   const load = () => import("@/hooks/useTopSignals").then((m) => m.useTopSignals);
 
-  it("falls back to MOCK_SIGNALS when the API fails", async () => {
+  it("returns empty array when the API fails", async () => {
     mockSignalsGetTop.mockRejectedValue(new Error("Backend down"));
-    // withRealMarketData also calls marketData.quotes — let it fail gracefully
-    mockMarketDataQuotes.mockRejectedValue(new Error("no quotes"));
-    mockMarketDataSeries.mockRejectedValue(new Error("no series"));
 
     const useTopSignals = await load();
     const { result } = renderHook(() => useTopSignals(), {
@@ -189,10 +186,8 @@ describe("useTopSignals", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.data!.length).toBeGreaterThan(0);
+      expect(result.current.error).toBeTruthy();
     });
-    // The first mock signal should be NVDA (from MOCK_SIGNALS)
-    expect(result.current.data![0].ticker).toBe("NVDA");
   });
 });
 
@@ -223,7 +218,7 @@ describe("useTrending", () => {
     expect(result.current.data![2].ticker).toBe("NVDA");
   });
 
-  it("falls back to MOCK_TRENDING on API failure", async () => {
+  it("returns error state on API failure", async () => {
     mockMarketDataQuotes.mockRejectedValue(new Error("Network error"));
 
     const useTrending = await load();
@@ -232,9 +227,7 @@ describe("useTrending", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.data!.length).toBeGreaterThan(0);
+      expect(result.current.error).toBeTruthy();
     });
-    // MOCK_TRENDING first entry is SMCI
-    expect(result.current.data![0].ticker).toBe("SMCI");
   });
 });

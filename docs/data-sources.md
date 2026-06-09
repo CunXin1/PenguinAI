@@ -20,7 +20,7 @@ ingestion code lands).
 | Massive (massive.com) — minute history | Supplemental minute bars | `data/minute_data/` parquet → `market_data_1min` | ✅ Delivered (NDX-100 + Top-20 ETF, ~2yr parquet) | `data/ingestion/massive_minute_parquet.py` (`make minute-parquet`) |
 | Massive — reference + market cap | Universe metadata | `data/reference/tickers_reference.parquet`, `tickers.market_cap` | ✅ Live | `data/ingestion/massive_reference.py`, `massive_marketcap.py` |
 | Massive — symbol validation | On-demand universe expansion | `symbol_requests` → `tickers` | ✅ Live (Celery, every 6h) | `ml/tasks/symbol_validation.py` |
-| Finnhub — earnings calendar | EPS actual/estimate/surprise | `earnings` | ✅ Live | `data/ingestion/finnhub_earnings.py` (`make fetch-earnings`) + Celery `fetch_earnings` |
+| Finnhub — earnings calendar | EPS actual/estimate/surprise | `earnings` | ✅ Live | `data/earnings/finnhub.py` (`make fetch-earnings`) + backend lifespan scheduler |
 | Twitter/X · Reddit | Social sentiment | `social_posts` | 🚧 Planned (no `data/scrapers/` yet) | designed: Playwright / PRAW |
 | SEC EDGAR 13F + 13D | Smart money (Buffett, Soros, Dalio, Ackman, Trump DJT) | `celebrity_holdings` | ✅ Live | `data/celebrity/sec_13f.py` (daily auto-fetch) |
 | Quiver Quant | Congressional trades (Pelosi, Tuberville, MTG, Crenshaw) | `celebrity_holdings` | ✅ Live | `data/celebrity/congress.py` (daily auto-fetch) |
@@ -166,17 +166,20 @@ Polygon-compatible API. Massive is used three ways:
 
 ### 4. Finnhub — Earnings Calendar
 
-**File**: `data/ingestion/finnhub_earnings.py` · **run**: `make fetch-earnings`
+**Files**: `data/earnings/finnhub.py` (loader) · `data/earnings/scheduler.py`
+(scheduler) · **run**: `make fetch-earnings`
 
 **What it provides**: Forward earnings calendar + EPS actual/estimate/surprise +
 report session (`bmo`/`amc`) → the `earnings` table. Idempotent: re-run to
 backfill actuals once results publish.
 
-**Scheduled**: Celery `fetch_earnings` runs 3×/weekday (08:00 / 14:00 / 21:00 ET)
-to capture the forward calendar plus BMO (pre-open) and AMC (after-close) actuals.
+**Scheduled**: Backend lifespan (not Celery Beat) — fetches on startup, then
+2×/weekday at 08:00 ET (pre-market) and 18:00 ET (post-market). The scheduler
+also ensures 50 core stocks exist in the `tickers` table before each fetch (FK
+requirement). Celery task `fetch_earnings` remains available for manual invocation.
 
 **Config**: `FINNHUB_API_KEY` in `.env`. Powers the `/api/earnings/*` endpoints
-and the frontend Earnings page.
+and the frontend Earnings page. See **`docs/earnings.md`** for full details.
 
 ### 5. Social Sentiment — Twitter/X + Reddit *(planned, not built)*
 
@@ -258,7 +261,7 @@ ORDER BY bars;
 | Massive — 分钟历史 | 补充分钟 K 线 | `data/minute_data/` parquet | ✅ 已交付（NDX-100 + Top-20 ETF，~2 年） | `make minute-parquet` |
 | Massive — 参考 + 市值 | 宇宙元数据 | `tickers_reference.parquet`、`tickers.market_cap` | ✅ 已接入 | `massive_reference.py` / `massive_marketcap.py` |
 | Massive — 符号校验 | 按需扩展宇宙 | `symbol_requests` → `tickers` | ✅ Celery 每 6 小时 | `ml/tasks/symbol_validation.py` |
-| Finnhub — 财报日历 | EPS 实际/预期/超预期 | `earnings` | ✅ 已接入 | `make fetch-earnings` |
+| Finnhub — 财报日历 | EPS 实际/预期/超预期 | `earnings` | ✅ 已接入 | `data/earnings/finnhub.py`（启动 + 盘前/盘后自动拉取） |
 | Twitter/X · Reddit | 社媒情绪 | `social_posts` | 🚧 规划中（`data/scrapers/` 尚未创建） | Playwright / PRAW |
 | SEC EDGAR 13F + 13D | 机构持仓（巴菲特、索罗斯、达里奥、阿克曼、特朗普 DJT） | `celebrity_holdings` | ✅ 已接入 | `data/celebrity/sec_13f.py` |
 | Quiver Quant | 国会议员交易（佩洛西、图伯维尔等） | `celebrity_holdings` | ✅ 已接入 | `data/celebrity/congress.py` |

@@ -3,31 +3,30 @@
 import { createContext, useContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { marketData } from "@/lib/api";
-import { isUsMarketSessionNow } from "@/lib/utils";
-import type { MarketStatus } from "@/lib/types";
+import { isUsMarketActiveNow } from "@/lib/utils";
+import type { MarketStatus, SessionPhase } from "@/lib/types";
 
 /**
- * ── Global market open/closed state (single source of truth) ───────────────────
+ * ── Global market status (single source of truth) ─────────────────────────────
  *
- * The whole app shares ONE poll of `/market-data/status` (backed by
- * `backend/app/core/market_clock.py`) via this context. Every LIVE/CLOSED badge
- * and every live-poll gate reads `useMarketStatus()`, so they always agree on one
- * answer. This /status poll is also the heartbeat that lets the backend observe
- * the live feed advancing and flip CLOSED→LIVE — which is why other surfaces can
- * safely stop polling while the market is closed.
- *
- * Mount once at the app root (see app/providers.tsx), inside the QueryClientProvider.
+ * The whole app shares ONE poll of `/market-data/status` via this context.
+ * `isOpen` is true during ANY active session (pre-market, regular, after-hours,
+ * overnight) — all components gate their live polling on this flag so data
+ * flows throughout extended hours.
  */
 
 interface MarketStatusValue {
-  /** Raw backend payload (undefined until the first fetch resolves). */
   status: MarketStatus | undefined;
-  /** Authoritative when the backend answers; client-side ET-session fallback otherwise. */
+  /** True during any active session (pre/regular/after/overnight) or ticks flowing. */
   isOpen: boolean;
+  /** Specific session phase for display (badge label). */
+  sessionPhase: SessionPhase;
   isLoading: boolean;
 }
 
 const MarketStatusContext = createContext<MarketStatusValue | null>(null);
+
+const PHASE_WHEN_UNKNOWN: SessionPhase = "CLOSED";
 
 export function MarketStatusProvider({ children }: { children: React.ReactNode }) {
   const { data, isLoading } = useQuery<MarketStatus>({
@@ -37,26 +36,25 @@ export function MarketStatusProvider({ children }: { children: React.ReactNode }
     staleTime: 10_000,
   });
 
-  // `?? fallback` only triggers on null/undefined (no data yet / backend down) —
-  // a real `market_open: false` from the backend is preserved.
-  const isOpen = data?.market_open ?? isUsMarketSessionNow();
+  const isOpen = data?.market_active ?? isUsMarketActiveNow();
+  const sessionPhase: SessionPhase = data?.session_phase ?? PHASE_WHEN_UNKNOWN;
 
   return (
-    <MarketStatusContext.Provider value={{ status: data, isOpen, isLoading }}>
+    <MarketStatusContext.Provider value={{ status: data, isOpen, sessionPhase, isLoading }}>
       {children}
     </MarketStatusContext.Provider>
   );
 }
 
-/**
- * Read the global market-open state. Intended for use under <MarketStatusProvider>;
- * if mounted outside it, it degrades to a client-side ET-session check rather than
- * throwing (consistent with the frontend's never-crash-the-page fallback style).
- */
 export function useMarketStatus(): MarketStatusValue {
   const ctx = useContext(MarketStatusContext);
   if (ctx === null) {
-    return { status: undefined, isOpen: isUsMarketSessionNow(), isLoading: false };
+    return {
+      status: undefined,
+      isOpen: isUsMarketActiveNow(),
+      sessionPhase: PHASE_WHEN_UNKNOWN,
+      isLoading: false,
+    };
   }
   return ctx;
 }

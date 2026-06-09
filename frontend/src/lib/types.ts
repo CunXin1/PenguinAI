@@ -252,14 +252,16 @@ export interface HeatmapResponse {
 }
 
 // ── Market status (global open / closed) ──────────────────────────────────────
-/** The one answer every surface uses for "is the US market open right now".
- *  `market_open` = ET regular session OR the live feed is actively advancing. */
+export type SessionPhase = "PRE_MARKET" | "REGULAR" | "AFTER_HOURS" | "OVERNIGHT" | "CLOSED";
+
 export interface MarketStatus {
-  market_open: boolean;
+  market_open: boolean; // backward compat: regular session OR ticks advancing
+  market_active: boolean; // true during ANY session (pre/regular/after/overnight)
+  session_phase: SessionPhase;
   session_open: boolean; // true only during the ET regular session (09:30–16:00)
-  source: "session" | "ticks" | "closed"; // which path decided market_open
-  as_of: string; // ISO timestamp
-  latest_tick: string | null; // newest market_data_1min bar (ISO), or null
+  source: string;
+  as_of: string;
+  latest_tick: string | null;
 }
 
 // ── Celebrity Holdings ───────────────────────────────────────────────────────

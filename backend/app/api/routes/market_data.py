@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.core.database import engine as app_engine
-from app.core.market_clock import ET, get_market_status, get_session_phase, is_regular_session, ticks_advancing
+from app.core.market_clock import ET, get_market_status, get_session_phase, ticks_advancing
 
 router = APIRouter()
 

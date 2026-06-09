@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Crown, Search, TrendingUp, TrendingDown, Users } from "lucide-react";
 import { celebrityHoldings as api } from "@/lib/api";
-import { MOCK_CELEB_HOLDINGS, MOCK_CELEB_STATS } from "@/lib/mock";
 import { getCelebrityMeta, getCelebrityColor } from "@/lib/celebrities";
 import { Card } from "@/components/ui/Card";
 import { StatTile } from "@/components/ui/StatTile";
@@ -34,32 +33,16 @@ export default function CelebrityHoldingsPage() {
 
   const { data: stats } = useQuery<CelebritySummary[]>({
     queryKey: ["celebStats"],
-    queryFn: async () => {
-      try {
-        const s = await api.stats();
-        return Array.isArray(s) && s.length ? s : MOCK_CELEB_STATS;
-      } catch {
-        return MOCK_CELEB_STATS;
-      }
-    },
-    initialData: MOCK_CELEB_STATS,
+    queryFn: () => api.stats(),
   });
 
   const { data: holdings } = useQuery<CelebrityHolding[]>({
     queryKey: ["celebHoldings"],
-    queryFn: async () => {
-      try {
-        const h = await api.list(300);
-        return Array.isArray(h) && h.length ? h : MOCK_CELEB_HOLDINGS;
-      } catch {
-        return MOCK_CELEB_HOLDINGS;
-      }
-    },
-    initialData: MOCK_CELEB_HOLDINGS,
+    queryFn: () => api.list(300),
   });
 
-  const allStats = stats ?? MOCK_CELEB_STATS;
-  const allHoldings = holdings ?? MOCK_CELEB_HOLDINGS;
+  const allStats = useMemo(() => stats ?? [], [stats]);
+  const allHoldings = useMemo(() => holdings ?? [], [holdings]);
 
   const totals = useMemo(() => {
     const buys = allHoldings.filter((h) => h.action === "BUY").length;

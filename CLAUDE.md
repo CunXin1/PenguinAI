@@ -205,10 +205,11 @@ frontend/src/lib/api.ts            — auth API client methods
 | `run_daily_pipeline` | 10pm ET weekdays | ml_inference |
 | `scrape_social_media` | Every 30 min | default |
 | `fetch_fundamentals` | 8am ET weekdays | default |
-| `fetch_earnings` | 3×/weekday (8am/2pm/9pm ET) | default |
 | `validate_symbol_requests` | Every 6h | default |
 
-Celebrity holdings (`fetch_congress_trades`, `fetch_13f_filings`, `fetch_ark_trades`) are **not** in the Celery beat schedule — they run via the backend lifespan (startup + daily 19:00 ET). Celery tasks remain defined for manual invocation.
+The following are **not** in the Celery beat schedule — they run via backend lifespan threads (startup + daily). Celery tasks remain defined for manual invocation:
+- **Earnings** (`fetch_earnings`): startup + 2×/weekday (08:00 ET pre-market, 18:00 ET post-market). See `docs/earnings.md`.
+- **Celebrity holdings** (`fetch_congress_trades`, `fetch_13f_filings`, `fetch_ark_trades`): startup + daily 19:00 ET.
 
 ## Data Sources
 
@@ -218,7 +219,7 @@ Celebrity holdings (`fetch_congress_trades`, `fetch_13f_filings`, `fetch_ark_tra
 | IBKR WebSocket | Real-time 1-min bars during market hours (50 core symbols) | `data/ingestion/realtime/ibkr_service.py` | ✅ live |
 | Finnhub WebSocket | Real-time trade ticks → 1-min bars (same 50 symbols, hot standby) | `data/ingestion/realtime/finnhub_ws.py` | ✅ live |
 | Massive (massive.com) | Minute history + reference + market cap + symbol validation (~15 min delay) | `data/ingestion/massive_*.py`, `ml/tasks/symbol_validation.py` | ✅ live |
-| Finnhub REST | Earnings calendar (EPS actual/estimate/surprise) | `data/ingestion/finnhub_earnings.py` (`make fetch-earnings`) | ✅ live |
+| Finnhub REST | Earnings calendar (EPS actual/estimate/surprise) | `data/earnings/finnhub.py` + `data/earnings/scheduler.py` (startup + 2×/day) | ✅ live |
 | SEC EDGAR 13F/13D | Institutional holdings (Buffett, Soros, Dalio, Ackman) + Trump DJT | `data/celebrity/sec_13f.py` | ✅ live (daily auto-fetch) |
 | Quiver Quant | Congressional trades (Pelosi, Tuberville, MTG, Crenshaw) | `data/celebrity/congress.py` | ✅ live (daily auto-fetch) |
 | arkfunds.io | ARK Invest daily trades (Cathie Wood) | `data/celebrity/ark.py` | ✅ live (daily auto-fetch) |

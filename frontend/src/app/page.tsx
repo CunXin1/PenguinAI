@@ -1,7 +1,6 @@
 "use client";
 
 import { MarketIndices } from "@/components/dashboard/MarketIndices";
-import { MarketPulse } from "@/components/dashboard/MarketPulse";
 import { MarketChart } from "@/components/dashboard/MarketChart";
 import { TopSignals } from "@/components/dashboard/TopSignals";
 import { TrendingTickers } from "@/components/dashboard/TrendingTickers";
@@ -19,8 +18,6 @@ export default function DashboardPage() {
       </div>
 
       <MarketIndices />
-
-      <MarketPulse />
 
       <div className="grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">

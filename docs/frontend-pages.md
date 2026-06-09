@@ -9,7 +9,7 @@
 | `/` | Dashboard | Real API + mock fallback | — | Complete |
 | `/signals/[ticker]` | Signal Detail | Real API (202 polling) | — | Complete |
 | `/screener` | Stock Screener | Real API | — | Complete |
-| `/earnings` | Earnings Calendar | Real API + mock fallback | — | Complete |
+| `/earnings` | Earnings Calendar | Real API (no mock fallback) | — | Complete |
 | `/heatmap` | Market Heatmap | Real API | — | Complete |
 | `/watchlist` | Watchlist | API (logged in) / localStorage (guest) | Optional | Complete |
 | `/celebrity-holdings` | Smart Money | Real API + mock fallback | — | Complete |
@@ -76,19 +76,30 @@ Searchable, sortable table of the full stock universe with live quotes overlay.
 
 ### Earnings Calendar (`/earnings`)
 
-Earnings events grouped by date with EPS tracking and sentiment.
+Earnings events grouped by date with EPS tracking, expandable per-ticker history, and real-time data from the Finnhub earnings pipeline.
+
+**View states:**
+1. `loading` — Skeleton placeholder (4 stat tiles + 3 date groups)
+2. `error` — Error banner with retry button (backend offline or table empty)
+3. `empty` — "No earnings data yet" with `make fetch-earnings` guidance
+4. `data` — Full calendar view
 
 **Features:**
+- Stat tiles (4): Upcoming / Beats / Misses / Avg Surprise %
 - Tabs: Upcoming / Reported / All
 - Search by ticker or company name
-- Stats bar: upcoming count, beats, misses
-- Session badges: BMO (pre-market), AMC (after-hours), TBD
-- EPS surprise % with color coding (green = beat, red = miss)
-- Date grouping with "Today" indicator
+- Session badges: BMO (pre-market, amber), AMC (after-hours, indigo), TBD (zinc)
+- EPS surprise % with color coding (emerald = beat, red = miss)
+- Date grouping with "Today" badge
+- Expandable rows: click any row to show per-ticker historical earnings (lazy-loaded via `GET /earnings/{ticker}`)
+- EPS sparkline: inline SVG trend chart in expanded detail (last 8 reported quarters)
+- Revenue display: shows actual revenue when reported, estimate otherwise
+- Guidance text: displayed when available in expanded detail
+- Signal link: each expanded section links to `/signals/{ticker}`
 
-**API endpoints:** `/earnings/calendar?from={date}&to={date}`
+**API endpoints:** `/earnings/calendar?from={date}&to={date}`, `/earnings/{ticker}`
 
-**Note:** Falls back to `MOCK_EARNINGS` if API unavailable. Backend Finnhub integration populates the earnings table.
+**Note:** No mock fallback — uses real API data only. Backend auto-fetches Finnhub earnings on startup + 2×/day. See `docs/earnings.md` for full module docs.
 
 ---
 
