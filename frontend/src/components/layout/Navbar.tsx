@@ -8,6 +8,7 @@ import {
   Telescope,
   CalendarDays,
   Crown,
+  Landmark,
   Star,
   Newspaper,
   User,
@@ -17,6 +18,7 @@ import {
   LayoutGrid,
   LogOut,
   Loader2,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
@@ -31,6 +33,7 @@ const NAV = [
   { href: "/screener", label: "Screener", icon: Telescope },
   { href: "/earnings", label: "Earnings", icon: CalendarDays },
   { href: "/celebrity-holdings", label: "Celebrity", icon: Crown },
+  { href: "/fomc", label: "FOMC", icon: Landmark },
   { href: "/watchlist", label: "Watchlist", icon: Star },
   { href: "/news", label: "News", icon: Newspaper },
 ];
@@ -230,7 +233,7 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-950/80 backdrop-blur">
-      <div className="px-4 sm:px-6 lg:px-8 h-14 flex items-center gap-2 sm:gap-4">
+      <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-2 sm:gap-4">
         <Link href="/" className="text-lg font-bold tracking-tight shrink-0">
           <span className="text-zinc-900 dark:text-white">Penguin</span>
           <span className="text-sky-500 dark:text-sky-400">AI</span>
@@ -324,6 +327,15 @@ export function Navbar() {
                   >
                     <User size={15} /> Profile
                   </Link>
+                  {user?.tier === "ADMIN" && (
+                    <Link
+                      href="/admin"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="flex items-center gap-2 px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800/50"
+                    >
+                      <Settings size={15} /> Admin
+                    </Link>
+                  )}
                   <button
                     type="button"
                     onClick={() => {
@@ -413,16 +425,33 @@ export function Navbar() {
             })}
 
             {isLoggedIn ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setMenuOpen(false);
-                  logout();
-                }}
-                className="mt-2 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 text-red-500 dark:text-red-400 text-sm font-semibold transition-colors"
-              >
-                <LogOut size={16} /> Sign out
-              </button>
+              <>
+                {user?.tier === "ADMIN" && (
+                  <Link
+                    href="/admin"
+                    onClick={() => setMenuOpen(false)}
+                    className={cn(
+                      "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
+                      pathname.startsWith("/admin")
+                        ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white"
+                        : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800/50"
+                    )}
+                  >
+                    <Settings size={17} className="shrink-0" />
+                    Admin
+                  </Link>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    logout();
+                  }}
+                  className="mt-2 flex items-center justify-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 text-red-500 dark:text-red-400 text-sm font-semibold transition-colors"
+                >
+                  <LogOut size={16} /> Sign out
+                </button>
+              </>
             ) : (
               <Link
                 href="/auth/login"

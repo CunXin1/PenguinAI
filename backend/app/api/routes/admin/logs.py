@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import collections
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query
 
@@ -24,7 +24,7 @@ class AdminLogBuffer(logging.Handler):
             self._buffer.append(
                 {
                     "timestamp": datetime.fromtimestamp(
-                        record.created, tz=timezone.utc
+                        record.created, tz=UTC
                     ).isoformat(),
                     "level": record.levelname,
                     "logger": record.name,

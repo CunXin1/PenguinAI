@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -51,7 +51,7 @@ async def model_performance(
             entry["size_bytes"] = stat.st_size
             entry["size_human"] = _human_size(stat.st_size)
             entry["last_modified"] = datetime.fromtimestamp(
-                stat.st_mtime, tz=timezone.utc
+                stat.st_mtime, tz=UTC
             ).isoformat()
         models_info.append(entry)
 
@@ -71,12 +71,11 @@ async def model_performance(
                     k: round(v / total, 4) for k, v in sorted(raw.items(), key=lambda x: -x[1])[:15]
                 }
             elif hasattr(model, "feature_importances_"):
-                import numpy as np
 
                 names = getattr(model, "feature_names_in_", None)
                 imp = model.feature_importances_
                 if names is not None:
-                    pairs = sorted(zip(names, imp), key=lambda x: -x[1])[:15]
+                    pairs = sorted(zip(names, imp, strict=False), key=lambda x: -x[1])[:15]
                     feature_importance = {k: round(float(v), 4) for k, v in pairs}
         except Exception:
             pass

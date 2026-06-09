@@ -1,5 +1,5 @@
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import redis
 from celery import Celery
@@ -93,7 +93,7 @@ def _on_task_prerun(sender=None, task_id=None, **kwargs):
                 {
                     "task_id": task_id,
                     "status": "RUNNING",
-                    "started_at": datetime.now(timezone.utc).isoformat(),
+                    "started_at": datetime.now(UTC).isoformat(),
                 }
             ),
         )
@@ -112,11 +112,11 @@ def _on_task_success(sender=None, **kwargs):
         duration = None
         if started:
             started_dt = datetime.fromisoformat(started)
-            duration = round((datetime.now(timezone.utc) - started_dt).total_seconds(), 2)
+            duration = round((datetime.now(UTC) - started_dt).total_seconds(), 2)
         info.update(
             {
                 "status": "SUCCESS",
-                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "finished_at": datetime.now(UTC).isoformat(),
                 "duration_s": duration,
             }
         )
@@ -136,11 +136,11 @@ def _on_task_failure(sender=None, exception=None, **kwargs):
         duration = None
         if started:
             started_dt = datetime.fromisoformat(started)
-            duration = round((datetime.now(timezone.utc) - started_dt).total_seconds(), 2)
+            duration = round((datetime.now(UTC) - started_dt).total_seconds(), 2)
         info.update(
             {
                 "status": "FAILURE",
-                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "finished_at": datetime.now(UTC).isoformat(),
                 "duration_s": duration,
                 "error": str(exception)[:200] if exception else None,
             }

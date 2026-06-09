@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import UTC
 from typing import Annotated
 
 import httpx
@@ -23,7 +24,7 @@ async def health_overview(
     _=AdminUser,
 ):
     """Traffic-light view of every service in the stack."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     services = []
 
@@ -105,7 +106,6 @@ async def health_overview(
         inspector = cel.control.inspect(timeout=2.0)
         ping_resp = inspector.ping() or {}
         active_resp = inspector.active() or {}
-        stats_resp = inspector.stats() or {}
 
         worker_count = len(ping_resp)
         active_count = sum(len(tasks) for tasks in active_resp.values())
@@ -189,7 +189,7 @@ async def health_overview(
 
     return {
         "overall": overall,
-        "checked_at": datetime.now(timezone.utc).isoformat(),
+        "checked_at": datetime.now(UTC).isoformat(),
         "services": services,
     }
 

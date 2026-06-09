@@ -110,8 +110,8 @@ async def update_user(
     """Update a user's tier or active status. Cannot modify self."""
     try:
         uid = uuid.UUID(user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid user ID")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid user ID") from exc
 
     if uid == current_user.id:
         raise HTTPException(
