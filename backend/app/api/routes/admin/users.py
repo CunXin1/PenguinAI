@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_tier
 from app.models.user import User
+from app.schemas.admin import UserUpdateRequest
 
 router = APIRouter()
 AdminUser = Depends(require_tier("ADMIN"))
@@ -102,10 +103,9 @@ async def user_list(
 @router.patch("/{user_id}")
 async def update_user(
     user_id: str,
+    body: UserUpdateRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_tier("ADMIN"))],
-    tier: str | None = None,
-    is_active: bool | None = None,
 ):
     """Update a user's tier or active status. Cannot modify self."""
     try:
@@ -124,13 +124,13 @@ async def update_user(
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
 
-    if tier is not None:
-        if tier not in _VALID_TIERS:
-            raise HTTPException(status_code=400, detail=f"Invalid tier: {tier}")
-        target.tier = tier
+    if body.tier is not None:
+        if body.tier not in _VALID_TIERS:
+            raise HTTPException(status_code=400, detail=f"Invalid tier: {body.tier}")
+        target.tier = body.tier
 
-    if is_active is not None:
-        target.is_active = is_active
+    if body.is_active is not None:
+        target.is_active = body.is_active
 
     await db.flush()
     return {

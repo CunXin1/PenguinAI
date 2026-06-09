@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import UTC
 from typing import Annotated
@@ -98,14 +99,16 @@ async def health_overview(
         }
     )
 
-    # 4. Celery workers
+    # 4. Celery workers (inspect is synchronous — run in thread to avoid blocking)
     try:
         from celery import Celery
 
-        cel = Celery(broker=settings.REDIS_URL)
-        inspector = cel.control.inspect(timeout=2.0)
-        ping_resp = inspector.ping() or {}
-        active_resp = inspector.active() or {}
+        def _inspect_celery():
+            cel = Celery(broker=settings.REDIS_URL)
+            inspector = cel.control.inspect(timeout=2.0)
+            return inspector.ping() or {}, inspector.active() or {}
+
+        ping_resp, active_resp = await asyncio.to_thread(_inspect_celery)
 
         worker_count = len(ping_resp)
         active_count = sum(len(tasks) for tasks in active_resp.values())

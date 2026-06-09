@@ -26,13 +26,17 @@
 - [x] earnings 数据自动拉取（Finnhub API，startup + 2×/day）
 - [ ] 各 API 数据源断线重连 + 重试逻辑
 
-## 3. Admin Page
-- [ ] /admin 路由，仅 ADMIN tier 可访问
-- [ ] Pipeline 状态面板：bars_30m/1d 行数、signal_cache 新鲜度、Celery task 最后执行时间
-- [ ] 手动触发按钮：refresh_top100、retrain models、scrape social、fetch earnings
-- [ ] 模型性能看板：最新 CV AUC、feature importance 图表
-- [ ] 用户管理：查看/修改用户 tier、封禁账户
-- [ ] 系统日志查看器
+## 3. Admin Page ✅
+- [x] /admin 路由，仅 ADMIN tier 可访问
+- [x] Pipeline 状态面板：bars_30m/1d 行数、signal_cache 新鲜度、Celery task 最后执行时间
+- [x] 手动触发按钮：refresh_top100、retrain models、scrape social、fetch earnings
+- [x] 模型性能看板：feature importance 图表、signal 分布
+- [x] 用户管理：查看/修改用户 tier、封禁账户
+- [x] 系统日志查看器
+- [x] 全局服务健康监控：DB、Redis、Celery、实时流交通灯
+- [x] 数据库健康：连接池、表大小/行数/新鲜度
+- [x] API 端点探针：关键接口状态码 + 延迟
+- [x] 数据源状态：IBKR/Finnhub/Massive 连接 + 各表数据新鲜度
 
 ## 4. 个股新闻板块
 - [ ] /signals/[ticker] 页面下方增加该 ticker 专属新闻 feed

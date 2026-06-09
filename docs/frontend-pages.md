@@ -19,6 +19,7 @@
 | `/auth/login` | Login / Register | Real API | — | Complete |
 | `/auth/forgot-password` | Forgot Password | Real API | — | Complete |
 | `/auth/reset-password` | Reset Password | Real API (token param) | — | Complete |
+| `/admin` | Admin Dashboard | Real API (12 endpoints) | ADMIN | Complete |
 
 ---
 
@@ -240,6 +241,32 @@ New password form with strength validation, accessed via email link.
 - Error: invalid/expired token message
 
 **API endpoints:** `/auth/reset-password`
+
+---
+
+### Admin Dashboard (`/admin`)
+
+Full-featured system administration dashboard. ADMIN tier only — non-admins see an "Access Denied" card.
+
+**9 monitoring panels** in responsive grid layout (`max-w-7xl`, wider than standard pages):
+
+| Panel | Component | Polling | API Endpoint |
+|-------|-----------|---------|-------------|
+| System Health | `HealthOverview` | 30s | `/admin/health/overview` |
+| Database | `DatabaseHealth` | 60s | `/admin/db/health` |
+| API Endpoints | `EndpointHealth` | 60s | `/admin/health/endpoints` |
+| Tasks & Workers | `TaskStatus` | 15s | `/admin/tasks/status` |
+| Data Sources | `DataSourceStatus` | 30s | `/admin/datasources/status` |
+| Models | `ModelPerformance` | 5min | `/admin/models/performance` |
+| Users | `UserManagement` | 60s | `/admin/users/stats` + `/admin/users` |
+| Manual Actions | `ManualActions` | manual | `/admin/actions/{action}` |
+| System Logs | `SystemLogs` | manual/10s | `/admin/logs` |
+
+**Navbar integration:** "Admin" link in user dropdown menu + mobile menu, only visible when `user.tier === "ADMIN"`.
+
+**Shared components:** Reuses `Card`, `StatTile` from `components/ui/`. New reusable `StatusDot` (green/yellow/red indicator).
+
+> 详细文档见 [admin-dashboard.md](./admin-dashboard.md)
 
 ---
 

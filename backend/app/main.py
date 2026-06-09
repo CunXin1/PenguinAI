@@ -229,6 +229,7 @@ def _run_celebrity_scheduler(stop_event: threading.Event):
 _celeb_stop = threading.Event()
 _earnings_stop = threading.Event()
 _mcap_stop = threading.Event()
+_news_stop = threading.Event()
 
 
 def _run_marketcap_scheduler(stop_event: threading.Event):
@@ -318,9 +319,28 @@ async def lifespan(app: FastAPI):
     except ImportError:
         logger.warning("data.earnings not available — earnings scheduler disabled")
 
+    # News: startup fetch + tiered periodic (tier-1 every 15 min, tier-2 every 60 min)
+    news_thread = None
+    try:
+        from data.news.scheduler import run_scheduler as _run_news
+
+        _news_stop.clear()
+        news_thread = threading.Thread(
+            target=_run_news,
+            args=(_news_stop, settings.DATABASE_URL),
+            daemon=True,
+            name="news-sched",
+        )
+        news_thread.start()
+    except ImportError:
+        logger.warning("data.news not available — news scheduler disabled")
+
     try:
         yield
     finally:
+        _news_stop.set()
+        if news_thread is not None:
+            news_thread.join(timeout=5)
         _earnings_stop.set()
         if earnings_thread is not None:
             earnings_thread.join(timeout=5)

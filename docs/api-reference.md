@@ -495,29 +495,109 @@ Admin: inspect the data-demand queue, most-requested first.
 
 ### Admin (ADMIN tier only)
 
-#### `GET /admin/pipeline/status`
-Get data pipeline health metrics.
+> 完整文档见 [admin-dashboard.md](./admin-dashboard.md)
+
+#### `GET /admin/health/overview`
+全局服务健康交通灯（TimescaleDB / Redis / Celery / 实时流等）。
 
 **Response** `200 OK`
 ```json
 {
-  "db_stats": {
-    "bars_30min": 236000000,
-    "bars_1min": 27000000,
-    "social_posts": 0,
-    "cached_signals": 98
-  }
+  "overall": "healthy",
+  "checked_at": "2026-06-09T15:42:00Z",
+  "services": [
+    { "name": "timescaledb", "status": "healthy", "latency_ms": 2.3, "detail": "8 connections, pool: 3/40 active" },
+    { "name": "redis", "status": "healthy", "latency_ms": 0.8, "detail": "PONG, mem=12.5M" }
+  ]
 }
 ```
 
 ---
 
-#### `POST /admin/cache/refresh`
-Manually trigger Top-100 signal cache refresh.
+#### `GET /admin/health/endpoints`
+枚举所有注册路由 + 探针检测关键端点延迟。
+
+---
+
+#### `GET /admin/db/health`
+数据库连接池状态、表大小/行数/最新时间戳、总 DB 大小。
+
+---
+
+#### `GET /admin/tasks/status`
+Celery 定时任务上次执行信息、队列深度、Worker 在线状态。
+
+---
+
+#### `GET /admin/datasources/status`
+实时数据源连接状况（IBKR/Finnhub/Massive）+ 各表数据新鲜度。
+
+---
+
+#### `GET /admin/models/performance`
+ML 模型文件信息、Feature Importance、Signal 分布。
+
+---
+
+#### `GET /admin/users/stats`
+用户聚合统计（总数、分 tier、已验证、今日/本周注册）。
+
+---
+
+#### `GET /admin/users`
+分页用户列表（支持 `search` / `tier` 筛选）。
+
+**Query params**: `page`, `per_page` (default 20), `search`, `tier`
+
+---
+
+#### `PATCH /admin/users/{user_id}`
+修改用户 tier 或封禁状态。不能修改自己。
+
+**Request body** (all optional):
+```json
+{ "tier": "PRO", "is_active": false }
+```
+
+---
+
+#### `POST /admin/actions/{action}`
+手动触发 Celery 任务。
+
+**Path params**: `action` ∈ `refresh-signals` · `retrain-models` · `scrape-social` · `fetch-earnings` · `fetch-celebrities` · `fetch-news` · `validate-symbols`
 
 **Response** `200 OK`
 ```json
-{ "triggered": true }
+{ "triggered": true, "task_id": "abc-123", "task_name": "ml.tasks.hourly_signal_cache.refresh_top100" }
+```
+
+---
+
+#### `GET /admin/actions/task/{task_id}`
+查询已触发任务的执行状态。
+
+**Response** `200 OK`
+```json
+{ "task_id": "abc-123", "status": "SUCCESS", "result": null }
+```
+
+---
+
+#### `GET /admin/logs`
+查询系统日志（内存 ring buffer）。
+
+**Query params**: `lines` (default 100, max 1000), `level` (default `INFO`)
+
+**Response** `200 OK`
+```json
+{
+  "entries": [
+    { "timestamp": "2026-06-09T15:42:00Z", "level": "ERROR", "logger": "realtime.ibkr", "message": "heartbeat timeout" }
+  ],
+  "total_buffered": 1843,
+  "showing": 100,
+  "min_level": "ERROR"
+}
 ```
 
 ---

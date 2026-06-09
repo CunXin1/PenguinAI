@@ -197,6 +197,18 @@ frontend/src/hooks/useAuth.ts      — client-side auth state (token + /me query
 frontend/src/lib/api.ts            — auth API client methods
 ```
 
+### Admin Dashboard Key Files
+
+```
+backend/app/api/routes/admin/      — admin API sub-package (health, db, tasks, datasources, models, users, actions, logs)
+backend/app/schemas/admin.py       — Pydantic response models for all admin endpoints
+backend/app/api/routes/admin/logs.py — AdminLogBuffer (in-memory ring buffer log handler)
+ml/tasks/celery_app.py             — Celery task signal handlers (task_prerun/success/failure → Redis)
+frontend/src/app/admin/page.tsx    — admin dashboard page (ADMIN-only gate + 9 panel layout)
+frontend/src/components/admin/     — 10 admin panel components (HealthOverview, DatabaseHealth, etc.)
+docs/admin-dashboard.md            — full admin dashboard documentation (中文)
+```
+
 ## Celery Schedule
 
 | Task | Schedule | Queue |

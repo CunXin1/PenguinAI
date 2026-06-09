@@ -183,6 +183,11 @@ CREATE TABLE IF NOT EXISTS news_articles (
 SELECT create_hypertable('news_articles', 'time', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS idx_news_ticker_time ON news_articles (ticker, time DESC);
 CREATE INDEX IF NOT EXISTS idx_news_url ON news_articles (url);
+CREATE INDEX IF NOT EXISTS idx_news_url_ticker ON news_articles (url, ticker);
+CREATE INDEX IF NOT EXISTS idx_news_finbert ON news_articles (ticker, finbert_label) WHERE finbert_label IS NOT NULL;
+
+-- Auto-drop chunks older than 90 days (headlines stale, sentiment priced in)
+SELECT add_retention_policy('news_articles', INTERVAL '90 days', if_not_exists => TRUE);
 
 -- ── FOMC statements (global risk filter) ─────────────────────────────────────
 CREATE TABLE IF NOT EXISTS fomc_statements (

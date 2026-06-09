@@ -4,8 +4,9 @@ import Link from "next/link";
 import { Star, ArrowRight } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { DirectionBadge } from "@/components/ui/Badge";
+import { Sparkline } from "@/components/ui/Sparkline";
 import { useWatchlist } from "@/hooks/useWatchlist";
-import { useLiveQuotes } from "@/hooks/useLiveQuotes";
+import { useMiniQuotes } from "@/hooks/useMiniQuotes";
 import { cn, signedPct } from "@/lib/utils";
 
 const MAX_ROWS = 6;
@@ -13,7 +14,7 @@ const MAX_ROWS = 6;
 export function WatchlistWidget() {
   const { tickers, signalByTicker, ready } = useWatchlist();
   const shown = tickers.slice(0, MAX_ROWS);
-  const { data: quotes } = useLiveQuotes(shown);
+  const { data: quotes } = useMiniQuotes(shown);
 
   return (
     <Card className="p-4">
@@ -58,6 +59,9 @@ export function WatchlistWidget() {
                 <span className="font-mono font-semibold text-sm text-zinc-800 dark:text-zinc-200 w-12 shrink-0">
                   {t}
                 </span>
+                {q?.spark && (
+                  <Sparkline data={q.spark} color={up ? "#34d399" : "#f87171"} width={56} />
+                )}
                 <div className="flex-1" />
                 <span
                   className={cn(

@@ -1,261 +1,399 @@
-"""Fetch hot-ticker news from Massive API and store in the news_articles table.
+"""Fetch news for hot tickers, score with FinBERT, store in news_articles hypertable.
 
-Two tiers:
-  - **Hot tickers** (Nasdaq-100 top components + key ETFs): periodically fetched
-    by Celery Beat, stored in DB with sentiment, consumed by ML pipeline.
-  - **Cold tickers**: fetched on-demand by the API route, NOT stored.
+One row per (article, ticker) — same article can have different FinBERT scores for
+different tickers because we prepend the ticker to the headline before scoring.
 
-This module handles the hot tier.  A lightweight Google News RSS fallback
-(``fetch_google_news_rss``) provides zero-cost general market headlines.
+Storage:
+  news_articles (hypertable):
+    time, ticker, headline, source, url, finbert_score, finbert_label, raw_metadata
 
-RUN (repo root; needs MASSIVE_API_KEY in .env):
-    python -m data.news.ingest           # one-shot
-    python -m data.news.ingest --dry-run  # print only
+Dedup: ON CONFLICT on (time, id) — skips articles already stored for that ticker.
+
+RUN (repo root; needs MASSIVE_API_KEY or FINNHUB_API_KEY in .env):
+    python -m data.news.ingest                  # one-shot, all hot tickers
+    python -m data.news.ingest --tier 1          # tier-1 only
+    python -m data.news.ingest --ticker NVDA     # single ticker
+    python -m data.news.ingest --dry-run         # fetch + score, no DB write
 """
 
 import argparse
 import asyncio
-import contextlib
+import hashlib
+import json
 import logging
-import xml.etree.ElementTree as ET
-from datetime import UTC, datetime
-from email.utils import parsedate_to_datetime
+import uuid
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from data.ingestion.massive_reference import _get_json, _RateLimiter, _with_key, settings
-from data.news.constants import HOT_TICKERS_LIST as HOT_TICKERS
+from data.news.constants import HOT_TICKERS_LIST, TIER1_TICKERS, TIER2_TICKERS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger("news_ingest")
+logger = logging.getLogger("news.ingest")
 
-_RATE_PER_SEC = 5.0  # polite cap — well under Massive limits
-_BATCH_SIZE = 10  # tickers per request (comma-separated)
-
-# ── Sentiment mapping ────────────────────────────────────────────────────────
-_SENTIMENT_SCORE: dict[str, float] = {
-    "positive": 0.5,
-    "negative": -0.5,
-    "neutral": 0.0,
-}
+_BATCH_SIZE = 10
 
 
-def _parse_published(raw: str) -> datetime:
-    """Parse RFC 3339 timestamp from Massive, with fallback for common variants."""
-    # Massive returns ISO 8601 / RFC 3339 strings like "2024-06-01T12:00:00Z"
+# ── Settings loader (works from both backend/ and repo root) ────────────────
+
+def _load_settings():
+    from pathlib import Path
+
+    for parent in Path(__file__).resolve().parents:
+        env_path = parent / ".env"
+        if env_path.is_file():
+            vals = {}
+            for line in env_path.read_text().splitlines():
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                k, _, v = line.partition("=")
+                vals[k.strip()] = v.strip().strip('"').strip("'")
+            return vals
+    return {}
+
+
+_env = _load_settings()
+DATABASE_URL = _env.get("DATABASE_URL", "postgresql+asyncpg://penguinai:penguinai_dev@localhost:5432/penguinai")
+MASSIVE_API_KEY = _env.get("MASSIVE_API_KEY", "")
+MASSIVE_BASE_URL = _env.get("MASSIVE_BASE_URL", "https://api.massive.com").rstrip("/")
+FINNHUB_API_KEY = _env.get("FINNHUB_API_KEY", "")
+FINNHUB_BASE_URL = _env.get("FINNHUB_BASE_URL", "https://finnhub.io/api/v1")
+
+
+# ── FinBERT scoring (optional — gracefully skips if torch unavailable) ──────
+
+_finbert = None
+_finbert_attempted = False
+
+
+def _get_finbert():
+    global _finbert, _finbert_attempted
+    if _finbert_attempted:
+        return _finbert
+    _finbert_attempted = True
+    try:
+        from ml.inference.finbert_scorer import FinBERTScorer
+        _finbert = FinBERTScorer()
+        logger.info("FinBERT scorer loaded")
+    except Exception as exc:
+        logger.info("FinBERT not available (%s) — using Massive sentiment only", exc)
+    return _finbert
+
+
+def score_articles_finbert(
+    articles: list[dict], ticker: str
+) -> list[tuple[str | None, float | None]]:
+    """Score headlines with FinBERT, prepending ticker for context.
+
+    Returns list of (label, score) tuples aligned with input articles.
+    Falls back to Massive sentiment if FinBERT is unavailable.
+    """
+    scorer = _get_finbert()
+    if scorer is None:
+        results = []
+        for a in articles:
+            massive_sent = _extract_massive_sentiment(a, ticker)
+            results.append(massive_sent)
+        return results
+
+    texts = [f"{ticker}: {a.get('title') or a.get('headline', '')}" for a in articles]
+    try:
+        scored = scorer.score_batch(texts)
+        return [(r.label, r.sentiment) for r in scored]
+    except Exception as exc:
+        logger.warning("FinBERT scoring failed: %s — falling back to Massive", exc)
+        return [_extract_massive_sentiment(a, ticker) for a in articles]
+
+
+def _extract_massive_sentiment(article: dict, ticker: str) -> tuple[str | None, float | None]:
+    """Extract sentiment from Massive insights for a specific ticker."""
+    score_map = {"positive": 0.5, "negative": -0.5, "neutral": 0.0}
+    for insight in article.get("insights") or []:
+        if insight.get("ticker", "").upper() == ticker.upper():
+            label = (insight.get("sentiment") or "").lower()
+            if label in score_map:
+                return label, score_map[label]
+    for insight in article.get("insights") or []:
+        label = (insight.get("sentiment") or "").lower()
+        if label in score_map:
+            return label, score_map[label]
+    return None, None
+
+
+# ── Fetch helpers ───────────────────────────────────────────────────────────
+
+async def fetch_massive(
+    client: httpx.AsyncClient, tickers: list[str], limit: int = 50
+) -> list[dict]:
+    if not MASSIVE_API_KEY:
+        return []
+    ticker_param = ",".join(tickers)
+    try:
+        resp = await client.get(
+            f"{MASSIVE_BASE_URL}/v2/reference/news",
+            params={"ticker": ticker_param, "limit": limit},
+            headers={"Authorization": f"Bearer {MASSIVE_API_KEY}"},
+        )
+        if resp.status_code != 200:
+            logger.warning("Massive %d for %s", resp.status_code, ticker_param)
+            return []
+        return (resp.json().get("results") or [])
+    except Exception as exc:
+        logger.warning("Massive fetch failed for %s: %s", ticker_param, exc)
+        return []
+
+
+async def fetch_finnhub(client: httpx.AsyncClient, ticker: str, days: int = 7) -> list[dict]:
+    if not FINNHUB_API_KEY:
+        return []
+    today = datetime.now(UTC).date()
+    from_date = today - timedelta(days=days)
+    try:
+        resp = await client.get(
+            f"{FINNHUB_BASE_URL}/company-news",
+            params={
+                "symbol": ticker,
+                "from": from_date.isoformat(),
+                "to": today.isoformat(),
+                "token": FINNHUB_API_KEY,
+            },
+        )
+        if resp.status_code != 200:
+            return []
+        items = resp.json()
+        if not isinstance(items, list):
+            return []
+        for item in items:
+            item["_source"] = "finnhub"
+        return items
+    except Exception as exc:
+        logger.warning("Finnhub fetch failed for %s: %s", ticker, exc)
+        return []
+
+
+# ── Article normalization ───────────────────────────────────────────────────
+
+def _parse_ts(raw: str) -> datetime:
     raw = raw.strip()
     if raw.endswith("Z"):
         raw = raw[:-1] + "+00:00"
     return datetime.fromisoformat(raw)
 
 
-def _extract_sentiment(article: dict, ticker: str) -> tuple[str | None, float | None, str | None]:
-    """Find the first insight matching *ticker* and return (label, score, reasoning)."""
-    for insight in article.get("insights") or []:
-        if insight.get("ticker", "").upper() == ticker.upper():
-            label = (insight.get("sentiment") or "").lower()
-            return label or None, _SENTIMENT_SCORE.get(label), insight.get("sentiment_reasoning")
-    # fallback: first insight regardless of ticker
-    for insight in article.get("insights") or []:
-        label = (insight.get("sentiment") or "").lower()
-        if label:
-            return label, _SENTIMENT_SCORE.get(label), insight.get("sentiment_reasoning")
-    return None, None, None
+def _article_url(article: dict) -> str:
+    return article.get("article_url") or article.get("url") or ""
 
 
-def _map_article(article: dict, query_ticker: str) -> dict:
-    """Map a Massive news article to our news_articles row dict."""
-    source_id = str(article["id"])
-    sentiment, sentiment_score, sentiment_reasoning = _extract_sentiment(article, query_ticker)
+def _article_time(article: dict) -> datetime | None:
+    if article.get("_source") == "finnhub":
+        ts = article.get("datetime")
+        if ts:
+            return datetime.fromtimestamp(ts, tz=UTC)
+        return None
+    pub = article.get("published_utc")
+    if pub:
+        try:
+            return _parse_ts(pub)
+        except (ValueError, TypeError):
+            pass
+    return None
 
+
+def _article_headline(article: dict) -> str:
+    return article.get("title") or article.get("headline") or ""
+
+
+def _article_source(article: dict) -> str:
+    if article.get("_source") == "finnhub":
+        return article.get("source", "Unknown")
     publisher = article.get("publisher") or {}
-    return {
-        "id": f"massive:{source_id}",
-        "source_provider": "massive",
-        "source_id": source_id,
-        "headline": article.get("title") or "",
-        "summary": article.get("description") or "",
-        "article_url": article.get("article_url") or "",
-        "image_url": article.get("image_url") or "",
-        "author": article.get("author") or "",
-        "publisher_name": publisher.get("name") or "",
-        "published_at": _parse_published(article["published_utc"]),
-        "tickers": article.get("tickers") or [],
-        "category": "general",
-        "sentiment": sentiment,
-        "sentiment_score": sentiment_score,
-        "sentiment_reasoning": sentiment_reasoning,
-        "is_hot": True,
-    }
+    return publisher.get("name", "Unknown")
 
+
+def _article_tickers(article: dict) -> list[str]:
+    if article.get("_source") == "finnhub":
+        related = article.get("related") or ""
+        return [t.strip() for t in related.split(",") if t.strip()]
+    return article.get("tickers") or []
+
+
+def _article_metadata(article: dict) -> dict:
+    """Extra fields stored in raw_metadata JSONB."""
+    meta = {}
+    for key in ("summary", "description", "image_url", "image", "author", "category"):
+        val = article.get(key)
+        if val:
+            meta[key] = val
+    publisher = article.get("publisher") or {}
+    if publisher.get("name"):
+        meta["publisher_name"] = publisher["name"]
+    insights = article.get("insights")
+    if insights:
+        meta["insights"] = insights
+    return meta
+
+
+def _url_hash(url: str) -> str:
+    return hashlib.md5(url.encode()).hexdigest()[:12]
+
+
+# ── DB upsert ───────────────────────────────────────────────────────────────
 
 _UPSERT_SQL = text("""
-    INSERT INTO news_articles
-        (id, source_provider, source_id, headline, summary, article_url,
-         image_url, author, publisher_name, published_at, tickers,
-         category, sentiment, sentiment_score, sentiment_reasoning, is_hot, fetched_at)
-    VALUES
-        (:id, :source_provider, :source_id, :headline, :summary, :article_url,
-         :image_url, :author, :publisher_name, :published_at, :tickers,
-         :category, :sentiment, :sentiment_score, :sentiment_reasoning, :is_hot, NOW())
-    ON CONFLICT (id) DO UPDATE SET
-        sentiment        = EXCLUDED.sentiment,
-        sentiment_score  = EXCLUDED.sentiment_score,
-        sentiment_reasoning = EXCLUDED.sentiment_reasoning,
-        fetched_at       = NOW()
+    INSERT INTO news_articles (id, time, ticker, headline, source, url, finbert_score, finbert_label, raw_metadata)
+    VALUES (:id, :time, :ticker, :headline, :source, :url, :finbert_score, :finbert_label, CAST(:raw_metadata AS jsonb))
+    ON CONFLICT (time, id) DO UPDATE SET
+        finbert_score = EXCLUDED.finbert_score,
+        finbert_label = EXCLUDED.finbert_label,
+        raw_metadata  = EXCLUDED.raw_metadata
+""")
+
+_CHECK_URL_SQL = text("""
+    SELECT 1 FROM news_articles WHERE url = :url AND ticker = :ticker LIMIT 1
 """)
 
 
-async def fetch_hot_news() -> int:
-    """Fetch news for hot tickers from Massive, store in news_articles table.
+async def store_articles(
+    session: AsyncSession,
+    articles: list[dict],
+    ticker: str,
+    sentiments: list[tuple[str | None, float | None]],
+) -> int:
+    """Upsert articles for a single ticker. Returns count of new rows."""
+    count = 0
+    for article, (label, score) in zip(articles, sentiments, strict=False):
+        url = _article_url(article)
+        if not url:
+            continue
 
-    Returns count of new articles inserted (or updated).
-    """
-    if not settings.MASSIVE_API_KEY:
-        logger.error("MASSIVE_API_KEY is empty — set it in .env")
-        return 0
+        # Dedup: skip if this (url, ticker) pair already exists
+        existing = await session.execute(_CHECK_URL_SQL, {"url": url, "ticker": ticker})
+        if existing.scalar_one_or_none() is not None:
+            continue
 
-    base = settings.MASSIVE_BASE_URL.rstrip("/")
-    key = settings.MASSIVE_API_KEY
-    engine = create_async_engine(settings.DATABASE_URL)
-    SessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        pub_time = _article_time(article)
+        if pub_time is None:
+            continue
 
-    limiter = _RateLimiter(_RATE_PER_SEC)
-    all_rows: dict[str, dict] = {}  # keyed by article id to deduplicate
+        headline = _article_headline(article)
+        if not headline:
+            continue
 
-    async with httpx.AsyncClient(
-        timeout=30.0, headers={"Authorization": f"Bearer {key}"}
-    ) as client:
-        # Process tickers in batches (comma-separated in the query param)
-        for i in range(0, len(HOT_TICKERS), _BATCH_SIZE):
-            batch = HOT_TICKERS[i : i + _BATCH_SIZE]
-            ticker_param = ",".join(batch)
-            url = _with_key(
-                f"{base}/v2/reference/news?ticker={ticker_param}&limit=50", key
-            )
-            try:
-                data = await _get_json(client, url, limiter)
-            except Exception as exc:
-                logger.warning("Failed to fetch news for batch %s: %s", ticker_param, exc)
-                continue
+        row_id = uuid.uuid5(uuid.NAMESPACE_URL, f"{url}:{ticker}")
+        meta = _article_metadata(article)
 
-            results = (data or {}).get("results") or []
-            for article in results:
-                # Use the first matching hot ticker from this batch for sentiment
-                query_ticker = batch[0]
-                for t in article.get("tickers") or []:
-                    if t in batch:
-                        query_ticker = t
-                        break
+        await session.execute(_UPSERT_SQL, {
+            "id": str(row_id),
+            "time": pub_time,
+            "ticker": ticker,
+            "headline": headline,
+            "source": _article_source(article),
+            "url": url,
+            "finbert_score": round(score, 4) if score is not None else None,
+            "finbert_label": label,
+            "raw_metadata": json.dumps(meta),
+        })
+        count += 1
 
-                try:
-                    row = _map_article(article, query_ticker)
-                except (KeyError, ValueError) as exc:
-                    logger.debug("Skipping malformed article: %s", exc)
-                    continue
+    return count
 
-                # deduplicate — keep first mapping (richer sentiment match)
-                if row["id"] not in all_rows:
-                    all_rows[row["id"]] = row
 
-            logger.info(
-                "Batch %d–%d (%s): %d articles",
-                i, i + len(batch), ticker_param, len(results),
-            )
+# ── High-level ingest functions ─────────────────────────────────────────────
+
+async def ingest_tickers(
+    tickers: list[str],
+    db_url: str | None = None,
+    dry_run: bool = False,
+) -> int:
+    """Fetch + score + store news for a list of tickers. Returns total new rows."""
+    engine = create_async_engine(db_url or DATABASE_URL)
+    session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    total = 0
 
     try:
-        if not all_rows:
-            logger.info("No articles fetched")
-            return 0
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            # Fetch in batches via Massive (supports comma-separated tickers)
+            all_articles: dict[str, list[dict]] = {t: [] for t in tickers}
 
-        count = 0
-        async with SessionLocal() as db:
-            for row in all_rows.values():
-                await db.execute(_UPSERT_SQL, row)
-                count += 1
-            await db.commit()
+            for i in range(0, len(tickers), _BATCH_SIZE):
+                batch = tickers[i:i + _BATCH_SIZE]
+                articles = await fetch_massive(client, batch, limit=50)
 
-        logger.info("Upserted %d hot news articles into news_articles", count)
-        return count
+                if not articles:
+                    # Fallback: fetch individually from Finnhub
+                    for t in batch:
+                        fh = await fetch_finnhub(client, t, days=7)
+                        all_articles[t].extend(fh[:20])
+                    continue
+
+                # Distribute articles to the tickers they mention
+                for article in articles:
+                    mentioned = set(t.upper() for t in _article_tickers(article))
+                    for t in batch:
+                        if t.upper() in mentioned:
+                            all_articles[t].append(article)
+
+                logger.info("Fetched %d articles for batch %s", len(articles), ",".join(batch))
+
+            # Score + store per ticker
+            for ticker, articles in all_articles.items():
+                if not articles:
+                    continue
+
+                sentiments = score_articles_finbert(articles, ticker)
+
+                if dry_run:
+                    for a, (lbl, sc) in zip(articles, sentiments, strict=False):
+                        print(f"  [{lbl or '?':>8} {sc or 0:+.2f}] {ticker}: {_article_headline(a)[:70]}")
+                    continue
+
+                async with session_factory() as session:
+                    n = await store_articles(session, articles, ticker, sentiments)
+                    await session.commit()
+                    if n > 0:
+                        logger.info("%s: stored %d new articles", ticker, n)
+                    total += n
+
     finally:
         await engine.dispose()
 
-
-# ── Google News RSS fallback (zero-cost, no API key) ─────────────────────────
-
-_GOOGLE_NEWS_RSS = "https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+    return total
 
 
-async def fetch_google_news_rss(query: str = "stock market") -> list[dict]:
-    """Fetch general market news from Google News RSS (no API key, no sentiment).
-
-    Returns a list of dicts with keys: title, link, source, published_at.
-    This is the zero-cost fallback when Massive is unavailable.
-    """
-    url = _GOOGLE_NEWS_RSS.format(query=query.replace(" ", "+"))
-    articles: list[dict] = []
-
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-        except httpx.HTTPError as exc:
-            logger.warning("Google News RSS fetch failed: %s", exc)
-            return articles
-
-    try:
-        root = ET.fromstring(resp.text)
-    except ET.ParseError as exc:
-        logger.warning("Google News RSS XML parse error: %s", exc)
-        return articles
-
-    for item in root.iter("item"):
-        title_el = item.find("title")
-        link_el = item.find("link")
-        source_el = item.find("source")
-        pub_el = item.find("pubDate")
-
-        published_at = None
-        if pub_el is not None and pub_el.text:
-            with contextlib.suppress(ValueError, TypeError):
-                published_at = parsedate_to_datetime(pub_el.text).astimezone(UTC)
-
-        articles.append({
-            "title": title_el.text if title_el is not None else "",
-            "link": link_el.text if link_el is not None else "",
-            "source": source_el.text if source_el is not None else "",
-            "published_at": published_at,
-        })
-
-    logger.info("Google News RSS: %d articles for query=%r", len(articles), query)
-    return articles
+async def ingest_tier1(db_url: str | None = None) -> int:
+    logger.info("Ingesting tier-1 (%d tickers)", len(TIER1_TICKERS))
+    return await ingest_tickers(TIER1_TICKERS, db_url)
 
 
-# ── CLI entry point ──────────────────────────────────────────────────────────
+async def ingest_tier2(db_url: str | None = None) -> int:
+    logger.info("Ingesting tier-2 (%d tickers)", len(TIER2_TICKERS))
+    return await ingest_tickers(TIER2_TICKERS, db_url)
+
+
+async def ingest_all(db_url: str | None = None) -> int:
+    logger.info("Ingesting all hot tickers (%d)", len(HOT_TICKERS_LIST))
+    return await ingest_tickers(HOT_TICKERS_LIST, db_url)
+
+
+# ── CLI entry point ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Fetch hot-ticker news from Massive.")
-    ap.add_argument(
-        "--dry-run", action="store_true",
-        help="fetch and print but do not write to DB",
-    )
-    ap.add_argument(
-        "--google-rss", action="store_true",
-        help="test the Google News RSS fallback",
-    )
+    ap = argparse.ArgumentParser(description="Fetch + score + store hot-ticker news.")
+    ap.add_argument("--tier", type=int, choices=[1, 2], help="Fetch only tier 1 or 2")
+    ap.add_argument("--ticker", type=str, help="Fetch a single ticker")
+    ap.add_argument("--dry-run", action="store_true", help="Fetch + score only, no DB write")
     args = ap.parse_args()
 
-    if args.google_rss:
-        results = asyncio.run(fetch_google_news_rss())
-        for r in results[:10]:
-            print(f"  [{r['source']}] {r['title']}")
-        print(f"Total: {len(results)}")
-    elif args.dry_run:
-        # For dry-run, just fetch and log without DB write
-        logger.info("DRY RUN — would fetch news for %d hot tickers", len(HOT_TICKERS))
-        logger.info("Hot tickers: %s", ", ".join(HOT_TICKERS))
+    if args.ticker:
+        count = asyncio.run(ingest_tickers([args.ticker.upper()], dry_run=args.dry_run))
+    elif args.tier == 1:
+        count = asyncio.run(ingest_tier1() if not args.dry_run else ingest_tickers(TIER1_TICKERS, dry_run=True))
+    elif args.tier == 2:
+        count = asyncio.run(ingest_tier2() if not args.dry_run else ingest_tickers(TIER2_TICKERS, dry_run=True))
     else:
-        count = asyncio.run(fetch_hot_news())
-        print(f"Done: {count} articles upserted")
+        count = asyncio.run(ingest_all() if not args.dry_run else ingest_tickers(HOT_TICKERS_LIST, dry_run=True))
+
+    print(f"Done: {count} new articles stored")

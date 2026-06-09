@@ -1,0 +1,328 @@
+# Admin Dashboard 管理仪表板
+
+> Last updated: 2026-06-09
+
+## 概述
+
+Admin Dashboard 是 PenguinAI 的系统管理仪表板，仅限 `ADMIN` tier 用户访问。提供全栈基础设施的实时监控、数据库健康检查、任务调度状态、数据源连接状况、模型性能追踪、用户管理和手动操作触发。
+
+**前端路由**: `/admin`
+**后端前缀**: `/api/admin/*`
+**权限**: 所有端点均需 `require_tier("ADMIN")`
+
+---
+
+## 架构
+
+### 后端
+
+后端为 FastAPI 子包结构，从原来的单文件 `admin.py`（40 行）扩展为 10 个模块：
+
+```
+backend/app/api/routes/admin/
+├── __init__.py          # re-export router（main.py 零改动）
+├── router.py            # 挂载所有子路由
+├── health.py            # 系统健康 + API 端点探针
+├── database.py          # 数据库连接池 + 表统计
+├── tasks.py             # Celery 任务状态 + 队列深度
+├── datasources.py       # 实时数据源 + 数据新鲜度
+├── models.py            # ML 模型文件 + 信号分布
+├── users.py             # 用户统计 + 列表 + 管理
+├── actions.py           # 手动触发 Celery 任务
+└── logs.py              # 内存日志缓冲 + 查询
+```
+
+Pydantic 响应模型定义在 `backend/app/schemas/admin.py`。
+
+### 前端
+
+```
+frontend/src/app/admin/page.tsx              # 主页面（auth gate + 9 面板编排）
+frontend/src/components/admin/
+├── StatusDot.tsx               # 复用的绿/黄/红圆点指示器
+├── HealthOverview.tsx          # A. 全局服务健康
+├── DatabaseHealth.tsx          # B. 数据库健康
+├── EndpointHealth.tsx          # C. API 端点探针
+├── TaskStatus.tsx              # D. 任务 + Worker 状态
+├── DataSourceStatus.tsx        # E. 数据源状态
+├── ModelPerformance.tsx        # F. 模型性能
+├── UserManagement.tsx          # G. 用户管理
+├── ManualActions.tsx           # H. 手动触发
+└── SystemLogs.tsx              # I. 系统日志
+```
+
+---
+
+## 9 个监控面板详解
+
+### A. System Health Overview — 系统健康总览
+
+**端点**: `GET /api/admin/health/overview`
+**轮询**: 30 秒
+
+一眼判断整个系统是否正常。顶部 banner 显示全局状态（绿：All Systems Operational / 黄：Degraded / 红：Critical），下方网格展示每个服务的交通灯卡片。
+
+**监控的服务**:
+
+| 服务 | 检测方式 | 判定逻辑 |
+|------|----------|----------|
+| TimescaleDB | `SELECT 1` + 延迟测量 | 连接成功 = healthy，超时 = down |
+| Redis | `PING` + 内存信息 | PONG = healthy，无响应 = down |
+| Backend API | 自检 | 始终 healthy（自身服务中） |
+| Celery Workers | `inspect.ping()` (timeout=2s) | 有响应 = healthy，无 worker = down |
+| RT Supervisor | `app.state.watchdog.health` | running = healthy, disabled = degraded |
+| IBKR Stream | supervisor health → services.ibkr | alive = healthy |
+| Finnhub WS | supervisor health → services.finnhub | alive = healthy |
+
+**全局状态计算**:
+- DB 或 Redis down → `critical`
+- 任何服务 down 或 degraded → `degraded`
+- 全部 healthy → `healthy`
+
+**响应示例**:
+```json
+{
+  "overall": "healthy",
+  "checked_at": "2026-06-09T15:42:00Z",
+  "services": [
+    { "name": "timescaledb", "status": "healthy", "latency_ms": 2.3, "detail": "8 connections, pool: 3/40 active" },
+    { "name": "redis", "status": "healthy", "latency_ms": 0.8, "detail": "PONG, mem=12.5M" },
+    { "name": "celery_workers", "status": "healthy", "latency_ms": null, "detail": "2 online, 0 active tasks" },
+    { "name": "realtime_supervisor", "status": "healthy", "latency_ms": null, "detail": "pid=12345, restarts=0" },
+    { "name": "ibkr_stream", "status": "healthy", "latency_ms": null, "detail": "uptime=15240s, restarts=0" },
+    { "name": "finnhub_stream", "status": "healthy", "latency_ms": null, "detail": "uptime=15240s, restarts=0" }
+  ]
+}
+```
+
+---
+
+### B. Database Health — 数据库健康
+
+**端点**: `GET /api/admin/db/health`
+**轮询**: 60 秒
+
+**展示内容**:
+1. **连接池状态** — 进度条可视化（used/available），颜色随使用率变化（绿 < 60%、黄 60–80%、红 > 80%）
+2. **表统计表格** — 每个关键表的近似行数、磁盘大小、最新时间戳
+3. **总 DB 大小**
+
+**关键设计决策**:
+- 行数用 `pg_stat_user_tables.n_live_tup`（O(1) 近似值），不用 `COUNT(*)`。bars_30m 有 2.36 亿行，真正 COUNT 会花几分钟。
+- 时间戳查询 `SELECT max(ts)` 在 TimescaleDB hypertable 上很快（chunk exclusion + 降序索引只读最后一个 chunk）。
+
+**跟踪的表**: bars_30m, bars_1d, market_data_1min, signal_cache, social_posts, users, tickers, instruments, celebrity_holdings, earnings, news_articles, symbol_requests
+
+---
+
+### C. API Endpoint Health — 接口健康
+
+**端点**: `GET /api/admin/health/endpoints`
+**轮询**: 60 秒
+
+1. **路由列表** — 枚举 FastAPI 所有注册的路由（method + path），可展开/折叠
+2. **探针结果** — 用 httpx 对 4 个关键只读端点发内部请求，报告状态码 + 延迟
+
+**探针目标**: `/health`, `/api/market-data/status`, `/api/signals/top?limit=1`, `/api/tickers/search?q=AAPL`
+
+---
+
+### D. Pipeline & Task Status — 任务状态
+
+**端点**: `GET /api/admin/tasks/status`
+**轮询**: 15 秒
+
+**展示内容**:
+1. **队列深度** — `default` 和 `ml_inference` 队列中待处理任务数（通过 `redis.llen()` 查询）
+2. **Worker 卡片** — 每个在线 worker 的名称、状态、当前活跃任务数
+3. **定时任务表格** — 6 个 Beat 调度任务的上次执行时间、状态（SUCCESS/FAILURE/RUNNING）、耗时
+
+**任务执行追踪机制**:
+Celery 信号处理器（在 `ml/tasks/celery_app.py` 中注册）在任务开始/成功/失败时将元数据写入 Redis hash `admin:task_runs`，格式为：
+```json
+{
+  "task_id": "abc-123",
+  "status": "SUCCESS",
+  "started_at": "2026-06-09T15:00:00Z",
+  "finished_at": "2026-06-09T15:00:42Z",
+  "duration_s": 42.3
+}
+```
+
+---
+
+### E. Data Source Status — 数据源状态
+
+**端点**: `GET /api/admin/datasources/status`
+**轮询**: 30 秒
+
+**展示内容**:
+1. **实时源卡片** — IBKR、Finnhub、Massive、30m Bar Closer 的连接状态、uptime、重启次数
+2. **数据新鲜度网格** — 每个关键表的最新时间戳（相对时间显示，如 "2h ago"）
+3. **Symbol 覆盖** — 实时 1min 流的 symbol 数、instruments 总数、活跃 ticker 数
+
+数据来源：实时服务状态从 `_watchdog.health.services` 读取，新鲜度通过 `SELECT max(timestamp_col)` 查询。
+
+---
+
+### F. Model Performance — 模型性能
+
+**端点**: `GET /api/admin/models/performance`
+**轮询**: 5 分钟
+
+**展示内容**:
+1. **模型文件信息** — XGBoost 和 RandomForest 的文件路径、大小、最后修改时间
+2. **Feature Importance** — 从 pickle 模型中提取 top 15 特征重要性，纯 CSS 水平条形图可视化
+3. **Signal 分布** — signal_cache 中的 LONG/SHORT/NEUTRAL 计数、平均置信度
+
+---
+
+### G. User Management — 用户管理
+
+**端点**:
+- `GET /api/admin/users/stats` — 聚合统计
+- `GET /api/admin/users` — 分页列表（支持搜索、tier 筛选）
+- `PATCH /api/admin/users/{id}` — 修改 tier / 封禁
+
+**展示内容**:
+1. **统计卡片** — 总用户数、已验证、今日注册、本周注册
+2. **Tier 分布** — FREE/PRO/PREMIUM/ADMIN 各多少人（可点击筛选）
+3. **用户表格** — email、名称、tier（点击可改）、状态（Active/Banned 可切换）、注册时间
+4. **分页控制** — 上/下页、总页数
+
+**安全限制**:
+- 不能修改自己的 tier（防止自降级）
+- 不能封禁自己（防止锁死）
+- tier 必须是有效值（FREE/PRO/PREMIUM/ADMIN）
+
+---
+
+### H. Manual Actions — 手动触发
+
+**端点**:
+- `POST /api/admin/actions/{action}` — 触发任务
+- `GET /api/admin/actions/task/{task_id}` — 查询任务状态
+
+**7 个可触发的操作**:
+
+| 操作 | Celery 任务 | 队列 | 说明 |
+|------|-------------|------|------|
+| Refresh Signals | `refresh_top100` | ml_inference | 刷新 Top-100 信号缓存 |
+| Retrain Models | `run_daily_pipeline` | ml_inference | 完整日间 ML 训练流程 |
+| Scrape Social | `scrape_social_media` | default | 抓取 Twitter + Reddit |
+| Fetch Earnings | `fetch_earnings` | default | 拉取 Finnhub 财报数据 |
+| Fetch Holdings | `fetch_celebrity_holdings` | default | 拉取国会/13F/ARK 持仓 |
+| Refresh News | `refresh_hot_news` | default | 刷新热门 ticker 新闻 |
+| Validate Symbols | `validate_symbol_requests` | default | 验证用户请求的 symbol |
+
+**前端交互流程**:
+1. 点击按钮 → POST 触发 → 返回 `task_id`
+2. 每 3 秒轮询 `GET /api/admin/actions/task/{task_id}`
+3. 显示 spinning 动画直到 SUCCESS/FAILURE
+4. 5 秒后自动恢复为 idle 状态
+
+---
+
+### I. System Logs — 系统日志
+
+**端点**: `GET /api/admin/logs?lines=200&level=INFO`
+**轮询**: 手动刷新 / 可选 10 秒自动刷新
+
+**实现机制**:
+后端使用 `AdminLogBuffer`（继承 `logging.Handler`），内部维护一个 `deque(maxlen=2000)` 作为内存 ring buffer，在 app lifespan 启动时挂到 root logger。
+
+**优点**: 不依赖文件系统、不需要外部日志服务、Docker 环境通用。
+**缺点**: 只捕获 FastAPI 进程的日志，不包含 Celery worker 日志（worker 的失败通过 D 面板的任务状态追踪）。
+
+**前端功能**:
+- 5 级 severity 筛选按钮（DEBUG/INFO/WARNING/ERROR/CRITICAL）
+- 等宽字体滚动容器，颜色编码（红=ERROR、黄=WARNING、灰=INFO）
+- Auto 按钮切换 10 秒自动刷新
+- 手动 Refresh 按钮
+
+---
+
+## 前端布局
+
+```
+┌─────────────────────────────────────────────────────┐
+│  System Health Overview  (全宽)                       │
+├────────────────────────┬────────────────────────────┤
+│  Database Health        │  Tasks & Workers            │
+├────────────────────────┴────────────────────────────┤
+│  Data Sources  (全宽)                                 │
+├────────────────────────┬────────────────────────────┤
+│  Model Performance      │  Manual Actions             │
+├────────────────────────┴────────────────────────────┤
+│  User Management  (全宽)                              │
+├────────────────────────┬────────────────────────────┤
+│  API Endpoints          │  System Logs                │
+└────────────────────────┴────────────────────────────┘
+```
+
+页面使用 `max-w-7xl`（比普通页面更宽），双栏用 `grid lg:grid-cols-2 gap-6` 实现响应式布局。
+
+---
+
+## 轮询策略
+
+每个面板使用 TanStack React Query 的 `refetchInterval` 独立轮询，频率根据数据变化速度设置：
+
+| 面板 | 轮询间隔 | 原因 |
+|------|----------|------|
+| Health Overview | 30s | 服务状态变化较慢 |
+| Database | 60s | 表统计信息变化很慢 |
+| Endpoints | 60s | 路由注册基本不变 |
+| Tasks | 15s | 任务可能随时完成 |
+| Data Sources | 30s | 实时流需要及时发现断连 |
+| Models | 5min | 模型一天最多重训一次 |
+| Users | 60s | 用户注册频率不高 |
+| Logs | 手动/10s | 按需查看，避免不必要的流量 |
+
+---
+
+## 访问控制
+
+- **Navbar 入口**: 仅 `user.tier === "ADMIN"` 时，在用户菜单下拉和移动端菜单中显示 "Admin" 链接
+- **页面保护**: `useAuth()` 检查 → 非 ADMIN 显示 "Access Denied" 卡片 + 返回按钮
+- **API 保护**: 所有端点使用 `Depends(require_tier("ADMIN"))`，非 ADMIN 用户请求返回 403
+
+---
+
+## 文件清单
+
+### 新建 (22 个文件)
+
+**后端 (11)**:
+- `backend/app/api/routes/admin/__init__.py`
+- `backend/app/api/routes/admin/router.py`
+- `backend/app/api/routes/admin/health.py`
+- `backend/app/api/routes/admin/database.py`
+- `backend/app/api/routes/admin/tasks.py`
+- `backend/app/api/routes/admin/datasources.py`
+- `backend/app/api/routes/admin/models.py`
+- `backend/app/api/routes/admin/users.py`
+- `backend/app/api/routes/admin/actions.py`
+- `backend/app/api/routes/admin/logs.py`
+- `backend/app/schemas/admin.py`
+
+**前端 (11)**:
+- `frontend/src/app/admin/page.tsx`
+- `frontend/src/components/admin/StatusDot.tsx`
+- `frontend/src/components/admin/HealthOverview.tsx`
+- `frontend/src/components/admin/DatabaseHealth.tsx`
+- `frontend/src/components/admin/EndpointHealth.tsx`
+- `frontend/src/components/admin/TaskStatus.tsx`
+- `frontend/src/components/admin/DataSourceStatus.tsx`
+- `frontend/src/components/admin/ModelPerformance.tsx`
+- `frontend/src/components/admin/UserManagement.tsx`
+- `frontend/src/components/admin/ManualActions.tsx`
+- `frontend/src/components/admin/SystemLogs.tsx`
+
+### 修改 (5 个文件)
+
+- `backend/app/main.py` — lifespan 中初始化 AdminLogBuffer + 暴露 watchdog 到 `app.state`
+- `ml/tasks/celery_app.py` — 添加 Celery 信号处理器（task_prerun/success/failure → Redis）
+- `frontend/src/lib/api.ts` — 添加 `admin` API 命名空间（12 个方法）
+- `frontend/src/lib/types.ts` — 添加 admin 相关 TypeScript 类型定义
+- `frontend/src/components/layout/Navbar.tsx` — ADMIN 用户显示管理入口链接

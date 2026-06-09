@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Flame } from "lucide-react";
 import { Card } from "@/components/ui/Card";
+import { Sparkline } from "@/components/ui/Sparkline";
 import { useTrending } from "@/hooks/useTrending";
 import { signedPct, money } from "@/lib/utils";
 
@@ -24,7 +25,8 @@ export function TrendingTickers() {
               href={`/signals/${t.ticker}`}
               className="flex items-center justify-between gap-3 px-2 py-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800/50 transition-colors"
             >
-              <span className="font-mono font-semibold text-sm text-zinc-800 dark:text-zinc-200">{t.ticker}</span>
+              <span className="font-mono font-semibold text-sm text-zinc-800 dark:text-zinc-200 w-14 shrink-0">{t.ticker}</span>
+              <Sparkline data={t.spark} color={up ? "#34d399" : "#f87171"} width={72} className="flex-1" />
               <div className="flex items-center gap-4">
                 <span className="font-mono text-xs text-zinc-600 dark:text-zinc-400 w-20 text-right shrink-0">{money(t.price)}</span>
                 <span className={`font-mono text-xs w-14 text-right shrink-0 ${up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
