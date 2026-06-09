@@ -1,15 +1,25 @@
 import type {
+  ActionResponse,
+  AdminDataSourceStatus,
+  AdminModelPerformance,
+  AdminTaskStatus,
+  AdminUserListResponse,
+  AdminUserRow,
+  AdminUserStats,
   Candle,
   CandleBar,
   CelebrityHolding,
   CelebritySummary,
   ChartRange,
+  DatabaseHealth,
   EarningsEvent,
+  EndpointHealth,
   FomcNextMeeting,
   FomcScheduleItem,
   FomcStatement,
   FomcTrendPoint,
   HeatmapResponse,
+  LogsResponse,
   MarketStatus,
   MiniQuote,
   NewsApiArticle,
@@ -17,6 +27,8 @@ import type {
   Signal,
   SignalListItem,
   SymbolRequestResult,
+  SystemHealthOverview,
+  TaskResultResponse,
   Ticker,
   TickerSearchResult,
   TokenResponse,
@@ -254,4 +266,48 @@ export const fomc = {
 
   schedule: () =>
     apiFetch<FomcScheduleItem[]>("/fomc/schedule"),
+};
+
+// ── Admin API ───────────────────────────────────────────────────────────────
+export const admin = {
+  healthOverview: () =>
+    apiFetch<SystemHealthOverview>("/admin/health/overview"),
+
+  healthEndpoints: () =>
+    apiFetch<EndpointHealth>("/admin/health/endpoints"),
+
+  dbHealth: () =>
+    apiFetch<DatabaseHealth>("/admin/db/health"),
+
+  taskStatus: () =>
+    apiFetch<AdminTaskStatus>("/admin/tasks/status"),
+
+  datasourceStatus: () =>
+    apiFetch<AdminDataSourceStatus>("/admin/datasources/status"),
+
+  modelPerformance: () =>
+    apiFetch<AdminModelPerformance>("/admin/models/performance"),
+
+  userStats: () =>
+    apiFetch<AdminUserStats>("/admin/users/stats"),
+
+  userList: (page = 1, perPage = 20, search = "", tier = "") =>
+    apiFetch<AdminUserListResponse>(
+      `/admin/users?page=${page}&per_page=${perPage}&search=${encodeURIComponent(search)}&tier=${tier}`
+    ),
+
+  updateUser: (userId: string, data: { tier?: string; is_active?: boolean }) =>
+    apiFetch<AdminUserRow>(`/admin/users/${userId}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }),
+
+  triggerAction: (action: string) =>
+    apiFetch<ActionResponse>(`/admin/actions/${action}`, { method: "POST" }),
+
+  taskResult: (taskId: string) =>
+    apiFetch<TaskResultResponse>(`/admin/actions/task/${taskId}`),
+
+  logs: (lines = 100, level = "INFO") =>
+    apiFetch<LogsResponse>(`/admin/logs?lines=${lines}&level=${level}`),
 };

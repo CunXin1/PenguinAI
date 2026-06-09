@@ -428,13 +428,19 @@ async def get_hot_news(
     Returns recent articles for hot tickers from the last 7 days.
     Optionally filtered by ticker. Falls back to on-demand API fetch if DB is empty.
     """
-    if ticker:
-        t = ticker.upper()
-        if not _TICKER_RE.match(t):
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Invalid ticker format",
-            )
+    t = ticker.upper() if ticker else None
+    if t and not _TICKER_RE.match(t):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid ticker format",
+        )
+
+    cache_key = f"hot:{t or 'all'}:{limit}"
+    cached = _get_cached(cache_key, _MARKET_TTL)
+    if cached is not None:
+        return cached[:limit]
+
+    if t:
         rows = await db.execute(
             text(
                 "SELECT * FROM news_articles "
@@ -457,18 +463,21 @@ async def get_hot_news(
         )
     result = [_map_db_row(r) for r in rows.mappings()]
     if result:
+        _set_cache(cache_key, result)
         return result
 
     # DB empty — fall back to on-demand API fetch
-    articles = await _fetch_massive_news(ticker=ticker, limit=limit)
+    articles = await _fetch_massive_news(ticker=t, limit=limit)
     if articles is None:
         articles = await _fetch_google_rss(
-            query=f"{ticker} stock" if ticker else "stock market finance",
+            query=f"{t} stock" if t else "stock market finance",
             limit=limit,
         )
     if articles is None:
-        articles = await _fetch_finnhub_news(ticker=ticker, limit=limit)
-    return articles or []
+        articles = await _fetch_finnhub_news(ticker=t, limit=limit)
+    articles = articles or []
+    _set_cache(cache_key, articles)
+    return articles
 
 
 @router.get("/{ticker}")

@@ -316,6 +316,186 @@ export interface FomcScheduleItem {
   past: boolean;
 }
 
+// ── Admin Dashboard ─────────────────────────────────────────────────────────
+export type ServiceStatus = "healthy" | "degraded" | "down";
+export type OverallHealth = "healthy" | "degraded" | "critical";
+
+export interface ServiceHealthItem {
+  name: string;
+  status: ServiceStatus;
+  latency_ms: number | null;
+  detail: string;
+}
+
+export interface SystemHealthOverview {
+  overall: OverallHealth;
+  checked_at: string;
+  services: ServiceHealthItem[];
+}
+
+export interface ConnectionPool {
+  pool_size: number;
+  checked_in: number;
+  checked_out: number;
+  overflow: number;
+  max_overflow: number;
+}
+
+export interface TableStat {
+  name: string;
+  approx_rows: number;
+  size_bytes: number;
+  size_human: string;
+  latest_ts: string | null;
+}
+
+export interface DatabaseHealth {
+  connection_pool: ConnectionPool;
+  active_connections: number;
+  tables: TableStat[];
+  total_db_size_bytes: number;
+  total_db_size_human: string;
+}
+
+export interface RouteInfo {
+  method: string;
+  path: string;
+  name: string | null;
+}
+
+export interface ProbeResult {
+  endpoint: string;
+  status_code: number | null;
+  latency_ms: number | null;
+  error: string | null;
+}
+
+export interface EndpointHealth {
+  routes: RouteInfo[];
+  probes: ProbeResult[];
+}
+
+export interface TaskRunInfo {
+  name: string;
+  task: string;
+  schedule: string;
+  last_run: string | null;
+  last_status: string | null;
+  last_duration_s: number | null;
+}
+
+export interface QueueDepth {
+  name: string;
+  pending: number;
+}
+
+export interface WorkerInfo {
+  name: string;
+  status: string;
+  active_tasks: number;
+  processed: number;
+  concurrency: number;
+  queues: string[];
+}
+
+export interface AdminTaskStatus {
+  scheduled_tasks: TaskRunInfo[];
+  queues: QueueDepth[];
+  workers: WorkerInfo[];
+}
+
+export interface RealtimeSourceStatus {
+  name: string;
+  alive: boolean;
+  uptime_s: number | null;
+  restarts: number;
+  detail: string;
+}
+
+export interface DataFreshness {
+  table: string;
+  latest_ts: string | null;
+}
+
+export interface AdminDataSourceStatus {
+  realtime: RealtimeSourceStatus[];
+  freshness: DataFreshness[];
+  coverage: Record<string, number>;
+}
+
+export interface ModelFileInfo {
+  name: string;
+  file_path: string;
+  exists: boolean;
+  size_bytes: number | null;
+  size_human: string | null;
+  last_modified: string | null;
+}
+
+export interface SignalDistribution {
+  total: number;
+  by_direction: Record<string, number>;
+  avg_confidence: number | null;
+}
+
+export interface AdminModelPerformance {
+  models: ModelFileInfo[];
+  feature_importance: Record<string, number>;
+  signal_distribution: SignalDistribution;
+}
+
+export interface AdminUserStats {
+  total: number;
+  by_tier: Record<string, number>;
+  verified: number;
+  active: number;
+  registered_today: number;
+  registered_this_week: number;
+}
+
+export interface AdminUserRow {
+  id: string;
+  email: string;
+  display_name: string | null;
+  tier: string;
+  is_active: boolean;
+  email_verified: boolean;
+  created_at: string | null;
+}
+
+export interface AdminUserListResponse {
+  users: AdminUserRow[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface ActionResponse {
+  triggered: boolean;
+  task_id: string | null;
+  task_name: string;
+}
+
+export interface TaskResultResponse {
+  task_id: string;
+  status: string;
+  result: string | null;
+}
+
+export interface LogEntry {
+  timestamp: string;
+  level: string;
+  logger: string;
+  message: string;
+}
+
+export interface LogsResponse {
+  entries: LogEntry[];
+  total_buffered: number;
+  showing: number;
+  min_level: string;
+}
+
 /** Reporting session — backend derives it from `earnings.report_hour` (Finnhub `hour`). */
 export type EarningsSession = "BMO" | "AMC" | "TBD";
 
