@@ -347,38 +347,65 @@ async def get_series(
             GROUP BY t
             ORDER BY t ASC
         """
-    bars = _bars_from_rows(await db.execute(text(primary_sql), params))
+    try:
+        bars = _bars_from_rows(await db.execute(text(primary_sql), params))
+    except Exception:
+        bars = []
 
     # ── 2) Fallback: imported 30-min / daily bars (covers the whole universe) ──
     if not bars:
+        is_daily = bucket >= timedelta(days=1)
         view, base = (
-            ("market_data_daily", "bars_1d")
-            if bucket >= timedelta(days=1)
+            ("market_data_daily", "bars_1d") if is_daily
             else ("market_data_30min", "bars_30m")
         )
-        fallback_sql = f"""
-            SELECT time_bucket((:bucket)::interval, m.time) AS t,
-                   first(m.open, m.time)  AS o,
-                   max(m.high)            AS h,
-                   min(m.low)             AS l,
-                   last(m.close, m.time)  AS c,
-                   sum(m.volume)          AS v
-            FROM {view} m
-            WHERE m.ticker = :ticker
-              AND m.time >= COALESCE(
-                  (SELECT max(ts) FROM {base}
-                   WHERE instrument_id = (
-                       SELECT instrument_id FROM instruments
-                       WHERE symbol = :ticker ORDER BY instrument_id LIMIT 1
-                   )),
-                  now()
-              ) - (:lookback)::interval
-            GROUP BY t
-            ORDER BY t ASC
-        """
+        if is_daily:
+            # Daily data: one row per day, no time_bucket needed
+            fallback_sql = f"""
+                SELECT m.time AS t,
+                       m.open  AS o,
+                       m.high  AS h,
+                       m.low   AS l,
+                       m.close AS c,
+                       m.volume AS v
+                FROM {view} m
+                WHERE m.ticker = :ticker
+                  AND m.time >= COALESCE(
+                      (SELECT max(ts) FROM {base}
+                       WHERE instrument_id = (
+                           SELECT instrument_id FROM instruments
+                           WHERE symbol = :ticker ORDER BY instrument_id LIMIT 1
+                       )),
+                      now()
+                  ) - :lookback
+                ORDER BY t ASC
+            """
+        else:
+            fallback_sql = f"""
+                SELECT time_bucket(:bucket, m.time) AS t,
+                       first(m.open, m.time)  AS o,
+                       max(m.high)            AS h,
+                       min(m.low)             AS l,
+                       last(m.close, m.time)  AS c,
+                       sum(m.volume)          AS v
+                FROM {view} m
+                WHERE m.ticker = :ticker
+                  AND m.time >= COALESCE(
+                      (SELECT max(ts) FROM {base}
+                       WHERE instrument_id = (
+                           SELECT instrument_id FROM instruments
+                           WHERE symbol = :ticker ORDER BY instrument_id LIMIT 1
+                       )),
+                      now()
+                  ) - :lookback
+                GROUP BY t
+                ORDER BY t ASC
+            """
         try:
             bars = _bars_from_rows(await db.execute(text(fallback_sql), params))
-        except Exception:
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("series fallback failed for %s/%s: %s", tkr, rng, exc)
             bars = []
 
     return {"ticker": tkr, "range": rng, "bars": bars}

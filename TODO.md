@@ -1,90 +1,83 @@
-# PenguinAI — TODO / Backlog
+# PenguinAI — TODO
 
-> Status snapshot: **2026-06-08**. Running backlog of unfinished work, stubs, and known gaps.
->
-> 优先级:🔴 阻塞性 · 🟡 重要 · 🟢 锦上添花
-
-**Legend:** 🔴 blocker · 🟡 important · 🟢 nice-to-have
+> Updated: **2026-06-09**
 
 ---
 
-## 0. Critical path — what blocks a real end-to-end run
+## 1. 完善 ML 层
+- [ ] 接入 Gemma 4 LLM（vLLM 本地部署或 Vertex AI），替换当前 ML-only fallback
+- [ ] 实现 Reddit scraper（PRAW）+ Twitter scraper（Playwright），填充 social_posts
+- [ ] 实现 fetch_fundamentals（yfinance / Massive），填充 fundamentals 表
+- [ ] FOMC 声明抓取 + hawk/dove NLP 打分，填充 fomc_statements
+- [ ] 补全 ml/tests（trainer、model_registry、celery tasks 测试覆盖）
+- [ ] 集成 MLflow 实验追踪 + 模型版本管理
+- [ ] 模型 drift 监控 + 预测质量回测框架
+- [ ] RAG pgvector ivfflat 索引调优
 
-- 🔴 **No trained model artifacts** — `/models/penguinai/xgboost_prod.pkl` and `rf_prod.pkl` don't exist, so `ml/models/model_registry.py` returns `None` and all ML probabilities are `None`. **Need a first training run.**
-- 🔴 **Training not wired to data** — `ml/tasks/daily_pipeline.py` passes `db_path=":memory:"`; the trainer expects a DuckDB/Parquet feature store. Point it at the `data/30min_data` parquet (the train/serve-parity source).
-- 🟡 **Trainer ↔ indicators feature parity** — `ml/models/xgboost_trainer.py:FEATURE_COLS` are *normalized/derived* features (`bb_pct_b`, `atr_14_pct`, `ema20_slope`, `price_vs_sma200`, `volume_ratio`, `vwap_pct`). The `indicators_30min` view (`04_compat_views.sql`) is meant to expose exactly these derived columns over the raw-level `bars_30m` fields. **Verify** the view's output columns match `FEATURE_COLS` 1:1 before the first training run.
+## 2. 后端重启自愈 + 数据补全机制
+- [ ] 启动时检测 data/30min_data 是否存在，缺失则触发 Massive 30min 拉取
+- [ ] 启动时检测 bars_30m 行数，为 0 则自动运行 import pipeline
+- [ ] 启动时检测 signal_cache 是否过期/为空，自动触发 refresh_top100
+- [ ] Celery worker 启动时自动 load models，失败则 log + 降级运行
+- [ ] 健康检查端点 /api/health：返回 DB、Redis、models、data freshness 状态
+- [ ] docker-compose 加 ml-worker 服务，确保 Celery worker 随栈启动
+- [ ] earnings 数据自动拉取（Finnhub API，设置 FINNHUB_API_KEY 后自动生效）
+- [ ] 各 API 数据源断线重连 + 重试逻辑
 
----
+## 3. Admin Page
+- [ ] /admin 路由，仅 ADMIN tier 可访问
+- [ ] Pipeline 状态面板：bars_30m/1d 行数、signal_cache 新鲜度、Celery task 最后执行时间
+- [ ] 手动触发按钮：refresh_top100、retrain models、scrape social、fetch earnings
+- [ ] 模型性能看板：最新 CV AUC、feature importance 图表
+- [ ] 用户管理：查看/修改用户 tier、封禁账户
+- [ ] 系统日志查看器
 
-## 1. Data layer
+## 4. 个股新闻板块
+- [ ] /signals/[ticker] 页面下方增加该 ticker 专属新闻 feed
+- [ ] 后端端点 GET /api/news/ticker/{ticker}，从 Finnhub company news API 拉取
+- [ ] FinBERT 实时打分每条新闻，显示 bullish/bearish/neutral 标签
+- [ ] 新闻情绪聚合条：展示该股近期舆论方向
 
-- 🟡 Social scrapers **not built** — `data/scrapers/` does not exist yet (no Twitter/Reddit/SEC modules). `social_posts`, `celebrity_holdings` stay empty; the `scrape_social_media` Celery task is a stub. 13F parsing + FinBERT scoring still to write.
-- 🟡 FOMC ingestion + hawk/dove scoring — no population path for `fomc_statements` (the macro filter reads it; no-ops while empty).
-- 🟢 News ingestion — `news_articles` table exists but nothing scrapes/populates it (and there's no `/api/news` endpoint).
-- 🟢 Polygon — `POLYGON_API_KEY` lingers in `.env`/schema `source` enum but there's no `polygon_loader.py`; superseded by Massive. Remove or implement.
+## 5. 新闻板块只展示热门股票
+- [ ] 主页 /news 只显示 MAG7 + Top ETF 等核心标的的新闻
+- [ ] 冷门股票新闻不在主页加载，减少 API 调用和页面噪声
+- [ ] 用户在个股页面点击后按需搜索并展示该股新闻
+- [ ] 新闻搜索/筛选功能：用户可输入 ticker 查看相关新闻
 
-## 2. ML layer
+## 6. FOMC 新闻板块
+- [ ] /fomc 页面：历次 FOMC 会议声明 + hawk/dove 打分时间线
+- [ ] 可视化 hawk_dove_score 趋势图（影响全局信号的宏观过滤器）
+- [ ] 下次会议倒计时 + 市场预期利率概率（CME FedWatch）
+- [ ] 后端：SEC EDGAR FOMC 声明抓取 + NLP hawk/dove 分类器
 
-- 🔴 First training run → produce prod pickles; verify hot-reload via `model_registry.reload()`.
-- 🔴 Wire trainer to a real DuckDB/Parquet path (replace `:memory:`).
-- 🟡 `fetch_fundamentals` stub — `ml/tasks/daily_pipeline.py:89` only logs. `fundamentals` + `earnings` tables stay empty → `get_fundamentals()` always returns `None`.
-- 🟡 FinBERT (`ProsusAI/finbert`) — confirm model download/caching in the ML worker image.
-- 🟡 Gemma 4 inference server — needs a running vLLM endpoint (`GEMMA_API_URL`). `gemma_agent` retries 3× then raises if absent.
-- 🟡 RAG embedder (sentence-transformers MiniLM → `VECTOR(384)`) — confirm model + tune the pgvector `ivfflat` index.
-- 🟢 Backtest / signal-quality evaluation harness (precision by horizon, calibration).
+## 7. 完善前端 UI/UX
+- [ ] 移动端响应式优化（dashboard 卡片布局、图表触控交互）
+- [ ] Loading skeleton 统一风格（替换各处不一致的 loading 状态）
+- [ ] 图表交互增强：tooltip、crosshair、时间范围拖拽
+- [ ] 信号卡片迷你 sparkline + 当日涨跌幅
+- [ ] 暗色主题微调：对比度、hover 状态、focus ring
+- [ ] 错误/空状态页面统一设计
+- [ ] 3M/1Y 图表数据显示修复（fallback 到 bars_1d 已修，需验证）
 
-## 3. Backend
+## 8. 用户界面
+- [ ] /profile 页面完善：修改显示名、头像上传、密码修改
+- [ ] 用户 tier 展示 + 升级引导（FREE → PRO → PREMIUM）
+- [ ] Watchlist 管理：添加/删除/排序自选股，后端持久化（替换 localStorage）
+- [ ] 通知偏好设置：邮件提醒、信号推送
+- [ ] 用户操作历史 / 最近查看的 ticker
+- [ ] Auth store（zustand）+ protected routes + token 过期处理
+- [ ] 邮件验证和密码重置的邮件发送对接（SES / Resend）
 
-- 🟡 **Alembic baseline missing** — `backend/alembic.ini` exists and `db/migrations/` has `env.py` + template, but there are **no version files**. Schema is still created from `db/schema/*.sql` via `docker-entrypoint-initdb.d`. Generate a baseline migration aligned to the ORM models + `db/schema`, then wire `alembic upgrade head` into deploy.
-- 🟡 **No `/api/news` endpoint** — `news_articles` is unused by the API; the frontend News pages are mock-only.
-- 🟡 `GET /api/signals/{ticker}` requires auth (`CurrentUser`) — anonymous users get **401** on the detail page even though `/signals/top` is public. Decide gating (use `OptionalUser`, or gate by tier only).
-- 🟡 **Forgot-password email delivery not wired** — `POST /forgot-password` generates a reset token but only logs it. Need an email transport (SES, Resend, etc.) to actually deliver the reset link.
-- 🟢 OAuth — `auth.py` returns **501** (Google / Apple, future).
-- 🟢 PREMIUM features — API-key access + LLM chat (future per `CLAUDE.md`).
+## 9. About 界面
+- [ ] /about 页面：产品介绍、团队信息、技术架构概览
+- [ ] 信号生成方法论说明（ML + NLP + LLM pipeline 的非技术解释）
+- [ ] 免责声明：信号仅供参考，非投资建议
+- [ ] 隐私政策 + 服务条款
+- [ ] 联系方式 / 反馈入口
 
-## 4. Frontend
-
-> UI is built across all pages, but some still run on **demo data** (`src/lib/mock.ts`) with silent API fallback. The work below is mostly *wiring to live endpoints*.
-
-- 🟡 Dashboard Top Signals — `useTopSignals` already tries the API then falls back; verify against a live backend.
-- 🟡 Screener → `GET /api/tickers/universe` (currently `MOCK_UNIVERSE`).
-- 🟡 Watchlist → `GET/POST/DELETE /api/watchlist` (currently `localStorage`; needs auth/session).
-- 🟡 News → needs a backend `/api/news` (no endpoint yet).
-- 🟡 Auth/session — `zustand` is installed but **unused**; there's only a `localStorage` token check. Add an auth store, protected routes, token-expiry handling.
-- 🟡 Nav search → wire to `/api/tickers/search` autocomplete (today it blind-pushes to `/signals/<input>`).
-- 🟢 `loading.tsx` / `error.tsx` boundaries, custom `not-found`, skeleton polish.
-- 🟢 Login page renders under the global Navbar — consider an auth route group without the nav.
-- 🟢 Mobile/responsive QA + accessibility pass.
-- 🟢 Forgot-password + reset-password pages — backend endpoints exist, frontend `api.ts` methods exist, but no dedicated pages built yet.
-
-## 5. Infra / DevOps
-
-- 🟡 **Docker Hub is blocked** on the dev network → pull base images via the **DaoCloud mirror**. Consider setting `registry-mirrors` in `daemon.json`.
-- 🟡 **Frontend hot-reload is dead** over the Windows bind mount → `docker restart penguinai-frontend` to apply edits.
-- 🟡 `.env` exists (copied from `.env.example`). Still blank/optional: `GEMMA_*`, `REDDIT_*` (scrapers unbuilt), `POLYGON_API_KEY` (legacy). Note: `FINNHUB_API_KEY` is referenced by `make fetch-earnings` but **not yet listed in `.env.example`** — add it.
-- 🟡 Full-stack `docker-compose up` is **unverified end-to-end** (needs DB data + model pickles + a Gemma endpoint).
-- 🟢 GPU (`ml_worker`) NVIDIA runtime config on the 4090 box.
-- 🟢 AWS deploy (`.github/workflows/cd-aws.yml`) — ECR/ECS + secrets not provisioned.
-
-## 6. Testing & quality
-
-- 🟡 **Coverage thresholds not enforced** — neither `pytest --cov-fail-under` nor vitest coverage gates are configured. Target: 85% backend, reasonable frontend coverage. Wire into CI as blocking check.
-- 🟡 **Auth test gaps** — existing `test_auth` covers register/login/me/token/OAuth but does **not** test `forgot-password`, `reset-password`, `change-password`, or password strength validation rejection. Add ~6–8 tests.
-- 🟡 ML — unit tests for `technical.compute_features` (no look-ahead), Gemma output validation, `signal_engine` orchestration with mocks. `ml/tests/` does not exist yet.
-- 🟢 Pre-commit hooks (ruff / black / eslint / prettier).
-
-## 7. Code-level TODOs (grep hits)
-
-| File | Line | Note |
-|------|------|------|
-| `ml/tasks/daily_pipeline.py` | ~32 | `db_path=":memory:"` → wire to the `data/30min_data` Parquet feature source |
-| `ml/tasks/daily_pipeline.py` | ~84 | `fetch_fundamentals` is a logging stub |
-| `ml/tasks/realtime_ingest.py` | ~14 | `scrape_social_media` is a stub — social scrapers (`data/scrapers/`) not created yet |
-| `backend/app/api/routes/auth.py` | ~109 | `# TODO: send email with reset link containing token` — email transport not wired |
-| `backend/app/api/routes/auth.py` | ~165 | OAuth returns 501 (future) |
-
-## 8. Schema-contract reminders (from CLAUDE.md)
-
-- The **signal output schema** must stay synchronized across three places: the `signal_cache` table ↔ `backend/app/schemas/signal.py` ↔ `frontend/src/lib/types.ts`. Change them together.
-- `FEATURE_COLS` in `ml/models/xgboost_trainer.py` is the **single source of truth** for ML features.
-- No user free-text may ever reach the LLM — all Gemma prompts are backend-assembled.
+## 10. 完善财报界面
+- [ ] /earnings 页面：未来一周财报日历（Finnhub earnings calendar）
+- [ ] 已公布财报：EPS actual vs estimate、surprise %、beat/miss 标签
+- [ ] 财报前后股价反应图（earnings event overlay on price chart）
+- [ ] 按日期 / ticker / surprise 排序和筛选
+- [ ] 与信号联动：财报 surprise 如何影响信号置信度的可视化
