@@ -20,10 +20,10 @@ export function EndpointHealth() {
   if (isLoading || !data) {
     return (
       <Card className="p-5">
-        <div className="h-6 w-40 bg-zinc-800 rounded animate-pulse" />
+        <div className="h-6 w-40 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse" />
         <div className="mt-4 space-y-2">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-8 bg-zinc-800 rounded animate-pulse" />
+            <div key={i} className="h-8 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse" />
           ))}
         </div>
       </Card>
@@ -33,8 +33,8 @@ export function EndpointHealth() {
   return (
     <Card className="p-5 space-y-4">
       <div className="flex items-center gap-2">
-        <Globe size={16} className="text-sky-400" />
-        <h2 className="text-sm font-semibold text-zinc-200">API Endpoints</h2>
+        <Globe size={16} className="text-sky-500 dark:text-sky-400" />
+        <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">API Endpoints</h2>
         <span className="ml-auto text-[11px] text-zinc-500">{data.routes.length} routes</span>
       </div>
 
@@ -43,7 +43,7 @@ export function EndpointHealth() {
         {data.probes.map((p) => (
           <div
             key={p.endpoint}
-            className="flex items-center gap-2 rounded border border-zinc-800/50 px-2.5 py-1.5"
+            className="flex items-center gap-2 rounded border border-zinc-200 dark:border-zinc-800/50 px-2.5 py-1.5"
           >
             <span
               className={cn(
@@ -55,14 +55,14 @@ export function EndpointHealth() {
                     : "bg-red-500"
               )}
             />
-            <span className="text-[11px] text-zinc-300 font-mono flex-1 truncate">
+            <span className="text-[11px] text-zinc-700 dark:text-zinc-300 font-mono flex-1 truncate">
               {p.endpoint}
             </span>
             {p.status_code && (
               <span
                 className={cn(
                   "text-[10px] font-mono",
-                  p.status_code < 400 ? "text-emerald-400" : "text-red-400"
+                  p.status_code < 400 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
                 )}
               >
                 {p.status_code}
@@ -72,7 +72,7 @@ export function EndpointHealth() {
               <span className="text-[10px] text-zinc-500">{p.latency_ms}ms</span>
             )}
             {p.error && (
-              <span className="text-[10px] text-red-400 truncate max-w-[120px]">{p.error}</span>
+              <span className="text-[10px] text-red-600 dark:text-red-400 truncate max-w-[120px]">{p.error}</span>
             )}
           </div>
         ))}
@@ -81,7 +81,7 @@ export function EndpointHealth() {
       {/* Route list (expandable) */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-300 transition-colors"
+        className="flex items-center gap-1 text-[11px] text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 transition-colors"
       >
         {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
         {expanded ? "Hide" : "Show"} all routes
@@ -98,19 +98,19 @@ export function EndpointHealth() {
                 className={cn(
                   "w-12 text-right shrink-0 font-semibold",
                   r.method === "GET"
-                    ? "text-emerald-400"
+                    ? "text-emerald-600 dark:text-emerald-400"
                     : r.method === "POST"
-                      ? "text-sky-400"
+                      ? "text-sky-600 dark:text-sky-400"
                       : r.method === "PATCH"
-                        ? "text-amber-400"
+                        ? "text-amber-600 dark:text-amber-400"
                         : r.method === "DELETE"
-                          ? "text-red-400"
-                          : "text-zinc-400"
+                          ? "text-red-600 dark:text-red-400"
+                          : "text-zinc-500 dark:text-zinc-400"
                 )}
               >
                 {r.method}
               </span>
-              <span className="text-zinc-400 truncate">{r.path}</span>
+              <span className="text-zinc-600 dark:text-zinc-400 truncate">{r.path}</span>
             </div>
           ))}
         </div>

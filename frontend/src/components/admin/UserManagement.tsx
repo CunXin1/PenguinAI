@@ -10,10 +10,10 @@ import { cn, timeAgo } from "@/lib/utils";
 import type { AdminUserListResponse, AdminUserStats } from "@/lib/types";
 
 const TIER_COLORS: Record<string, string> = {
-  FREE: "text-zinc-400 bg-zinc-800 border-zinc-700",
-  PRO: "text-sky-400 bg-sky-500/10 border-sky-500/30",
-  PREMIUM: "text-amber-400 bg-amber-500/10 border-amber-500/30",
-  ADMIN: "text-red-400 bg-red-500/10 border-red-500/30",
+  FREE: "text-zinc-600 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700",
+  PRO: "text-sky-600 dark:text-sky-400 bg-sky-500/10 border-sky-500/30",
+  PREMIUM: "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/30",
+  ADMIN: "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30",
 };
 
 const TIERS = ["FREE", "PRO", "PREMIUM", "ADMIN"];
@@ -52,8 +52,8 @@ export function UserManagement() {
   return (
     <Card className="p-5 space-y-4">
       <div className="flex items-center gap-2">
-        <Users size={16} className="text-sky-400" />
-        <h2 className="text-sm font-semibold text-zinc-200">Users</h2>
+        <Users size={16} className="text-sky-500 dark:text-sky-400" />
+        <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Users</h2>
       </div>
 
       {/* Stats row */}
@@ -75,7 +75,7 @@ export function UserManagement() {
               onClick={() => setTierFilter(tierFilter === tier ? "" : tier)}
               className={cn(
                 "px-2 py-1 rounded text-[11px] font-semibold border transition-colors",
-                TIER_COLORS[tier] ?? "text-zinc-400 bg-zinc-800 border-zinc-700",
+                TIER_COLORS[tier] ?? TIER_COLORS.FREE,
                 tierFilter === tier && "ring-1 ring-sky-500"
               )}
             >
@@ -86,7 +86,7 @@ export function UserManagement() {
       )}
 
       {/* Search */}
-      <div className="flex items-center gap-2 rounded-lg bg-zinc-900 border border-zinc-800 px-3 py-2 focus-within:border-sky-500/60 transition-colors">
+      <div className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-2 focus-within:border-sky-500/60 transition-colors">
         <Search size={14} className="text-zinc-500" />
         <input
           placeholder="Search by email or name..."
@@ -95,7 +95,7 @@ export function UserManagement() {
             setSearch(e.target.value);
             setPage(1);
           }}
-          className="bg-transparent outline-none text-sm text-zinc-200 placeholder-zinc-600 w-full"
+          className="bg-transparent outline-none text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-600 w-full"
         />
       </div>
 
@@ -103,7 +103,7 @@ export function UserManagement() {
       <div className="overflow-x-auto">
         <table className="w-full text-[11px]">
           <thead>
-            <tr className="text-zinc-500 border-b border-zinc-800">
+            <tr className="text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
               <th className="text-left py-1.5 font-medium">Email</th>
               <th className="text-left py-1.5 font-medium">Name</th>
               <th className="text-center py-1.5 font-medium">Tier</th>
@@ -114,9 +114,9 @@ export function UserManagement() {
           </thead>
           <tbody>
             {userList?.users.map((u) => (
-              <tr key={u.id} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
-                <td className="py-1.5 text-zinc-300">{u.email}</td>
-                <td className="py-1.5 text-zinc-400">{u.display_name ?? "—"}</td>
+              <tr key={u.id} className="border-b border-zinc-100 dark:border-zinc-800/50 hover:bg-zinc-50 dark:hover:bg-zinc-800/30">
+                <td className="py-1.5 text-zinc-700 dark:text-zinc-300">{u.email}</td>
+                <td className="py-1.5 text-zinc-500 dark:text-zinc-400">{u.display_name ?? "—"}</td>
                 <td className="py-1.5 text-center">
                   {editingUser === u.id ? (
                     <select
@@ -126,7 +126,7 @@ export function UserManagement() {
                       }}
                       onBlur={() => setEditingUser(null)}
                       autoFocus
-                      className="bg-zinc-800 border border-zinc-700 rounded px-1 py-0.5 text-[10px] text-zinc-200 outline-none"
+                      className="bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 rounded px-1 py-0.5 text-[10px] text-zinc-800 dark:text-zinc-200 outline-none"
                     >
                       {TIERS.map((t) => (
                         <option key={t} value={t}>{t}</option>
@@ -136,7 +136,7 @@ export function UserManagement() {
                     <span
                       className={cn(
                         "px-1.5 py-0.5 rounded text-[10px] font-semibold border cursor-pointer",
-                        TIER_COLORS[u.tier] ?? "text-zinc-400 bg-zinc-800 border-zinc-700"
+                        TIER_COLORS[u.tier] ?? TIER_COLORS.FREE
                       )}
                       onClick={() => setEditingUser(u.id)}
                     >
@@ -152,8 +152,8 @@ export function UserManagement() {
                     className={cn(
                       "px-1.5 py-0.5 rounded text-[10px] font-semibold border transition-colors",
                       u.is_active
-                        ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
-                        : "text-red-400 bg-red-500/10 border-red-500/30"
+                        ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
+                        : "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30"
                     )}
                   >
                     {u.is_active ? "Active" : "Banned"}
@@ -166,7 +166,7 @@ export function UserManagement() {
                   {editingUser !== u.id && (
                     <button
                       onClick={() => setEditingUser(u.id)}
-                      className="text-[10px] text-sky-400 hover:text-sky-300"
+                      className="text-[10px] text-sky-600 dark:text-sky-400 hover:text-sky-500 dark:hover:text-sky-300"
                     >
                       Edit
                     </button>
@@ -188,14 +188,14 @@ export function UserManagement() {
             <button
               onClick={() => setPage(Math.max(1, page - 1))}
               disabled={page <= 1}
-              className="p-1 rounded hover:bg-zinc-800 disabled:opacity-30"
+              className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-30"
             >
               <ChevronLeft size={14} />
             </button>
             <button
               onClick={() => setPage(Math.min(totalPages, page + 1))}
               disabled={page >= totalPages}
-              className="p-1 rounded hover:bg-zinc-800 disabled:opacity-30"
+              className="p-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 disabled:opacity-30"
             >
               <ChevronRight size={14} />
             </button>
