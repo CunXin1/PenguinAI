@@ -55,6 +55,46 @@ def is_early_close(d: datetime) -> bool:
     return close_t.hour < 16
 
 
+def get_session_phase(now_utc: datetime | None = None) -> str:
+    """Current US equity session phase (ET-based).
+
+    PRE_MARKET:   04:00–09:30 ET on trading days
+    REGULAR:      09:30–close ET (16:00, or earlier on early-close days)
+    AFTER_HOURS:  close–close+4h ET
+    OVERNIGHT:    remaining weekday hours (20:00–04:00 ET typical)
+    CLOSED:       weekends and NYSE holidays
+    """
+    now = now_utc or datetime.now(UTC)
+    et = now.astimezone(ET)
+    m = et.hour * 60 + et.minute
+
+    if et.weekday() >= 5:
+        return "CLOSED"
+
+    today_naive = pd.Timestamp(et.date())
+    if not _nyse.is_session(today_naive):
+        return "CLOSED"
+
+    try:
+        close_ts = _nyse.session_close(today_naive)
+        close_et = close_ts.tz_convert(ET)
+        close_m = close_et.hour * 60 + close_et.minute
+    except (ValueError, KeyError):
+        close_m = 16 * 60
+
+    ah_end_m = close_m + 4 * 60
+
+    if m < 4 * 60:
+        return "OVERNIGHT"
+    if m < 9 * 60 + 30:
+        return "PRE_MARKET"
+    if m < close_m:
+        return "REGULAR"
+    if m < ah_end_m:
+        return "AFTER_HOURS"
+    return "OVERNIGHT"
+
+
 _LIVE_WINDOW_S = 360.0
 _tick_lock = threading.Lock()
 
@@ -89,21 +129,24 @@ def ticks_advancing(latest_tick: datetime | None) -> bool:
 
 
 async def get_market_status(db: AsyncSession) -> dict:
-    """The one answer every surface uses for "is the market open".
+    """The one answer every surface uses for market state.
 
-    ``market_open`` is true when EITHER the ET clock says we're in the regular
-    session OR the live feed is actively advancing (covers a live pre/post feed
-    and is robust to a wrong system clock). ``source`` says which path decided it.
+    ``market_open`` — backward compat: true during regular session OR ticks advancing.
+    ``market_active`` — true during ANY session (pre/regular/after/overnight) OR ticks.
+    ``session_phase`` — the specific phase label for the frontend.
     """
     now = datetime.now(UTC)
+    phase = get_session_phase(now)
     session_open = is_regular_session(now)
     latest = (await db.execute(text("SELECT max(time) FROM market_data_1min"))).scalar()
     advancing = ticks_advancing(latest)
-    is_open = session_open or advancing
+    is_active = phase != "CLOSED" or advancing
     return {
-        "market_open": is_open,
+        "market_open": session_open or advancing,
+        "market_active": is_active,
+        "session_phase": phase,
         "session_open": session_open,
-        "source": "session" if session_open else ("ticks" if advancing else "closed"),
+        "source": "session" if session_open else ("ticks" if advancing else phase.lower()),
         "as_of": now.isoformat(),
         "latest_tick": latest.isoformat() if latest is not None else None,
     }

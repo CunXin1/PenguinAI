@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import re
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 
@@ -261,6 +262,95 @@ def _diff_quarters(
     return actions
 
 
+TRUMP_CIK = "0000947033"
+
+
+async def _fetch_trump_djt(
+    client: httpx.AsyncClient, universe: set[str],
+) -> list[dict]:
+    """Fetch Trump's DJT holdings from his 13D/A filings on EDGAR."""
+    if "DJT" not in universe:
+        return []
+
+    try:
+        subs = await _fetch_submissions(client, TRUMP_CIK)
+    except Exception as exc:
+        logger.warning("  trump submissions fetch failed: %s", exc)
+        return []
+
+    recent = subs.get("filings", {}).get("recent", {})
+    forms = recent.get("form", [])
+    accessions = recent.get("accessionNumber", [])
+    dates = recent.get("filingDate", [])
+
+    filing_acc = None
+    filing_date_str = None
+    for i, form in enumerate(forms):
+        if "13D" in form and i < len(accessions):
+            filing_acc = accessions[i]
+            filing_date_str = dates[i] if i < len(dates) else None
+            break
+
+    if not filing_acc:
+        logger.info("  trump: no 13D filing found")
+        return []
+
+    logger.info("processing trump (CIK %s) 13D %s...", TRUMP_CIK, filing_acc)
+
+    cik_num = TRUMP_CIK.lstrip("0")
+    acc_nd = filing_acc.replace("-", "")
+    url = f"{SEC_ARCHIVES}/{cik_num}/{acc_nd}/primary_doc.xml"
+    await asyncio.sleep(0.15)
+    resp = await client.get(url)
+    if resp.status_code != 200:
+        logger.warning("  trump: primary_doc.xml returned %d", resp.status_code)
+        return []
+
+    shares_match = re.search(
+        r"<aggregateAmountOwned>(\d+)</aggregateAmountOwned>",
+        resp.text,
+    )
+    pct_match = re.search(
+        r"<percentOfClass>([\d.]+)</percentOfClass>",
+        resp.text,
+    )
+
+    if not shares_match:
+        logger.warning("  trump: could not parse share count from 13D")
+        return []
+
+    shares = int(shares_match.group(1))
+    pct = float(pct_match.group(1)) if pct_match else None
+
+    filing_date = datetime.now(UTC)
+    if filing_date_str:
+        try:
+            filing_date = datetime.strptime(
+                filing_date_str, "%Y-%m-%d"
+            ).replace(tzinfo=UTC)
+        except ValueError:
+            pass
+
+    logger.info(
+        "  trump: DJT %d shares (%.1f%%)", shares, pct or 0
+    )
+
+    return [{
+        "reported_at": filing_date,
+        "celebrity": "trump",
+        "ticker": "DJT",
+        "action": "HOLD",
+        "shares": shares,
+        "value_usd": None,
+        "source_type": "daily_disclosure",
+        "filing_url": (
+            f"https://www.sec.gov/cgi-bin/browse-edgar"
+            f"?action=getcompany&CIK={TRUMP_CIK}"
+            f"&type=SC+13D&dateb=&owner=include&count=1"
+        ),
+    }]
+
+
 async def run_loader(database_url: str, user_agent: str) -> int:
     engine = create_async_engine(database_url)
     try:
@@ -362,6 +452,11 @@ async def run_loader(database_url: str, user_agent: str) -> int:
                         "source_type": "13F",
                         "filing_url": filing_url,
                     })
+
+            # ── Trump DJT holdings via Schedule 13D/A ──
+            await asyncio.sleep(0.15)
+            trump_rows = await _fetch_trump_djt(client, universe)
+            all_rows.extend(trump_rows)
 
         if not all_rows:
             logger.info("no rows to upsert")

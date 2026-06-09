@@ -386,6 +386,81 @@ Most recent earnings history for one ticker (newest first).
 
 ---
 
+### Celebrity Holdings
+
+#### `GET /celebrity-holdings`
+Recent transactions across all tracked celebrities.
+
+**Query params**:
+| Param | Type | Default | Max |
+|-------|------|---------|-----|
+| `limit` | int | 100 | 500 |
+| `offset` | int | 0 | — |
+
+**Response** `200 OK`
+```json
+[
+  {
+    "id": "uuid",
+    "reported_at": "2026-05-15T00:00:00+00:00",
+    "celebrity": "buffett",
+    "ticker": "AAPL",
+    "ticker_name": "Apple Inc.",
+    "action": "HOLD",
+    "shares": 400000000,
+    "value_usd": 85720000000,
+    "source_type": "13F",
+    "filing_url": "https://www.sec.gov/..."
+  }
+]
+```
+
+---
+
+#### `GET /celebrity-holdings/stats/summary`
+Per-celebrity aggregate stats.
+
+**Response** `200 OK`
+```json
+[
+  {
+    "celebrity": "buffett",
+    "total_trades": 24,
+    "buys": 8,
+    "sells": 4,
+    "latest_trade": "2026-05-15T00:00:00+00:00"
+  }
+]
+```
+
+---
+
+#### `GET /celebrity-holdings/{celebrity}`
+All trades for one celebrity.
+
+**Path params**: `celebrity` — lowercase slug (`buffett`, `pelosi`, `cathie_wood`, `trump`, etc.)
+
+**Query params**: `limit` — int, default 100, max 500
+
+**Response** `200 OK` — same array shape as `/celebrity-holdings`.
+
+**Errors**: `422` (invalid celebrity slug format)
+
+---
+
+#### `GET /celebrity-holdings/ticker/{ticker}`
+Which celebrities traded a given ticker.
+
+**Path params**: `ticker` — uppercase symbol
+
+**Query params**: `limit` — int, default 50, max 200
+
+**Response** `200 OK` — same array shape as `/celebrity-holdings`.
+
+**Errors**: `422` (invalid ticker format)
+
+---
+
 ### Symbols
 
 #### `POST /symbols/request`

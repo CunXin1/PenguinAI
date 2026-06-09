@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from data.ingestion.realtime import close_30min, finnhub_ws, ibkr_service, massive_poller
 from data.ingestion.realtime.config import IBKR_SYMBOLS, RealtimeSettings
 from data.ingestion.realtime.finnhub_ws import CrossValidator
+from data.ingestion.realtime.warmup import warmup_core
 
 logger = logging.getLogger("realtime.supervisor")
 
@@ -97,6 +98,12 @@ async def main() -> None:
                 loop.add_signal_handler(sig_, stop.set)
 
     ibkr_set = {x.upper() for x in IBKR_SYMBOLS} if s.IBKR_ENABLED else set()
+
+    try:
+        await warmup_core(engine, s, IBKR_SYMBOLS)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("startup warmup failed: %r (continuing)", exc)
+
     poll_symbols = sorted(await _distinct_1min_tickers(engine) - ibkr_set)
     xv = CrossValidator()
 

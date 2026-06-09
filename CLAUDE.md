@@ -32,7 +32,7 @@ db/schema/  → TimescaleDB + pgvector SQL
 | `signal_cache`      | Computed signals with TTL (Top-100: 1h, cold: 4h) |
 | `users`             | Auth + tier (FREE/PRO/PREMIUM/ADMIN) |
 | `watchlists`        | User → ticker many-to-many |
-| `celebrity_holdings`| 13F + daily disclosure filings |
+| `celebrity_holdings`| Smart money trades: SEC 13F (Buffett/Soros/Dalio/Ackman), ARK (Cathie Wood), Congress (Pelosi/Tuberville/MTG/Crenshaw), Trump DJT (13D) — auto-refreshed daily |
 | `earnings`          | EPS actual/estimate/surprise |
 | `fundamentals`      | PE ratio, market cap daily snapshot |
 | `fomc_statements`   | Hawk/dove scores, global macro filter |
@@ -208,6 +208,8 @@ frontend/src/lib/api.ts            — auth API client methods
 | `fetch_earnings` | 3×/weekday (8am/2pm/9pm ET) | default |
 | `validate_symbol_requests` | Every 6h | default |
 
+Celebrity holdings (`fetch_congress_trades`, `fetch_13f_filings`, `fetch_ark_trades`) are **not** in the Celery beat schedule — they run via the backend lifespan (startup + daily 19:00 ET). Celery tasks remain defined for manual invocation.
+
 ## Data Sources
 
 | Source | What | How | Status |
@@ -217,8 +219,10 @@ frontend/src/lib/api.ts            — auth API client methods
 | Finnhub WebSocket | Real-time trade ticks → 1-min bars (same 50 symbols, hot standby) | `data/ingestion/realtime/finnhub_ws.py` | ✅ live |
 | Massive (massive.com) | Minute history + reference + market cap + symbol validation (~15 min delay) | `data/ingestion/massive_*.py`, `ml/tasks/symbol_validation.py` | ✅ live |
 | Finnhub REST | Earnings calendar (EPS actual/estimate/surprise) | `data/ingestion/finnhub_earnings.py` (`make fetch-earnings`) | ✅ live |
+| SEC EDGAR 13F/13D | Institutional holdings (Buffett, Soros, Dalio, Ackman) + Trump DJT | `data/celebrity/sec_13f.py` | ✅ live (daily auto-fetch) |
+| Quiver Quant | Congressional trades (Pelosi, Tuberville, MTG, Crenshaw) | `data/celebrity/congress.py` | ✅ live (daily auto-fetch) |
+| arkfunds.io | ARK Invest daily trades (Cathie Wood) | `data/celebrity/ark.py` | ✅ live (daily auto-fetch) |
 | Twitter/X · Reddit | Social sentiment | `data/scrapers/*` (Playwright / PRAW) | 🚧 planned — not created |
-| SEC EDGAR | 13F filings + FOMC statements | `data/scrapers/sec_scraper.py` | 🚧 planned — not created |
 | Polygon.io | Historical minute bars (supplemental) | — | ❌ legacy (no loader; superseded by Massive) |
 
 ## Realtime Dual-Source Architecture
@@ -281,6 +285,12 @@ make test          # pytest backend/tests + ml/tests
 # ── DB / data ─────────────────────────────────────────
 make db-init       # apply db/schema/*.sql into the timescaledb container
 make bootstrap     # scripts/bootstrap_universe.py — populate ticker universe (run once)
+
+# ── Celebrity holdings ────────────────────────────
+make fetch-celebrities  # all three sources at once
+make fetch-congress     # congressional trades (Quiver Quant)
+make fetch-13f          # SEC EDGAR 13F/13D (Buffett, Soros, Dalio, Ackman, Trump)
+make fetch-ark          # ARK Invest daily trades (Cathie Wood)
 ```
 
 Run a single Python test: `pytest backend/tests/test_signals.py::test_name -v`

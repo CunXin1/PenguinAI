@@ -20,12 +20,11 @@ def scrape_social_media():
 def fetch_earnings(days_back: int = 7, days_ahead: int = 30):
     """Pull the Finnhub (free tier) earnings calendar into the earnings table.
 
-    Delegates to data.ingestion.finnhub_earnings (idempotent upserts; re-runs
-    fill in actuals as results publish). Scheduled by Celery Beat 3x/weekday
-    (08:00 / 14:00 / 21:00 ET) to catch the forward calendar plus BMO (pre-open)
-    and AMC (after-close) actuals. Logged no-op when FINNHUB_API_KEY is unset.
+    Delegates to data.earnings.finnhub (idempotent upserts; re-runs fill in
+    actuals as results publish). Normally managed by backend lifespan scheduler
+    (startup + 2×/day); this Celery task remains available for manual invocation.
     """
-    from data.ingestion.finnhub_earnings import run_default
+    from data.earnings.finnhub import run_default
 
     logger.info("Finnhub earnings fetch: -%dd .. +%dd", days_back, days_ahead)
     try:

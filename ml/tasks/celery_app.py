@@ -51,12 +51,8 @@ celery_app.conf.beat_schedule = {
         "task": "ml.tasks.daily_pipeline.fetch_fundamentals",
         "schedule": crontab(minute=0, hour=8, day_of_week="1-5"),
     },
-    # Earnings calendar 3x/weekday (08:00 / 14:00 / 21:00 ET): forward calendar
-    # + BMO (pre-open) and AMC (after-close) actuals as results publish.
-    "fetch-earnings": {
-        "task": "ml.tasks.realtime_ingest.fetch_earnings",
-        "schedule": crontab(minute=0, hour="8,14,21", day_of_week="1-5"),
-    },
+    # Earnings: managed by backend lifespan (fetch on startup + 2× daily 08:00/18:00 ET).
+    # Celery task remains available for manual invocation but is not scheduled here.
     # Hot ticker news every 30 minutes (:15 and :45 to avoid collision with other tasks)
     "refresh-hot-news": {
         "task": "ml.tasks.realtime_ingest.refresh_hot_news",

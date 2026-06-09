@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.core.database import engine as app_engine
-from app.core.market_clock import ET, get_market_status, is_regular_session, ticks_advancing
+from app.core.market_clock import ET, get_market_status, get_session_phase, is_regular_session, ticks_advancing
 
 router = APIRouter()
 
@@ -465,14 +465,9 @@ async def get_heatmap(
             detail=f"period must be one of {list(_PERIODS)}",
         )
     now = datetime.now(UTC)
-    is_open = is_regular_session(now)
+    phase = get_session_phase(now)
+    is_open = phase != "CLOSED"
     if not is_open:
-        # Clock-independent fallback: if minute ticks are actively *advancing* (the
-        # latest tick grew within the last window of real/monotonic time), the
-        # market is live regardless of the wall clock. Robust to a wrong system
-        # clock — it can't be fooled by stale data either, since it requires an
-        # actual advance, not just recency vs a (possibly-bad) now(). Shared with
-        # the /status endpoint via app.core.market_clock.
         mx = (await db.execute(text("SELECT max(time) FROM market_data_1min"))).scalar()
         is_open = ticks_advancing(mx)
 

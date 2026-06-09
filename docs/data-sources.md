@@ -22,13 +22,16 @@ ingestion code lands).
 | Massive — symbol validation | On-demand universe expansion | `symbol_requests` → `tickers` | ✅ Live (Celery, every 6h) | `ml/tasks/symbol_validation.py` |
 | Finnhub — earnings calendar | EPS actual/estimate/surprise | `earnings` | ✅ Live | `data/ingestion/finnhub_earnings.py` (`make fetch-earnings`) + Celery `fetch_earnings` |
 | Twitter/X · Reddit | Social sentiment | `social_posts` | 🚧 Planned (no `data/scrapers/` yet) | designed: Playwright / PRAW |
-| SEC EDGAR (13F + FOMC) | Smart money + macro | `celebrity_holdings`, `fomc_statements` | 🚧 Planned | designed: SEC submissions API |
+| SEC EDGAR 13F + 13D | Smart money (Buffett, Soros, Dalio, Ackman, Trump DJT) | `celebrity_holdings` | ✅ Live | `data/celebrity/sec_13f.py` (daily auto-fetch) |
+| Quiver Quant | Congressional trades (Pelosi, Tuberville, MTG, Crenshaw) | `celebrity_holdings` | ✅ Live | `data/celebrity/congress.py` (daily auto-fetch) |
+| arkfunds.io | ARK Invest daily trades (Cathie Wood) | `celebrity_holdings` | ✅ Live | `data/celebrity/ark.py` (daily auto-fetch) |
+| SEC EDGAR FOMC | FOMC statements | `fomc_statements` | 🚧 Planned | designed: SEC submissions API |
 | Polygon.io | Supplemental bars | — | ❌ Legacy placeholder (env key only, no loader) | superseded by Massive |
 
 > **Reality check.** `data/scrapers/` and `data/ingestion/polygon_loader.py` do
-> **not** exist. The social-sentiment, celebrity-holdings, FOMC, and news tables
-> are created by the schema but are not populated yet — the macro/sentiment steps
-> of the signal pipeline degrade gracefully (see `docs/signal-pipeline.md`).
+> **not** exist. The social-sentiment and FOMC tables are created by the schema
+> but are not populated yet — those pipeline steps degrade gracefully.
+> Celebrity holdings **is live** (see `docs/celebrity-holdings.md`).
 
 ---
 
@@ -191,18 +194,25 @@ Planned design:
   false-positive blacklist (`DD`, `IPO`, `CEO`, …).
 - Reddit creds: `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` / `REDDIT_USER_AGENT`.
 
-### 6. SEC EDGAR — 13F + FOMC *(planned, not built)*
+### 6. Celebrity Holdings — SEC EDGAR + Quiver Quant + ARK *(live)*
 
-**Intended file**: `data/scrapers/sec_scraper.py` → `celebrity_holdings`,
-`fomc_statements`.
+Three free data sources populate `celebrity_holdings` daily. See
+**`docs/celebrity-holdings.md`** for full details.
 
-- **13F filings** (quarterly institutional holdings) → `celebrity_holdings`
-  (Buffett, Cathie Wood, …) via `https://data.sec.gov/submissions/CIK{cik}.json`.
-- **FOMC statements** → `fomc_statements` with keyword-based hawk/dove scoring,
-  consumed by the macro filter in `signal_engine._apply_macro_filter()`.
+**Files**: `data/celebrity/sec_13f.py`, `data/celebrity/congress.py`,
+`data/celebrity/ark.py`
 
-These tables are empty until the scraper is written; the FOMC filter simply
-no-ops when `fomc_statements` has no rows.
+**Auto-update**: Backend lifespan fetches on startup + daily at 19:00 ET
+(weekdays). No Celery Beat dependency.
+
+**CLI**: `make fetch-celebrities` (runs all three).
+
+### 6b. FOMC Statements *(planned, not built)*
+
+**Intended**: `data/scrapers/sec_scraper.py` → `fomc_statements` with
+keyword-based hawk/dove scoring, consumed by
+`signal_engine._apply_macro_filter()`. The FOMC filter no-ops when the
+table is empty.
 
 ### 7. News *(table only)*
 
@@ -250,11 +260,15 @@ ORDER BY bars;
 | Massive — 符号校验 | 按需扩展宇宙 | `symbol_requests` → `tickers` | ✅ Celery 每 6 小时 | `ml/tasks/symbol_validation.py` |
 | Finnhub — 财报日历 | EPS 实际/预期/超预期 | `earnings` | ✅ 已接入 | `make fetch-earnings` |
 | Twitter/X · Reddit | 社媒情绪 | `social_posts` | 🚧 规划中（`data/scrapers/` 尚未创建） | Playwright / PRAW |
-| SEC EDGAR（13F + FOMC） | 机构持仓 + 宏观 | `celebrity_holdings`、`fomc_statements` | 🚧 规划中 | SEC submissions API |
+| SEC EDGAR 13F + 13D | 机构持仓（巴菲特、索罗斯、达里奥、阿克曼、特朗普 DJT） | `celebrity_holdings` | ✅ 已接入 | `data/celebrity/sec_13f.py` |
+| Quiver Quant | 国会议员交易（佩洛西、图伯维尔等） | `celebrity_holdings` | ✅ 已接入 | `data/celebrity/congress.py` |
+| arkfunds.io | ARK 每日交易（Cathie Wood） | `celebrity_holdings` | ✅ 已接入 | `data/celebrity/ark.py` |
+| SEC EDGAR FOMC | FOMC 声明 | `fomc_statements` | 🚧 规划中 | SEC submissions API |
 | Polygon.io | 补充 K 线 | — | ❌ 遗留占位（仅 env，无 loader） | 已被 Massive 取代 |
 
-> **现状提醒**：`data/scrapers/` 与 `polygon_loader.py` **不存在**。社媒、名人持仓、
-> FOMC、新闻表由 schema 建好但**尚未填充**，所以宏观/情绪步骤会优雅降级。
+> **现状提醒**：`data/scrapers/` 与 `polygon_loader.py` **不存在**。社媒和 FOMC 表
+> 由 schema 建好但尚未填充，相关步骤优雅降级。名人持仓 **已上线**
+>（详见 `docs/celebrity-holdings.md`）。
 
 ### 核心资产：历史 30 分钟 / 日线数据
 

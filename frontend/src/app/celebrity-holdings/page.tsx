@@ -229,8 +229,8 @@ export default function CelebrityHoldingsPage() {
       )}
 
       <p className="text-xs text-zinc-400 dark:text-zinc-600 text-center pt-2">
-        Data from SEC EDGAR 13F filings, House/Senate Stock Watcher, and ARK Invest daily
-        disclosures.
+        Data from SEC EDGAR 13F/13D filings, Quiver Quant congressional trades, and ARK Invest
+        daily disclosures.
       </p>
     </div>
   );

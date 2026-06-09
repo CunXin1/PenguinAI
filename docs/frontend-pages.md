@@ -12,6 +12,7 @@
 | `/earnings` | Earnings Calendar | Real API + mock fallback | — | Complete |
 | `/heatmap` | Market Heatmap | Real API | — | Complete |
 | `/watchlist` | Watchlist | API (logged in) / localStorage (guest) | Optional | Complete |
+| `/celebrity-holdings` | Smart Money | Real API + mock fallback | — | Complete |
 | `/news` | News Feed | Mock only | — | UI complete, backend pending |
 | `/news/[id]` | Article Detail | Mock only | — | UI complete, backend pending |
 | `/profile` | User Profile | Real API | Required | Complete |
@@ -124,6 +125,25 @@ Personal list of tracked tickers with live prices and signal badges.
 - Empty state with link to screener
 
 **API endpoints:** `/watchlist`, `/market-data/quotes`, `/tickers/{ticker}` (validation)
+
+---
+
+### Smart Money (`/celebrity-holdings`)
+
+Celebrity and institutional investor stock transactions.
+
+**Features:**
+- Stat tiles: Celebrities tracked / Recent buys / Recent sells
+- Celebrity cards (horizontal scroll, max 8): avatar initials, name, title, buy/sell counts, latest activity — click to filter
+- Filter bar: Action filter (All/Buy/Sell/Hold), active celebrity chip, ticker/name search
+- Transaction table: Ticker+Name, Celebrity, Action badge (emerald/red/zinc), Shares, Value, Date, Source type
+- Each row links to `/signals/{ticker}`
+
+**Tracked:** Buffett, Soros, Dalio, Ackman (13F), Cathie Wood (ARK), Pelosi, Tuberville, MTG, Crenshaw (Congress), Trump (13D/DJT)
+
+**API endpoints:** `/celebrity-holdings`, `/celebrity-holdings/stats/summary`
+
+**Note:** Falls back to `MOCK_CELEB_HOLDINGS` / `MOCK_CELEB_STATS` if API unavailable. Backend auto-fetches data on startup and daily at 19:00 ET.
 
 ---
 

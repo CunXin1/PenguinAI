@@ -44,24 +44,29 @@ class RAGRetriever:
             logger.warning("Embedding failed for RAG: %s — returning empty results", e)
             return []
 
-        rows = await db.execute(
-            text("""
-                SELECT content, finbert_score,
-                       1 - (embedding <=> :embedding::vector) AS similarity
-                FROM social_posts
-                WHERE ticker = :ticker
-                  AND time >= :since
-                  AND embedding IS NOT NULL
-                ORDER BY embedding <=> :embedding::vector
-                LIMIT :top_k
-            """),
-            {
-                "ticker": ticker,
-                "since": since,
-                "embedding": f"[{','.join(str(x) for x in query_embedding.tolist())}]",
-                "top_k": top_k,
-            },
-        )
+        emb_literal = f"[{','.join(str(x) for x in query_embedding.tolist())}]"
+        try:
+            rows = await db.execute(
+                text("""
+                    SELECT content, finbert_score,
+                           1 - (embedding <=> CAST(:embedding AS vector)) AS similarity
+                    FROM social_posts
+                    WHERE ticker = :ticker
+                      AND time >= :since
+                      AND embedding IS NOT NULL
+                    ORDER BY embedding <=> CAST(:embedding AS vector)
+                    LIMIT :top_k
+                """),
+                {
+                    "ticker": ticker,
+                    "since": since,
+                    "embedding": emb_literal,
+                    "top_k": top_k,
+                },
+            )
+        except Exception as e:
+            logger.warning("RAG query failed: %s — returning empty results", e)
+            return []
         results = rows.mappings().all()
         return [row["content"][:280] for row in results]  # truncate to tweet length
 

@@ -33,14 +33,6 @@ CONGRESS_CELEBRITIES: dict[str, str] = {
     "Dan Crenshaw": "crenshaw",
 }
 
-_ACTION_MAP: dict[str, str] = {
-    "purchase": "BUY",
-    "sale_full": "SELL",
-    "sale_partial": "SELL",
-    "sale": "SELL",
-    "exchange": "BUY",
-}
-
 _UNIVERSE_SQL = text("SELECT ticker FROM tickers")
 _UPSERT_SQL = text("""
     INSERT INTO celebrity_holdings

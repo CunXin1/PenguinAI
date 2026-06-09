@@ -37,7 +37,7 @@ minute-parquet:
 # a venv that has httpx+sqlalchemy+asyncpg and FINNHUB_API_KEY set in .env.
 # Idempotent: re-run to backfill actuals once results publish.
 fetch-earnings:
-	python -m data.ingestion.finnhub_earnings
+	python -m data.earnings.finnhub
 
 # Celebrity holdings ingestion (all free, no API keys needed).
 fetch-congress:

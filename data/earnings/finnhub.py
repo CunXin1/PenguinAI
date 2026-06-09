@@ -29,9 +29,9 @@ PIPELINE: HTTP calendar request → filter to known tickers → compute surprise
 re-run after results are published fills in actuals).
 
 RUN (from repo root, with .env present and Postgres up):
-    python -m data.ingestion.finnhub_earnings
-    python -m data.ingestion.finnhub_earnings --days-back 7 --days-ahead 30
-    python -m data.ingestion.finnhub_earnings --from 2026-01-01 --to 2026-03-31
+    python -m data.earnings.finnhub
+    python -m data.earnings.finnhub --days-back 7 --days-ahead 30
+    python -m data.earnings.finnhub --from 2026-01-01 --to 2026-03-31
     make fetch-earnings
 
 Requires FINNHUB_API_KEY in .env (free key from finnhub.io). This loader cannot

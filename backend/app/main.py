@@ -31,6 +31,10 @@ from app.core.database import init_db
 logger = logging.getLogger("app.realtime")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 
+# data/, ml/, scripts/ live at the repo root — make them importable from backend/.
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
 
 class _SupervisorWatchdog:
     """Monitors the supervisor subprocess: restarts on crash, parses health lines."""
@@ -222,12 +226,14 @@ def _run_celebrity_scheduler(stop_event: threading.Event):
 
 
 _celeb_stop = threading.Event()
+_earnings_stop = threading.Event()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     _watchdog.start()
+
     _celeb_stop.clear()
     celeb_thread = threading.Thread(
         target=_run_celebrity_scheduler,
@@ -236,9 +242,24 @@ async def lifespan(app: FastAPI):
         name="celeb-fetch",
     )
     celeb_thread.start()
+
+    # Earnings: startup fetch + 2× daily (08:00 / 18:00 ET weekdays)
+    from data.earnings.scheduler import run_scheduler as _run_earnings
+
+    _earnings_stop.clear()
+    earnings_thread = threading.Thread(
+        target=_run_earnings,
+        args=(_earnings_stop, settings.DATABASE_URL),
+        daemon=True,
+        name="earnings-sched",
+    )
+    earnings_thread.start()
+
     try:
         yield
     finally:
+        _earnings_stop.set()
+        earnings_thread.join(timeout=5)
         _celeb_stop.set()
         celeb_thread.join(timeout=5)
         _watchdog.stop()
