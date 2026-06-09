@@ -35,14 +35,18 @@ async def run_with_db(ticker: str) -> dict:
 
 
 async def run_with_mock(ticker: str) -> dict:
-    from unittest.mock import AsyncMock
+    from unittest.mock import AsyncMock, MagicMock
 
     from ml.inference.signal_engine import signal_engine
 
     mock_session = AsyncMock()
 
-    mock_result = AsyncMock()
-    mock_result.mappings.return_value.first.return_value = None
+    mappings_obj = MagicMock()
+    mappings_obj.first.return_value = None
+    mappings_obj.all.return_value = []
+
+    mock_result = MagicMock()
+    mock_result.mappings.return_value = mappings_obj
     mock_result.scalar_one_or_none.return_value = None
     mock_result.all.return_value = []
     mock_session.execute.return_value = mock_result

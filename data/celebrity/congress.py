@@ -24,19 +24,14 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 logger = logging.getLogger("celebrity_congress")
 
-HOUSE_URL = "https://house-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json"
-SENATE_URL = "https://senate-stock-watcher-data.s3-us-west-2.amazonaws.com/data/all_transactions.json"
+QUIVER_URL = "https://api.quiverquant.com/beta/live/congresstrading"
 
 CONGRESS_CELEBRITIES: dict[str, str] = {
-    "Hon. Nancy Pelosi": "pelosi",
     "Nancy Pelosi": "pelosi",
     "Tommy Tuberville": "tuberville",
+    "Daniel Goldman": "goldman",
     "Daniel S. Goldman": "goldman",
     "Mark Green": "mark_green",
-    "Josh Gottheimer": "gottheimer",
-    "Ro Khanna": "khanna",
-    "Michael McCaul": "mccaul",
-    "Dan Crenshaw": "crenshaw",
     "Marjorie Taylor Greene": "mtg",
 }
 
@@ -91,60 +86,27 @@ def _parse_date(raw: str | None) -> datetime | None:
     return None
 
 
-def _parse_house_row(item: dict, universe: set[str]) -> dict | None:
-    rep = item.get("representative", "")
+def _parse_quiver_row(item: dict, universe: set[str]) -> dict | None:
+    rep = item.get("Representative", "")
     celeb_slug = CONGRESS_CELEBRITIES.get(rep)
     if not celeb_slug:
         return None
 
-    ticker = (item.get("ticker") or "").strip().upper().replace("--", "")
+    ticker = (item.get("Ticker") or "").strip().upper()
     if not ticker or ticker not in universe:
         return None
 
-    action = _ACTION_MAP.get((item.get("type") or "").lower())
-    if not action:
-        return None
-
-    reported_at = _parse_date(item.get("transaction_date"))
-    if not reported_at:
-        return None
-
-    return {
-        "reported_at": reported_at,
-        "celebrity": celeb_slug,
-        "ticker": ticker,
-        "action": action,
-        "shares": None,
-        "value_usd": _parse_amount(item.get("amount")),
-        "source_type": "daily_disclosure",
-        "filing_url": item.get("disclosure_url"),
-    }
-
-
-def _parse_senate_row(item: dict, universe: set[str]) -> dict | None:
-    senator = item.get("senator", "") or item.get("first_name", "")
-    if isinstance(item.get("last_name"), str):
-        senator = f"{item.get('first_name', '')} {item['last_name']}".strip()
-
-    celeb_slug = CONGRESS_CELEBRITIES.get(senator)
-    if not celeb_slug:
-        return None
-
-    ticker = (item.get("ticker") or "").strip().upper().replace("--", "")
-    if not ticker or ticker not in universe:
-        return None
-
-    tx_type = (item.get("type") or "").lower()
-    if "purchase" in tx_type:
+    tx = (item.get("Transaction") or "").lower()
+    if "purchase" in tx:
         action = "BUY"
-    elif "sale" in tx_type:
+    elif "sale" in tx:
         action = "SELL"
-    elif "exchange" in tx_type:
+    elif "exchange" in tx:
         action = "BUY"
     else:
         return None
 
-    reported_at = _parse_date(item.get("transaction_date"))
+    reported_at = _parse_date(item.get("TransactionDate"))
     if not reported_at:
         return None
 
@@ -154,9 +116,9 @@ def _parse_senate_row(item: dict, universe: set[str]) -> dict | None:
         "ticker": ticker,
         "action": action,
         "shares": None,
-        "value_usd": _parse_amount(item.get("amount")),
+        "value_usd": _parse_amount(item.get("Range")),
         "source_type": "daily_disclosure",
-        "filing_url": item.get("disclosure_url"),
+        "filing_url": None,
     }
 
 
@@ -175,36 +137,18 @@ async def run_loader(database_url: str) -> int:
 
         rows: list[dict] = []
         async with httpx.AsyncClient(timeout=60.0) as client:
-            logger.info("fetching House transactions...")
+            logger.info("fetching congressional trades from Quiver Quant...")
             try:
-                resp = await client.get(HOUSE_URL)
+                resp = await client.get(QUIVER_URL, headers={"accept": "application/json"})
                 resp.raise_for_status()
-                house_data = resp.json()
-                for item in house_data:
-                    parsed = _parse_house_row(item, universe)
+                data = resp.json()
+                for item in data:
+                    parsed = _parse_quiver_row(item, universe)
                     if parsed:
                         rows.append(parsed)
-                logger.info("  House: %d matched rows from %d total", len(rows), len(house_data))
+                logger.info("  matched %d rows from %d total", len(rows), len(data))
             except Exception as exc:
-                logger.warning("House fetch failed: %s", exc)
-
-            house_count = len(rows)
-            logger.info("fetching Senate transactions...")
-            try:
-                resp = await client.get(SENATE_URL)
-                resp.raise_for_status()
-                senate_data = resp.json()
-                for item in senate_data:
-                    parsed = _parse_senate_row(item, universe)
-                    if parsed:
-                        rows.append(parsed)
-                logger.info(
-                    "  Senate: %d matched rows from %d total",
-                    len(rows) - house_count,
-                    len(senate_data),
-                )
-            except Exception as exc:
-                logger.warning("Senate fetch failed: %s", exc)
+                logger.warning("Quiver Quant fetch failed: %s", exc)
 
         if not rows:
             logger.info("no rows matched — nothing to upsert")

@@ -150,13 +150,82 @@ class _SupervisorWatchdog:
 _watchdog = _SupervisorWatchdog()
 
 
+async def _fetch_celebrity_holdings():
+    """Run all three celebrity holdings ingestion tasks."""
+    loaders = [
+        ("congress", "data.celebrity.congress"),
+        ("ark", "data.celebrity.ark"),
+        ("13f", "data.celebrity.sec_13f"),
+    ]
+    for name, module_path in loaders:
+        try:
+            mod = __import__(module_path, fromlist=["run_default"])
+            count = await mod.run_default()
+            logger.info("celebrity/%s: upserted %d rows", name, count)
+        except Exception:
+            logger.warning("celebrity/%s: fetch failed", name, exc_info=True)
+
+
+def _run_celebrity_scheduler(stop_event: threading.Event):
+    """Background thread: fetch once now, then daily at 19:00 ET."""
+    import zoneinfo
+
+    et = zoneinfo.ZoneInfo("America/New_York")
+
+    # Fetch immediately on startup
+    logger.info("celebrity holdings: initial fetch on startup")
+    try:
+        asyncio.run(_fetch_celebrity_holdings())
+    except Exception:
+        logger.warning("celebrity holdings: startup fetch failed", exc_info=True)
+
+    # Then loop: sleep until next 19:00 ET, fetch, repeat
+    while not stop_event.is_set():
+        from datetime import datetime, timedelta
+
+        now_et = datetime.now(et)
+        target = now_et.replace(hour=19, minute=0, second=0, microsecond=0)
+        if target <= now_et:
+            target += timedelta(days=1)
+        # Skip weekends
+        while target.weekday() >= 5:
+            target += timedelta(days=1)
+
+        wait_secs = (target - now_et).total_seconds()
+        logger.info(
+            "celebrity holdings: next fetch at %s ET (%.0fh)",
+            target.strftime("%Y-%m-%d %H:%M"),
+            wait_secs / 3600,
+        )
+
+        if stop_event.wait(timeout=wait_secs):
+            break
+
+        logger.info("celebrity holdings: daily fetch starting")
+        try:
+            asyncio.run(_fetch_celebrity_holdings())
+        except Exception:
+            logger.warning("celebrity holdings: daily fetch failed", exc_info=True)
+
+
+_celeb_stop = threading.Event()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     _watchdog.start()
+    _celeb_stop.clear()
+    celeb_thread = threading.Thread(
+        target=_run_celebrity_scheduler, args=(_celeb_stop,),
+        daemon=True, name="celeb-fetch",
+    )
+    celeb_thread.start()
     try:
         yield
     finally:
+        _celeb_stop.set()
+        celeb_thread.join(timeout=5)
         _watchdog.stop()
 
 
@@ -183,7 +252,10 @@ app.include_router(tickers.router, prefix="/api/tickers", tags=["tickers"])
 app.include_router(watchlist.router, prefix="/api/watchlist", tags=["watchlist"])
 app.include_router(market_data.router, prefix="/api/market-data", tags=["market-data"])
 app.include_router(earnings.router, prefix="/api/earnings", tags=["earnings"])
-app.include_router(celebrity_holdings.router, prefix="/api/celebrity-holdings", tags=["celebrity-holdings"])
+app.include_router(
+    celebrity_holdings.router, prefix="/api/celebrity-holdings",
+    tags=["celebrity-holdings"],
+)
 app.include_router(news.router, prefix="/api/news", tags=["news"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 

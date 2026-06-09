@@ -134,28 +134,34 @@ async def _fetch_infotable(
     """Download and parse the 13F XML infotable."""
     cik_num = cik.lstrip("0")
     acc_nodash = accession.replace("-", "")
-    # Try common infotable filenames
-    for filename in ("infotable.xml", "InfoTable.xml", "primary_doc.xml"):
+
+    # Try common infotable filenames first
+    for filename in ("infotable.xml", "InfoTable.xml"):
         url = f"{SEC_ARCHIVES}/{cik_num}/{acc_nodash}/{filename}"
         resp = await client.get(url)
         if resp.status_code == 200:
-            return _parse_infotable_xml(resp.text)
+            result = _parse_infotable_xml(resp.text)
+            if result:
+                return result
         await asyncio.sleep(0.15)
 
-    # Fallback: fetch the filing index and find the infotable
+    # Fallback: fetch the filing index and try all non-primary XML files
     index_url = f"{SEC_ARCHIVES}/{cik_num}/{acc_nodash}/index.json"
     resp = await client.get(index_url)
     if resp.status_code == 200:
         await asyncio.sleep(0.15)
         index_data = resp.json()
         for item in index_data.get("directory", {}).get("item", []):
-            name = item.get("name", "").lower()
-            if "infotable" in name and name.endswith(".xml"):
-                url = f"{SEC_ARCHIVES}/{cik_num}/{acc_nodash}/{item['name']}"
-                resp = await client.get(url)
-                if resp.status_code == 200:
-                    return _parse_infotable_xml(resp.text)
-                break
+            name = item.get("name", "")
+            if not name.lower().endswith(".xml") or name.lower() == "primary_doc.xml":
+                continue
+            url = f"{SEC_ARCHIVES}/{cik_num}/{acc_nodash}/{name}"
+            resp = await client.get(url)
+            if resp.status_code == 200:
+                result = _parse_infotable_xml(resp.text)
+                if result:
+                    return result
+            await asyncio.sleep(0.15)
 
     logger.warning("  could not find infotable for accession %s", accession)
     return []

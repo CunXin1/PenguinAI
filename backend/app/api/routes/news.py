@@ -21,7 +21,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.core.config import settings
-from data.news.constants import HOT_TICKERS_SET as HOT_TICKERS
+
+HOT_TICKERS: frozenset[str]
+try:
+    from data.news.constants import HOT_TICKERS_SET as HOT_TICKERS
+except ImportError:
+    _HOT_STOCKS = [
+        "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "TSLA", "AVGO", "COST", "NFLX",
+        "AMD", "ADBE", "CRM", "INTC", "QCOM", "TXN", "AMAT", "MU", "LRCX", "KLAC",
+        "ORCL", "CSCO", "IBM", "NOW", "PANW", "CRWD", "SNOW", "PLTR", "COIN", "MSTR",
+        "JPM", "V", "MA", "BAC", "GS", "MS", "BRK.B", "UNH", "JNJ", "PFE",
+        "XOM", "CVX", "LLY", "ABBV", "MRK", "TMO", "WMT", "PG", "KO", "PEP",
+        "TMUS", "CMCSA", "AMGN", "INTU", "HON", "ISRG", "BKNG", "SBUX", "VRTX",
+        "ADP", "MDLZ", "GILD", "ADI", "REGN", "PYPL", "SNPS", "CDNS", "MRVL",
+        "ARM", "SMCI", "RIVN", "MARA", "RIOT",
+    ]
+    _HOT_ETFS = [
+        "SPY", "QQQ", "DIA", "IWM", "VTI", "VOO", "XLK", "XLF", "XLE", "XLV",
+        "XLI", "SOXX", "SMH", "ARKK", "GLD", "SLV", "TLT", "HYG", "EEM", "VWO",
+    ]
+    HOT_TICKERS = frozenset(_HOT_STOCKS + _HOT_ETFS)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -276,29 +295,29 @@ async def get_market_news(
     Source priority: Massive → Google News RSS → Finnhub.
     Result is cached in-memory for 5 minutes.
     """
-    cache_key = f"market:{limit}"
+    _FETCH_SIZE = 100
+    cache_key = "market:all"
     cached = _get_cached(cache_key, _MARKET_TTL)
     if cached is not None:
-        return cached
+        return cached[:limit]
 
     # Tier 1: Massive
-    articles = await _fetch_massive_news(ticker=None, limit=limit)
+    articles = await _fetch_massive_news(ticker=None, limit=_FETCH_SIZE)
 
     # Tier 2: Google News RSS
     if articles is None:
-        articles = await _fetch_google_rss(query="stock market finance", limit=limit)
+        articles = await _fetch_google_rss(query="stock market finance", limit=_FETCH_SIZE)
 
     # Tier 3: Finnhub
     if articles is None:
-        articles = await _fetch_finnhub_news(ticker=None, category="general", limit=limit)
+        articles = await _fetch_finnhub_news(ticker=None, category="general", limit=_FETCH_SIZE)
 
     # All failed
     if articles is None:
         articles = []
 
-    articles = articles[:limit]
     _set_cache(cache_key, articles)
-    return articles
+    return articles[:limit]
 
 
 @router.get("/hot")

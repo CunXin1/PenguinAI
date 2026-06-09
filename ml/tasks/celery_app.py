@@ -67,19 +67,6 @@ celery_app.conf.beat_schedule = {
         "task": "ml.tasks.symbol_validation.validate_symbol_requests",
         "schedule": crontab(minute=30, hour="*/6"),
     },
-    # Congressional trades: 2x/day on weekdays (transactions trickle in).
-    "fetch-congress-trades": {
-        "task": "ml.tasks.realtime_ingest.fetch_congress_trades",
-        "schedule": crontab(minute=0, hour="9,18", day_of_week="1-5"),
-    },
-    # 13F filings: daily check (quarterly data; daily catch catches new filings).
-    "fetch-13f-filings": {
-        "task": "ml.tasks.realtime_ingest.fetch_13f_filings",
-        "schedule": crontab(minute=30, hour=7, day_of_week="1-5"),
-    },
-    # ARK daily trades: once per evening on weekdays (ARK publishes after close).
-    "fetch-ark-trades": {
-        "task": "ml.tasks.realtime_ingest.fetch_ark_trades",
-        "schedule": crontab(minute=0, hour=19, day_of_week="1-5"),
-    },
+    # Celebrity holdings: managed by backend lifespan (fetch on startup + daily 19:00 ET).
+    # Celery tasks remain available for manual invocation but are not scheduled here.
 }
