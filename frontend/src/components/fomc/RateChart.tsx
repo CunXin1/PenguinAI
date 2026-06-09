@@ -275,7 +275,7 @@ function RateCanvas({ points }: { points: FomcRatePoint[] }) {
 }
 
 export function RateChart() {
-  const [range, setRange] = useState<RangeKey>("5Y");
+  const [range, setRange] = useState<RangeKey>("10Y");
   const years = RANGES.find((r) => r.key === range)!.years;
 
   const { data: points, isLoading } = useQuery<FomcRatePoint[]>({

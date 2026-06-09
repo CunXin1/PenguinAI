@@ -181,9 +181,9 @@ export default function CelebrityHoldingsPage() {
               />
               <Link
                 href={`/celebrity-holdings/${s.celebrity}`}
-                className="text-xs text-zinc-400 hover:text-white transition-colors text-center leading-tight max-w-[120px] truncate"
+                className="text-xs text-zinc-400 hover:text-white transition-colors text-center leading-tight"
               >
-                {meta.name.split(" ").pop()}
+                {meta.name}
               </Link>
             </div>
           );

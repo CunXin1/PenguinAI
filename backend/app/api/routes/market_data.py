@@ -130,21 +130,14 @@ async def get_quotes(
                 WHERE ticker = ANY(:syms)
                 ORDER BY ticker, time DESC
             )
-            SELECT l.ticker, l.close AS price, l.time, b.close AS base
+            SELECT l.ticker, l.close AS price, l.time, d.adj_close AS base
             FROM latest l
+            JOIN instruments i ON i.symbol = l.ticker
             LEFT JOIN LATERAL (
-                -- Previous close: the last bar strictly before the latest bar's ET
-                -- session start. "% change today" is measured against the prior close
-                -- (not today's open), so a gap shows correctly at the open. Sargable
-                -- (ticker, time) backward scan + LIMIT 1 keeps it fast on ~27M rows.
-                SELECT m.close
-                FROM market_data_1min m
-                WHERE m.ticker = l.ticker
-                  AND m.time < date_trunc('day', l.time AT TIME ZONE 'America/New_York')
-                               AT TIME ZONE 'America/New_York'
-                ORDER BY m.time DESC
-                LIMIT 1
-            ) b ON TRUE
+                SELECT adj_close FROM bars_1d
+                WHERE instrument_id = i.instrument_id
+                ORDER BY ts DESC LIMIT 1
+            ) d ON TRUE
         """),
         {"syms": syms},
     )
@@ -180,8 +173,6 @@ async def get_mini(
     if not syms:
         return {"items": []}
 
-    # 1) Latest price + previous close per ticker. DISTINCT ON + a LIMIT-1 LATERAL
-    #    for the prior close — cheap (same shape as /quotes).
     rows = await db.execute(
         text("""
             WITH latest AS (
@@ -190,20 +181,14 @@ async def get_mini(
                 WHERE ticker = ANY(:syms)
                 ORDER BY ticker, time DESC
             )
-            SELECT l.ticker, l.price, l.last_t, prev.close AS base
+            SELECT l.ticker, l.price, l.last_t, d.adj_close AS base
             FROM latest l
+            JOIN instruments i ON i.symbol = l.ticker
             LEFT JOIN LATERAL (
-                -- Previous close: last bar strictly before the latest bar's ET session
-                -- start. "% change today" is vs the prior close (not today's open), so
-                -- an open-gap shows correctly. Sargable backward scan + LIMIT 1.
-                SELECT m.close
-                FROM market_data_1min m
-                WHERE m.ticker = l.ticker
-                  AND m.time < date_trunc('day', l.last_t AT TIME ZONE 'America/New_York')
-                               AT TIME ZONE 'America/New_York'
-                ORDER BY m.time DESC
-                LIMIT 1
-            ) prev ON TRUE
+                SELECT adj_close FROM bars_1d
+                WHERE instrument_id = i.instrument_id
+                ORDER BY ts DESC LIMIT 1
+            ) d ON TRUE
         """),
         {"syms": syms},
     )

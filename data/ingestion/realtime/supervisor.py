@@ -47,7 +47,7 @@ def _service_factory(
     if name == "ibkr":
         return ibkr_service.run(engine, settings, stop, ibkr_symbols, cross_validator)
     if name == "massive":
-        return massive_poller.run(engine, settings, stop, poll_symbols)
+        return massive_poller.run(engine, settings, stop, poll_symbols, ibkr_symbols if settings.IBKR_ENABLED else None)
     if name == "finnhub":
         return finnhub_ws.run(engine, settings, stop, ibkr_symbols, cross_validator)
     if name == "close30m":

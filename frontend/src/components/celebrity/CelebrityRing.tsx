@@ -47,7 +47,7 @@ export function CelebrityRing({
   sells,
   holds = 0,
   size = 100,
-  strokeWidth = 8,
+  strokeWidth = 12,
   initials,
   gradientClass,
   image,
@@ -80,8 +80,8 @@ export function CelebrityRing({
     angle += sweep;
   }
 
-  const innerSize = size * 0.68;
-  const fontSize = size * 0.18;
+  const innerSize = (size * (2 * (R - strokeWidth / 2) - 1)) / 100;
+  const fontSize = innerSize * 0.28;
 
   return (
     <div

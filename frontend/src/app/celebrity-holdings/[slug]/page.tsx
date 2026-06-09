@@ -79,7 +79,7 @@ export default function CelebrityDetailPage() {
             (stats?.sells ?? 0)
           }
           size={140}
-          strokeWidth={11}
+          strokeWidth={14}
           initials={meta.avatar}
           gradientClass={color}
           image={meta.image}
