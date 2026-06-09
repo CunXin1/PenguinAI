@@ -44,6 +44,14 @@ CREATE TABLE IF NOT EXISTS watchlists (
     PRIMARY KEY (user_id, ticker)
 );
 
+-- Pinned signals (user-customizable Top Signals, 0–12 tickers)
+CREATE TABLE IF NOT EXISTS pinned_signals (
+    user_id       UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    ticker        TEXT        NOT NULL REFERENCES tickers(ticker) ON DELETE CASCADE,
+    position      INT         NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, ticker)
+);
+
 -- Signal cache (pre-computed top-100 + on-demand cold stocks)
 CREATE TABLE IF NOT EXISTS signal_cache (
     ticker         TEXT        PRIMARY KEY,

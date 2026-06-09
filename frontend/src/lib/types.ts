@@ -316,6 +316,31 @@ export interface FomcScheduleItem {
   past: boolean;
 }
 
+export interface FomcRatePoint {
+  date: string;
+  rate_low: number;
+  rate_high: number;
+}
+
+export interface FomcMarketReaction {
+  date: string;
+  spy_return_pct: number | null;
+  spy_close: number | null;
+  rate_low: number | null;
+  rate_high: number | null;
+}
+
+export interface FomcDiffLine {
+  type: "added" | "removed" | "unchanged";
+  text: string;
+}
+
+export interface FomcDiffResult {
+  current_date: string;
+  previous_date: string | null;
+  diff: FomcDiffLine[];
+}
+
 // ── Admin Dashboard ─────────────────────────────────────────────────────────
 export type ServiceStatus = "healthy" | "degraded" | "down";
 export type OverallHealth = "healthy" | "degraded" | "critical";

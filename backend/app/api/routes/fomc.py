@@ -1,10 +1,13 @@
 """
-FOMC API — statements, hawk/dove scores, and meeting schedule.
+FOMC API — statements, hawk/dove scores, meeting schedule, rate history,
+market reactions, and statement diffs.
 
-Reads from the ``fomc_statements`` table (populated by the data scraper).
-Also provides a static FOMC meeting schedule for the countdown widget.
+Reads from the ``fomc_statements`` table (populated by ``data.fomc.loader``).
+Rate history from ``data.fomc.fed_funds_rate`` (hardcoded, cross-verified).
+Market reactions from ``bars_1d`` (SPY daily bars).
 """
 
+import difflib
 import logging
 import time
 from datetime import UTC, datetime
@@ -171,3 +174,198 @@ async def get_fomc_schedule():
         {"date": d, "past": d < now_str}
         for d in FOMC_MEETINGS
     ]
+
+
+@router.get("/rate-history")
+async def get_rate_history(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Federal funds rate over time — one point per FOMC statement date.
+
+    Uses the authoritative hardcoded rate table (cross-verified against
+    FRED, Fed press releases, and Bankrate). Each point shows the
+    effective rate on that meeting date, NOT extracted from statement text.
+    """
+    cache_key = "fomc:rate-history"
+    cached = _get_cached(cache_key, _STATEMENTS_TTL)
+    if cached is not None:
+        return cached
+
+    from data.fomc.fed_funds_rate import get_rate_on_date
+
+    rows = await db.execute(
+        text("SELECT DISTINCT time::date AS d FROM fomc_statements ORDER BY d")
+    )
+    points = []
+    for row in rows:
+        date_str = str(row[0])
+        try:
+            low, high = get_rate_on_date(date_str)
+            points.append({
+                "date": date_str,
+                "rate_low": low,
+                "rate_high": high,
+            })
+        except ValueError:
+            continue
+
+    _set_cache(cache_key, points)
+    return points
+
+
+@router.get("/market-reaction")
+async def get_market_reaction(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = Query(default=30, ge=1, le=100),
+):
+    """SPY return on each FOMC meeting day (intraday: close/prev_close - 1).
+
+    Only returns dates where both the FOMC statement AND SPY daily bar exist.
+    """
+    cache_key = f"fomc:market-reaction:{limit}"
+    cached = _get_cached(cache_key, _STATEMENTS_TTL)
+    if cached is not None:
+        return cached
+
+    rows = await db.execute(
+        text("""
+            WITH fomc_dates AS (
+                SELECT DISTINCT time::date AS fomc_date
+                FROM fomc_statements
+                ORDER BY fomc_date DESC
+                LIMIT :limit
+            ),
+            spy AS (
+                SELECT
+                    b.ts::date AS bar_date,
+                    b.adj_close AS close
+                FROM bars_1d b
+                JOIN instruments i ON i.instrument_id = b.instrument_id
+                WHERE i.symbol = 'SPY'
+            ),
+            spy_with_prev AS (
+                SELECT
+                    bar_date,
+                    close,
+                    LAG(close) OVER (ORDER BY bar_date) AS prev_close
+                FROM spy
+            )
+            SELECT
+                f.fomc_date,
+                s.close,
+                s.prev_close
+            FROM fomc_dates f
+            JOIN spy_with_prev s ON s.bar_date = f.fomc_date
+            ORDER BY f.fomc_date DESC
+        """),
+        {"limit": limit},
+    )
+
+    from data.fomc.fed_funds_rate import get_rate_on_date
+
+    result = []
+    for r in rows.mappings():
+        date_str = str(r["fomc_date"])
+        close = r["close"]
+        prev = r["prev_close"]
+        ret = round((close / prev - 1) * 100, 4) if close and prev and prev > 0 else None
+        try:
+            low, high = get_rate_on_date(date_str)
+        except ValueError:
+            low, high = None, None
+        result.append({
+            "date": date_str,
+            "spy_return_pct": ret,
+            "spy_close": round(float(close), 2) if close else None,
+            "rate_low": low,
+            "rate_high": high,
+        })
+
+    _set_cache(cache_key, result)
+    return result
+
+
+@router.get("/diff")
+async def get_statement_diff(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    date: str = Query(..., description="Date of the statement to diff (YYYY-MM-DD)"),
+):
+    """Sentence-level diff between a statement and the previous one.
+
+    Returns added, removed, and unchanged sentences so the frontend can
+    render a redline view.
+    """
+    cache_key = f"fomc:diff:{date}"
+    cached = _get_cached(cache_key, _STATEMENTS_TTL)
+    if cached is not None:
+        return cached
+
+    from datetime import date as date_type
+
+    try:
+        target = date_type.fromisoformat(date)
+    except ValueError:
+        return {"error": "Invalid date format, use YYYY-MM-DD", "date": date}
+
+    rows = await db.execute(
+        text("""
+            SELECT time::date AS d, raw_text
+            FROM fomc_statements
+            WHERE time::date <= :target_date
+            ORDER BY time DESC
+            LIMIT 2
+        """),
+        {"target_date": target},
+    )
+    statements = [(str(r[0]), r[1]) for r in rows]
+
+    if len(statements) < 1 or statements[0][1] is None:
+        return {"error": "Statement not found", "date": date}
+
+    current_date, current_text = statements[0]
+    if len(statements) < 2 or statements[1][1] is None:
+        return {
+            "current_date": current_date,
+            "previous_date": None,
+            "diff": [{"type": "added", "text": s} for s in _split_sentences(current_text)],
+        }
+
+    previous_date, previous_text = statements[1]
+
+    prev_sentences = _split_sentences(previous_text)
+    curr_sentences = _split_sentences(current_text)
+
+    diff_result = []
+    matcher = difflib.SequenceMatcher(None, prev_sentences, curr_sentences)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for s in prev_sentences[i1:i2]:
+                diff_result.append({"type": "unchanged", "text": s})
+        elif tag == "replace":
+            for s in prev_sentences[i1:i2]:
+                diff_result.append({"type": "removed", "text": s})
+            for s in curr_sentences[j1:j2]:
+                diff_result.append({"type": "added", "text": s})
+        elif tag == "delete":
+            for s in prev_sentences[i1:i2]:
+                diff_result.append({"type": "removed", "text": s})
+        elif tag == "insert":
+            for s in curr_sentences[j1:j2]:
+                diff_result.append({"type": "added", "text": s})
+
+    result = {
+        "current_date": current_date,
+        "previous_date": previous_date,
+        "diff": diff_result,
+    }
+    _set_cache(cache_key, result)
+    return result
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Split statement text into sentences, preserving meaningful boundaries."""
+    import re
+
+    text = text.replace("\n", " ").strip()
+    raw = re.split(r"(?<=[.!?])\s+", text)
+    return [s.strip() for s in raw if s.strip()]

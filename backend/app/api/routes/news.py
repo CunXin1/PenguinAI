@@ -1,10 +1,13 @@
 """
 News API — 3-tier fallback: Massive (primary) → Google News RSS (secondary) → Finnhub (backup).
 
-Hot tickers (Nasdaq-100 + key ETFs) are pre-fetched by Celery and served from the
-``news_articles`` table.  Cold tickers are fetched on-demand and cached in-memory.
+Hot tickers (Nasdaq-100 + key ETFs) are pre-fetched by scheduler and served from the
+``news_articles`` table with FinBERT scores.
+
+Cold tickers are fetched on-demand, scored with FinBERT in real-time, and cached.
 """
 
+import asyncio
 import hashlib
 import logging
 import re
@@ -151,6 +154,52 @@ def _set_cache(key: str, data: list) -> None:
     _cache[key] = (time.monotonic(), data)
 
 
+# ── FinBERT scorer (lazy singleton, stays in memory once loaded) ─────
+
+_finbert_scorer = None
+_finbert_load_attempted = False
+
+
+def _get_scorer():
+    global _finbert_scorer, _finbert_load_attempted
+    if _finbert_load_attempted:
+        return _finbert_scorer
+    _finbert_load_attempted = True
+    try:
+        from ml.inference.finbert_scorer import FinBERTScorer
+        _finbert_scorer = FinBERTScorer()
+        logger.info("FinBERT scorer loaded for news API")
+    except Exception as exc:
+        logger.info("FinBERT not available in API process: %s", exc)
+    return _finbert_scorer
+
+
+def _score_articles_sync(articles: list[dict], ticker: str) -> list[dict]:
+    """Score articles with FinBERT, mutating sentiment/sentiment_score in place."""
+    scorer = _get_scorer()
+    if scorer is None:
+        return articles
+
+    texts = [f"{ticker}: {a.get('headline', '')}" for a in articles]
+    try:
+        results = scorer.score_batch(texts)
+        for article, result in zip(articles, results, strict=False):
+            article["sentiment"] = result.label
+            article["sentiment_score"] = round(result.sentiment, 4)
+    except Exception as exc:
+        logger.warning("FinBERT scoring failed for %s: %s", ticker, exc)
+
+    return articles
+
+
+async def _score_articles(articles: list[dict], ticker: str) -> list[dict]:
+    """Run FinBERT in a thread pool to avoid blocking the event loop."""
+    if not articles:
+        return articles
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _score_articles_sync, articles, ticker)
+
+
 # ── Mappers ──────────────────────────────────────────────────────────
 
 
@@ -266,10 +315,10 @@ def _map_db_row(row) -> dict:
     return {
         "id": str(row["id"]),
         "headline": row["headline"],
-        "summary": meta.get("summary"),
+        "summary": meta.get("summary") or meta.get("description"),
         "source": row.get("source") or meta.get("publisher_name", "Unknown"),
         "url": row.get("url") or meta.get("article_url"),
-        "image": meta.get("image_url"),
+        "image": meta.get("image_url") or meta.get("image"),
         "datetime": ts,
         "tickers": [ticker] if ticker else [],
         "category": meta.get("category", "general"),
@@ -482,6 +531,8 @@ async def get_hot_news(
     if articles is None:
         articles = await _fetch_finnhub_news(ticker=t, limit=limit)
     articles = articles or []
+    if t:
+        articles = await _score_articles(articles, t)
     _set_cache(cache_key, articles)
     return articles
 
@@ -546,5 +597,9 @@ async def get_company_news(
         articles = []
 
     articles = articles[:limit]
+
+    # FinBERT score on-demand for cold tickers (runs in thread pool)
+    articles = await _score_articles(articles, t)
+
     _set_cache(cache_key, articles)
     return articles

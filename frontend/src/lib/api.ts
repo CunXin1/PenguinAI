@@ -14,7 +14,10 @@ import type {
   DatabaseHealth,
   EarningsEvent,
   EndpointHealth,
+  FomcDiffResult,
+  FomcMarketReaction,
   FomcNextMeeting,
+  FomcRatePoint,
   FomcScheduleItem,
   FomcStatement,
   FomcTrendPoint,
@@ -179,6 +182,16 @@ export const watchlist = {
     apiFetch<void>(`/watchlist/${ticker.toUpperCase()}`, { method: "DELETE" }),
 };
 
+// ── Pinned Signals API ────────────────────────────────────────────────────────
+export const pinnedSignals = {
+  get: () => apiFetch<string[]>("/pinned-signals"),
+  set: (tickers: string[]) =>
+    apiFetch<string[]>("/pinned-signals", {
+      method: "PUT",
+      body: JSON.stringify({ tickers }),
+    }),
+};
+
 // ── Market Data API ────────────────────────────────────────────────────────────
 export const marketData = {
   candles: (ticker: string, timeframe: "1min" | "30min" | "1day" = "30min", days = 30) =>
@@ -266,6 +279,15 @@ export const fomc = {
 
   schedule: () =>
     apiFetch<FomcScheduleItem[]>("/fomc/schedule"),
+
+  rateHistory: () =>
+    apiFetch<FomcRatePoint[]>("/fomc/rate-history"),
+
+  marketReaction: (limit = 30) =>
+    apiFetch<FomcMarketReaction[]>(`/fomc/market-reaction?limit=${limit}`),
+
+  diff: (date: string) =>
+    apiFetch<FomcDiffResult>(`/fomc/diff?date=${date}`),
 };
 
 // ── Admin API ───────────────────────────────────────────────────────────────

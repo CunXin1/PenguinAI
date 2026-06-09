@@ -59,10 +59,11 @@ export function WatchlistWidget() {
                 <span className="font-mono font-semibold text-sm text-zinc-800 dark:text-zinc-200 shrink-0">
                   {t}
                 </span>
-                {q?.spark && (
-                  <Sparkline data={q.spark} color={up ? "#34d399" : "#f87171"} width={48} height={16} />
-                )}
-                <div className="flex-1" />
+                <div className="flex-1 min-w-[32px] max-w-[64px]">
+                  {q?.spark && (
+                    <Sparkline data={q.spark} color={up ? "#34d399" : "#f87171"} width={64} height={16} />
+                  )}
+                </div>
                 <span
                   className={cn(
                     "font-mono text-xs shrink-0 text-right",

@@ -26,8 +26,9 @@ export function TrendingTickers() {
               className="flex items-center gap-2 px-2 py-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800/50 transition-colors"
             >
               <span className="font-mono font-semibold text-sm text-zinc-800 dark:text-zinc-200 shrink-0">{t.ticker}</span>
-              <Sparkline data={t.spark} color={up ? "#34d399" : "#f87171"} width={48} height={16} />
-              <div className="flex-1" />
+              <div className="flex-1 min-w-[32px] max-w-[64px]">
+                <Sparkline data={t.spark} color={up ? "#34d399" : "#f87171"} width={64} height={16} />
+              </div>
               <span className="font-mono text-xs text-zinc-600 dark:text-zinc-400 text-right shrink-0">{money(t.price)}</span>
               <span className={`font-mono text-xs shrink-0 text-right ${up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
                 {signedPct(t.change_pct, 1)}

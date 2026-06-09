@@ -32,11 +32,10 @@ export function Sparkline({
 
   return (
     <svg
-      width={width}
-      height={height}
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="none"
       className={className}
+      style={{ width: "100%", maxWidth: width, height }}
       aria-hidden
     >
       {area && <polygon points={area} fill={color} fillOpacity={0.12} stroke="none" />}

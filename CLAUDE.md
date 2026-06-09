@@ -32,6 +32,7 @@ db/schema/  → TimescaleDB + pgvector SQL
 | `signal_cache`      | Computed signals with TTL (Top-100: 1h, cold: 4h) |
 | `users`             | Auth + tier (FREE/PRO/PREMIUM/ADMIN) |
 | `watchlists`        | User → ticker many-to-many |
+| `pinned_signals`    | User-customizable Top Signals ticker list (0–12, ordered by position) |
 | `celebrity_holdings`| Smart money trades: SEC 13F (Buffett/Soros/Dalio/Ackman), ARK (Cathie Wood), Congress (Pelosi/Tuberville/MTG/Crenshaw), Trump DJT (13D) — auto-refreshed daily |
 | `news_articles`     | Per-ticker FinBERT-scored headlines (hypertable, one row per article×ticker, 90-day retention, max 50/ticker) — auto-populated by `data/news/scheduler.py` |
 | `earnings`          | EPS actual/estimate/surprise |
@@ -57,6 +58,34 @@ Gemma 4 Agent 2 (reason, JSON mode locked) → FOMC filter → signal_cache
 - **Top-100** (NVDA, AAPL, BTC, etc.): pre-computed hourly by Celery Beat → instant response
 - **Cold tickers**: on-demand Celery task (~2–5s) → cached 4h after first hit
 - Frontend: 202 response = polling mode (real loading animation), cached = instant
+
+## Pinned Signals (Top Signals customization)
+
+Users choose which tickers appear in the dashboard "Top Signals" section (0–12 tickers).
+
+**Dual-track storage** (same pattern as watchlist):
+- **Guest**: `localStorage` key `penguinai_pinned_signals`, JSON array of ticker strings
+- **Logged-in**: `pinned_signals` table (user_id, ticker, position), accessed via REST API
+
+**Default 9**: AAPL, MSFT, GOOGL, AMZN, META, NVDA, TSLA, SPY, QQQ
+
+### Endpoints
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/api/pinned-signals` | Bearer | Return ordered ticker list |
+| PUT | `/api/pinned-signals` | Bearer | Replace entire list (body: `{tickers: string[]}`, max 12, validates each ticker exists) |
+
+### Key Files
+
+```
+db/schema/03_relational.sql              — pinned_signals table DDL
+backend/app/models/pinned_signal.py      — SQLAlchemy model
+backend/app/api/routes/pinned_signals.py — GET + PUT endpoints
+frontend/src/hooks/usePinnedSignals.ts   — guest/server dual-track hook (add, remove, has, isFull)
+frontend/src/hooks/useTopSignals.ts      — accepts optional pinnedTickers filter
+frontend/src/components/dashboard/TopSignals.tsx — edit UI (pencil toggle, ✕ remove, + add with validation)
+```
 
 ## Signal Output Contract
 

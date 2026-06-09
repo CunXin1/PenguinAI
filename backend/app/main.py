@@ -21,6 +21,7 @@ from app.api.routes import (
     fomc,
     market_data,
     news,
+    pinned_signals,
     signals,
     symbols,
     tickers,
@@ -400,6 +401,9 @@ app.include_router(
     tags=["celebrity-holdings"],
 )
 app.include_router(news.router, prefix="/api/news", tags=["news"])
+app.include_router(
+    pinned_signals.router, prefix="/api/pinned-signals", tags=["pinned-signals"]
+)
 app.include_router(fomc.router, prefix="/api/fomc", tags=["fomc"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 

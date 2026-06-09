@@ -52,16 +52,20 @@ async function withRealMarketData(base: SignalView[]): Promise<SignalView[]> {
   });
 }
 
-export function useTopSignals() {
+export function useTopSignals(pinnedTickers?: string[]) {
+  const key = pinnedTickers ? pinnedTickers.join(",") : "__all__";
   const { isOpen } = useMarketStatus();
   return useQuery<SignalView[]>({
-    queryKey: ["topSignals"],
+    queryKey: ["topSignals", key],
     queryFn: async () => {
       const list = await signals.getTop(60);
-      const base =
+      const all =
         Array.isArray(list) && list.length > 0
           ? list.map((s) => ({ ...s, name: s.ticker }))
           : [];
+
+      const pinSet = pinnedTickers ? new Set(pinnedTickers) : null;
+      const base = pinSet ? all.filter((s) => pinSet.has(s.ticker)) : all;
       if (base.length === 0) return [];
       return withRealMarketData(base);
     },

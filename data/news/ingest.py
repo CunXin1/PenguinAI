@@ -216,7 +216,7 @@ async def fetch_google_rss(client: httpx.AsyncClient, tickers: list[str], limit:
                 "article_url": link_el.text if link_el is not None else "",
                 "published_utc": pub_ts,
                 "publisher": {"name": source_el.text if source_el is not None else "Google News"},
-                "tickers": [t.upper() for t in tickers],
+                "tickers": [],
                 "_source": "google",
             })
             if len(articles) >= limit:
@@ -433,9 +433,16 @@ async def ingest_tickers(
                 # Distribute articles to the tickers they mention
                 for article in articles:
                     mentioned = set(t.upper() for t in _article_tickers(article))
-                    for t in batch:
-                        if t.upper() in mentioned:
-                            all_articles[t].append(article)
+                    if mentioned:
+                        for t in batch:
+                            if t.upper() in mentioned:
+                                all_articles[t].append(article)
+                    else:
+                        # Google RSS: no ticker tags — scan headline for ticker symbols
+                        headline = _article_headline(article).upper()
+                        for t in batch:
+                            if t.upper() in headline:
+                                all_articles[t].append(article)
 
                 src = "Massive" if articles and articles[0].get("_source") != "google" else "Google RSS"
                 logger.info("Fetched %d articles for batch %s via %s", len(articles), ",".join(batch), src)
