@@ -16,12 +16,14 @@
 
 ## 2. 后端重启自愈 + 数据补全机制
 - [ ] 启动时检测 data/30min_data 是否存在，缺失则触发 Massive 30min 拉取
-- [ ] 启动时检测 bars_30m 行数，为 0 则自动运行 import pipeline
-- [ ] 启动时检测 signal_cache 是否过期/为空，自动触发 refresh_top100
+- [x] 启动时检测 bars_30m 行数，为 0 则日志提示 `make import-30min`（自动 import 不安全，改为检测+提示）
+- [x] 启动时检测 signal_cache 是否过期/为空，自动触发 refresh_top100
 - [ ] Celery worker 启动时自动 load models，失败则 log + 降级运行
-- [ ] 健康检查端点 /api/health：返回 DB、Redis、models、data freshness 状态
-- [ ] docker-compose 加 ml-worker 服务，确保 Celery worker 随栈启动
-- [ ] earnings 数据自动拉取（Finnhub API，设置 FINNHUB_API_KEY 后自动生效）
+- [x] 健康检查端点 /health：返回 DB、Redis、schema、tickers、signal_cache、bars、realtime 状态
+- [x] 启动时自动检测 DB 连接 + schema 存在 + tickers 为空则自动 bootstrap
+- [x] 启动时检测 Redis 连接（非致命，降级运行）
+- [x] docker-compose 已有 ml-worker 服务（ml_inference queue）
+- [x] earnings 数据自动拉取（Finnhub API，startup + 2×/day）
 - [ ] 各 API 数据源断线重连 + 重试逻辑
 
 ## 3. Admin Page

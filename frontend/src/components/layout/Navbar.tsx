@@ -30,10 +30,9 @@ const NAV = [
   { href: "/heatmap", label: "Market Map", icon: LayoutGrid },
   { href: "/screener", label: "Screener", icon: Telescope },
   { href: "/earnings", label: "Earnings", icon: CalendarDays },
-  { href: "/celebrity-holdings", label: "Smart Money", icon: Crown },
+  { href: "/celebrity-holdings", label: "Celebrity", icon: Crown },
   { href: "/watchlist", label: "Watchlist", icon: Star },
   { href: "/news", label: "News", icon: Newspaper },
-  { href: "/profile", label: "Profile", icon: User },
 ];
 
 /* ── Autocomplete dropdown (shared by desktop + mobile) ──────────────────── */
@@ -231,7 +230,7 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-950/80 backdrop-blur">
-      <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-2 sm:gap-4">
+      <div className="px-4 sm:px-6 lg:px-8 h-14 flex items-center gap-2 sm:gap-4">
         <Link href="/" className="text-lg font-bold tracking-tight shrink-0">
           <span className="text-zinc-900 dark:text-white">Penguin</span>
           <span className="text-sky-500 dark:text-sky-400">AI</span>
@@ -250,14 +249,14 @@ export function Navbar() {
                 href={href}
                 title={label}
                 className={cn(
-                  "flex items-center gap-1.5 px-2.5 lg:px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                  "flex items-center gap-1.5 px-2 xl:px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
                   active
                     ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white"
                     : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800/50"
                 )}
               >
                 <Icon size={15} className="shrink-0" />
-                <span className="hidden lg:inline whitespace-nowrap">{label}</span>
+                <span className="hidden xl:inline whitespace-nowrap">{label}</span>
               </Link>
             );
           })}
@@ -269,7 +268,7 @@ export function Navbar() {
         <div ref={desktopDropdownRef} className="hidden md:block relative">
           <form
             onSubmit={submitSearch}
-            className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-1.5 w-36 lg:w-56 focus-within:border-sky-500/60 transition-colors"
+            className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-1.5 w-36 lg:w-44 xl:w-56 focus-within:border-sky-500/60 transition-colors"
           >
             <Search size={14} className="text-zinc-500 shrink-0" />
             <input

@@ -134,6 +134,8 @@ export interface NewsApiArticle {
   datetime: number; // unix timestamp (seconds)
   tickers?: string[];
   category?: string;
+  sentiment?: "positive" | "negative" | "neutral" | null;
+  sentiment_score?: number | null;
 }
 
 export interface NewsArticle {
@@ -290,6 +292,30 @@ export interface CelebritySummary {
 }
 
 // ── Earnings ──────────────────────────────────────────────────────────────────
+// ── FOMC ─────────────────────────────────────────────────────────────────────
+export interface FomcStatement {
+  date: string;
+  datetime: number;
+  hawk_dove_score: number | null;
+  summary: string | null;
+  document_url: string | null;
+}
+
+export interface FomcTrendPoint {
+  date: string;
+  score: number;
+}
+
+export interface FomcNextMeeting {
+  next_meeting: string | null;
+  days_until: number | null;
+}
+
+export interface FomcScheduleItem {
+  date: string;
+  past: boolean;
+}
+
 /** Reporting session — backend derives it from `earnings.report_hour` (Finnhub `hour`). */
 export type EarningsSession = "BMO" | "AMC" | "TBD";
 

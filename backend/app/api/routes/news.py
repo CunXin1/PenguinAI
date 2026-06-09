@@ -233,9 +233,9 @@ def _map_google_article(item: dict) -> dict:
 
 
 def _map_db_row(row) -> dict:
-    """Map a ``news_articles`` DB row (as mapping) to the API response format."""
+    """Map a ``news_articles`` hypertable row to the API response format."""
     ts = 0
-    pub = row.get("published_at") or row.get("published_utc")
+    pub = row.get("time")
     if pub is not None:
         try:
             if isinstance(pub, datetime):
@@ -245,19 +245,30 @@ def _map_db_row(row) -> dict:
         except (ValueError, TypeError):
             ts = 0
 
-    score = row.get("sentiment_score")
+    fb_score = row.get("finbert_score")
+    fb_label = row.get("finbert_label")
+    sentiment = None
+    if fb_label in ("positive", "negative", "neutral"):
+        sentiment = fb_label
+    elif fb_score is not None:
+        s = float(fb_score)
+        sentiment = "positive" if s > 0.1 else "negative" if s < -0.1 else "neutral"
+
+    ticker = row.get("ticker")
+    meta = row.get("raw_metadata") or {}
+
     return {
-        "id": row["id"],
+        "id": str(row["id"]),
         "headline": row["headline"],
-        "summary": row.get("summary"),
-        "source": row.get("publisher_name", "Unknown"),
-        "url": row.get("article_url"),
-        "image": row.get("image_url"),
+        "summary": meta.get("summary"),
+        "source": row.get("source") or meta.get("publisher_name", "Unknown"),
+        "url": row.get("url") or meta.get("article_url"),
+        "image": meta.get("image_url"),
         "datetime": ts,
-        "tickers": list(row.get("tickers") or []),
-        "category": row.get("category", "general"),
-        "sentiment": row.get("sentiment"),
-        "sentiment_score": float(score) if score is not None else None,
+        "tickers": [ticker] if ticker else [],
+        "category": meta.get("category", "general"),
+        "sentiment": sentiment,
+        "sentiment_score": float(fb_score) if fb_score is not None else None,
     }
 
 
@@ -414,8 +425,8 @@ async def get_hot_news(
     """
     Pre-stored hot news from the DB (for dashboard + ML pipeline).
 
-    Returns articles marked ``is_hot = TRUE`` from the last 7 days.
-    Optionally filtered by ticker using the PostgreSQL ``@>`` array-contains operator.
+    Returns recent articles for hot tickers from the last 7 days.
+    Optionally filtered by ticker. Falls back to on-demand API fetch if DB is empty.
     """
     if ticker:
         t = ticker.upper()
@@ -427,10 +438,9 @@ async def get_hot_news(
         rows = await db.execute(
             text(
                 "SELECT * FROM news_articles "
-                "WHERE is_hot = TRUE "
-                "  AND published_at > NOW() - INTERVAL '7 days' "
-                "  AND tickers @> ARRAY[:ticker]::TEXT[] "
-                "ORDER BY published_at DESC "
+                "WHERE ticker = :ticker "
+                "  AND time > NOW() - INTERVAL '7 days' "
+                "ORDER BY time DESC "
                 "LIMIT :limit"
             ),
             {"ticker": t, "limit": limit},
@@ -439,14 +449,26 @@ async def get_hot_news(
         rows = await db.execute(
             text(
                 "SELECT * FROM news_articles "
-                "WHERE is_hot = TRUE "
-                "  AND published_at > NOW() - INTERVAL '7 days' "
-                "ORDER BY published_at DESC "
+                "WHERE time > NOW() - INTERVAL '7 days' "
+                "ORDER BY time DESC "
                 "LIMIT :limit"
             ),
             {"limit": limit},
         )
-    return [_map_db_row(r) for r in rows.mappings()]
+    result = [_map_db_row(r) for r in rows.mappings()]
+    if result:
+        return result
+
+    # DB empty — fall back to on-demand API fetch
+    articles = await _fetch_massive_news(ticker=ticker, limit=limit)
+    if articles is None:
+        articles = await _fetch_google_rss(
+            query=f"{ticker} stock" if ticker else "stock market finance",
+            limit=limit,
+        )
+    if articles is None:
+        articles = await _fetch_finnhub_news(ticker=ticker, limit=limit)
+    return articles or []
 
 
 @router.get("/{ticker}")
@@ -469,21 +491,26 @@ async def get_company_news(
             detail="Invalid ticker format",
         )
 
-    # ── Hot ticker → query DB ────────────────────────────────────
+    # ── Hot ticker → try DB first, fall through to API if empty ──
     if t in HOT_TICKERS:
-        rows = await db.execute(
-            text(
-                "SELECT * FROM news_articles "
-                "WHERE :ticker = ANY(tickers) "
-                "  AND published_at > NOW() - make_interval(days => :days) "
-                "ORDER BY published_at DESC "
-                "LIMIT :limit"
-            ),
-            {"ticker": t, "days": days, "limit": limit},
-        )
-        return [_map_db_row(r) for r in rows.mappings()]
+        try:
+            rows = await db.execute(
+                text(
+                    "SELECT * FROM news_articles "
+                    "WHERE ticker = :ticker "
+                    "  AND time > NOW() - make_interval(days => :days) "
+                    "ORDER BY time DESC "
+                    "LIMIT :limit"
+                ),
+                {"ticker": t, "days": days, "limit": limit},
+            )
+            result = [_map_db_row(r) for r in rows.mappings()]
+            if result:
+                return result
+        except Exception as exc:
+            logger.warning("DB query for hot ticker %s failed: %r", t, exc)
 
-    # ── Cold ticker → on-demand fetch with in-memory cache ───────
+    # ── On-demand fetch with in-memory cache (hot fallback + cold) ──
     cache_key = f"company:{t}"
     cached = _get_cached(cache_key, _COMPANY_TTL)
     if cached is not None:
@@ -492,7 +519,7 @@ async def get_company_news(
     # Tier 1: Massive
     articles = await _fetch_massive_news(ticker=t, limit=limit)
 
-    # Tier 2: Finnhub (Google RSS is not useful for single-ticker queries)
+    # Tier 2: Finnhub
     if articles is None:
         articles = await _fetch_finnhub_news(ticker=t, limit=limit)
 

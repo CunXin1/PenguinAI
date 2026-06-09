@@ -11,8 +11,21 @@ _logger = logging.getLogger(__name__)
 _INSECURE_KEYS = {"change_me", "change_me_to_a_long_random_string_in_production", ""}
 
 
+def _find_env_file() -> str:
+    from pathlib import Path
+
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        candidate = parent / ".env"
+        if candidate.is_file():
+            return str(candidate)
+    return ".env"
+
+
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=_find_env_file(), env_file_encoding="utf-8", extra="ignore"
+    )
 
     # ── App ───────────────────────────────────────────────────────
     APP_NAME: str = "PenguinAI"

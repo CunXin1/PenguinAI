@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Newspaper, ArrowRight, ExternalLink } from "lucide-react";
+import { Newspaper, ArrowRight, ExternalLink, Search, X } from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { news as newsApi } from "@/lib/api";
 import { cn, timeAgoUnix } from "@/lib/utils";
@@ -18,8 +18,8 @@ const SENT: Record<NewsArticle["sentiment"], { label: string; chip: string }> = 
 
 const FILTERS = ["all", "positive", "negative", "neutral"] as const;
 
-/** Map a raw Finnhub API article to the frontend NewsArticle shape. */
 function mapApiArticle(raw: NewsApiArticle): NewsArticle {
+  const sent = raw.sentiment ?? "neutral";
   return {
     id: raw.id,
     headline: raw.headline,
@@ -29,7 +29,7 @@ function mapApiArticle(raw: NewsApiArticle): NewsArticle {
     image: raw.image,
     datetime: raw.datetime,
     time: timeAgoUnix(raw.datetime),
-    sentiment: "neutral", // FinBERT not yet online — default neutral
+    sentiment: sent === "positive" || sent === "negative" ? sent : "neutral",
     tickers: raw.tickers,
     category: raw.category,
   };
@@ -37,17 +37,38 @@ function mapApiArticle(raw: NewsApiArticle): NewsArticle {
 
 export default function NewsPage() {
   const [f, setF] = useState<(typeof FILTERS)[number]>("all");
+  const [searchTicker, setSearchTicker] = useState("");
+  const [activeTicker, setActiveTicker] = useState<string | null>(null);
 
-  const { data: articles, isLoading } = useQuery<NewsArticle[]>({
-    queryKey: ["marketNews"],
+  const { data: hotArticles, isLoading: hotLoading } = useQuery<NewsArticle[]>({
+    queryKey: ["hotNews"],
     queryFn: async () => {
+      try {
+        const raw = await newsApi.hot(50);
+        if (raw.length > 0) return raw.map(mapApiArticle);
+      } catch { /* fall through */ }
       const raw = await newsApi.market();
       return raw.map(mapApiArticle);
     },
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 5 * 60 * 1000,
   });
 
-  const allNews = useMemo(() => articles ?? [], [articles]);
+  const { data: tickerArticles, isLoading: tickerLoading } = useQuery<NewsArticle[]>({
+    queryKey: ["tickerNews", activeTicker],
+    queryFn: async () => {
+      if (!activeTicker) return [];
+      const raw = await newsApi.byTicker(activeTicker, 7);
+      return raw.map(mapApiArticle);
+    },
+    enabled: !!activeTicker,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const isLoading = activeTicker ? tickerLoading : hotLoading;
+  const allNews = useMemo(
+    () => (activeTicker ? tickerArticles : hotArticles) ?? [],
+    [activeTicker, tickerArticles, hotArticles],
+  );
 
   const counts = useMemo(
     () => ({
@@ -55,7 +76,7 @@ export default function NewsPage() {
       negative: allNews.filter((n) => n.sentiment === "negative").length,
       neutral: allNews.filter((n) => n.sentiment === "neutral").length,
     }),
-    [allNews]
+    [allNews],
   );
   const total = allNews.length;
   const net = counts.positive >= counts.negative ? "Bullish" : "Bearish";
@@ -66,20 +87,73 @@ export default function NewsPage() {
   const articleHref = (n: NewsArticle) => n.url ?? "#";
   const isExternal = (n: NewsArticle) => Boolean(n.url);
 
+  const handleSearch = (e: React.FormEvent) => {
+    e.preventDefault();
+    const t = searchTicker.trim().toUpperCase();
+    if (t) {
+      setActiveTicker(t);
+      setF("all");
+    }
+  };
+
+  const clearSearch = () => {
+    setActiveTicker(null);
+    setSearchTicker("");
+    setF("all");
+  };
+
+  const handleTickerClick = (ticker: string) => {
+    setActiveTicker(ticker.toUpperCase());
+    setSearchTicker(ticker.toUpperCase());
+    setF("all");
+  };
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-5">
-      <div>
-        <h1 className="text-xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-          <Newspaper size={20} className="text-sky-500 dark:text-sky-400" /> Market News
-        </h1>
-        <p className="text-sm text-zinc-500 mt-0.5">FinBERT-scored headlines from finance media &amp; social</p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
+            <Newspaper size={20} className="text-sky-500 dark:text-sky-400" />
+            {activeTicker ? `${activeTicker} News` : "Market News"}
+          </h1>
+          <p className="text-sm text-zinc-500 mt-0.5">
+            {activeTicker
+              ? `Latest headlines for ${activeTicker}`
+              : "FinBERT-scored headlines for major stocks & ETFs"}
+          </p>
+        </div>
+
+        {/* Ticker search */}
+        <form onSubmit={handleSearch} className="flex items-center gap-2">
+          <div className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-1.5 focus-within:border-sky-500/60 transition-colors">
+            <Search size={14} className="text-zinc-500 shrink-0" />
+            <input
+              value={searchTicker}
+              onChange={(e) => setSearchTicker(e.target.value)}
+              placeholder="Search ticker..."
+              className="bg-transparent outline-none text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-600 w-28"
+              autoComplete="off"
+            />
+            {activeTicker && (
+              <button type="button" onClick={clearSearch} className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        </form>
       </div>
 
       {/* Sentiment overview */}
       <Card className="p-4">
         <div className="flex items-center justify-between mb-2">
-          <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Today&apos;s news sentiment</p>
-          <span className={cn("text-sm font-semibold", net === "Bullish" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>{net} bias</span>
+          <p className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+            {activeTicker ? `${activeTicker} sentiment` : "Today's news sentiment"}
+          </p>
+          {total > 0 && (
+            <span className={cn("text-sm font-semibold", net === "Bullish" ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>
+              {net} bias
+            </span>
+          )}
         </div>
         <div className="h-2 rounded-full overflow-hidden flex bg-zinc-200 dark:bg-zinc-800">
           <div className="bg-emerald-500" style={{ width: `${total > 0 ? (counts.positive / total) * 100 : 0}%` }} />
@@ -94,14 +168,14 @@ export default function NewsPage() {
       </Card>
 
       {/* Loading state */}
-      {isLoading && !articles && (
+      {isLoading && (
         <div className="text-center py-4">
           <p className="text-sm text-zinc-400 dark:text-zinc-600 animate-pulse">Loading news...</p>
         </div>
       )}
 
       {/* Featured */}
-      {f === "all" && featured && (
+      {!isLoading && f === "all" && featured && (
         <a
           href={articleHref(featured)}
           {...(isExternal(featured) ? { target: "_blank", rel: "noopener noreferrer" } : {})}
@@ -127,6 +201,20 @@ export default function NewsPage() {
             )}
             <h2 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 leading-snug group-hover:text-zinc-900 dark:group-hover:text-white transition-colors">{featured.headline}</h2>
             <p className="text-sm text-zinc-600 dark:text-zinc-400 mt-2 leading-relaxed">{featured.summary}</p>
+            {featured.tickers && featured.tickers.length > 0 && (
+              <div className="flex gap-1.5 mt-2">
+                {featured.tickers.map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleTickerClick(t); }}
+                    className="font-mono text-xs text-sky-600 dark:text-sky-400 hover:underline"
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+            )}
             <span className="inline-flex items-center gap-1 text-sm text-sky-600 dark:text-sky-400 mt-3">
               {isExternal(featured) ? "Read on source" : "Read article"} <ArrowRight size={14} />
             </span>
@@ -144,7 +232,7 @@ export default function NewsPage() {
               "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
               f === x
                 ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white"
-                : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
+                : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300",
             )}
           >
             {x === "all" ? "All" : SENT[x].label}
@@ -169,7 +257,7 @@ export default function NewsPage() {
                   <div className="space-y-1.5 min-w-0">
                     <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100 leading-snug group-hover:text-zinc-900 dark:group-hover:text-white transition-colors">{n.headline}</h2>
                     <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed line-clamp-2">{n.summary}</p>
-                    <div className="flex items-center gap-2 text-xs text-zinc-400 dark:text-zinc-600 pt-1">
+                    <div className="flex items-center gap-2 text-xs text-zinc-400 dark:text-zinc-600 pt-1 flex-wrap">
                       <span className="text-zinc-600 dark:text-zinc-400">{n.source}</span>
                       <span>·</span>
                       <span>{n.time}</span>
@@ -178,7 +266,14 @@ export default function NewsPage() {
                           <span>·</span>
                           <span className="flex gap-1.5">
                             {n.tickers.map((t) => (
-                              <span key={t} className="font-mono text-sky-600 dark:text-sky-400">{t}</span>
+                              <button
+                                key={t}
+                                type="button"
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleTickerClick(t); }}
+                                className="font-mono text-sky-600 dark:text-sky-400 hover:underline"
+                              >
+                                {t}
+                              </button>
                             ))}
                           </span>
                         </>
@@ -192,7 +287,13 @@ export default function NewsPage() {
             </LinkOrA>
           );
         })}
-        {feed.length === 0 && <p className="text-center text-sm text-zinc-400 dark:text-zinc-600 py-8">No {f} headlines right now.</p>}
+        {!isLoading && feed.length === 0 && (
+          <p className="text-center text-sm text-zinc-400 dark:text-zinc-600 py-8">
+            {activeTicker
+              ? `No ${f === "all" ? "" : f + " "}news found for ${activeTicker}.`
+              : `No ${f} headlines right now.`}
+          </p>
+        )}
       </div>
     </div>
   );

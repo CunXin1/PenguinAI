@@ -32,8 +32,8 @@ export function MarketStatusProvider({ children }: { children: React.ReactNode }
   const { data, isLoading } = useQuery<MarketStatus>({
     queryKey: ["marketStatus"],
     queryFn: () => marketData.status(),
-    refetchInterval: 15_000,
-    staleTime: 10_000,
+    refetchInterval: 60_000,
+    staleTime: 50_000,
   });
 
   const fallbackPhase = getClientSessionPhase();

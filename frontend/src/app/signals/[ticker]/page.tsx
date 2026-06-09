@@ -20,6 +20,47 @@ interface Props {
   params: Promise<{ ticker: string }>;
 }
 
+const SENT_STYLE = {
+  positive: { label: "Bullish", cls: "text-emerald-600 dark:text-emerald-400" },
+  negative: { label: "Bearish", cls: "text-red-600 dark:text-red-400" },
+  neutral: { label: "Neutral", cls: "text-zinc-700 dark:text-zinc-300" },
+} as const;
+
+function NewsSentimentBar({ articles }: { articles: NewsApiArticle[] }) {
+  const counts = { positive: 0, negative: 0, neutral: 0 };
+  for (const a of articles) {
+    const s = a.sentiment ?? "neutral";
+    if (s in counts) counts[s as keyof typeof counts]++;
+    else counts.neutral++;
+  }
+  const total = articles.length;
+  if (total === 0) return null;
+
+  const net = counts.positive >= counts.negative ? "Bullish" : "Bearish";
+  const netCls = counts.positive >= counts.negative
+    ? "text-emerald-600 dark:text-emerald-400"
+    : "text-red-600 dark:text-red-400";
+
+  return (
+    <div className="mb-3 px-3 py-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800/40">
+      <div className="flex items-center justify-between mb-1.5">
+        <p className="text-xs font-semibold text-zinc-600 dark:text-zinc-400">News sentiment</p>
+        <span className={cn("text-xs font-semibold", netCls)}>{net} bias</span>
+      </div>
+      <div className="h-1.5 rounded-full overflow-hidden flex bg-zinc-200 dark:bg-zinc-700">
+        <div className="bg-emerald-500" style={{ width: `${(counts.positive / total) * 100}%` }} />
+        <div className="bg-zinc-400 dark:bg-zinc-500" style={{ width: `${(counts.neutral / total) * 100}%` }} />
+        <div className="bg-red-500" style={{ width: `${(counts.negative / total) * 100}%` }} />
+      </div>
+      <div className="flex gap-3 mt-1.5 text-[10px] text-zinc-500">
+        <span><span className="text-emerald-600 dark:text-emerald-400 font-mono">{counts.positive}</span> bullish</span>
+        <span><span className="text-zinc-700 dark:text-zinc-300 font-mono">{counts.neutral}</span> neutral</span>
+        <span><span className="text-red-600 dark:text-red-400 font-mono">{counts.negative}</span> bearish</span>
+      </div>
+    </div>
+  );
+}
+
 const WL_KEY = "penguinai_watchlist";
 const MAX_POLLS = 10; // ~50s of polling a cold ticker before giving up
 const POLL_MS = 5000;
@@ -168,32 +209,55 @@ export default function SignalDetailPage({ params }: Props) {
               View all <ArrowRight size={12} />
             </Link>
           </div>
+
+          <NewsSentimentBar articles={tickerNews} />
+
           <div className="space-y-3">
-            {tickerNews.slice(0, 5).map((article: NewsApiArticle) => (
-              <div key={article.id} className="flex items-start gap-2.5">
-                <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-zinc-500" />
-                <div className="min-w-0">
-                  {article.url ? (
-                    <a
-                      href={article.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-sm font-medium text-zinc-800 dark:text-zinc-200 hover:text-sky-500 dark:hover:text-sky-400 transition-colors inline-flex items-center gap-1"
-                    >
-                      <span className="line-clamp-1">{article.headline}</span>
-                      <ExternalLink size={11} className="shrink-0 text-zinc-400 dark:text-zinc-600" />
-                    </a>
-                  ) : (
-                    <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200 line-clamp-1">
-                      {article.headline}
+            {tickerNews.slice(0, 5).map((article: NewsApiArticle) => {
+              const sent = article.sentiment ?? "neutral";
+              return (
+                <div key={article.id} className="flex items-start gap-2.5">
+                  <span className={cn(
+                    "mt-1.5 h-2 w-2 shrink-0 rounded-full",
+                    sent === "positive" ? "bg-emerald-500" : sent === "negative" ? "bg-red-500" : "bg-zinc-500",
+                  )} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <div className="min-w-0 flex-1">
+                        {article.url ? (
+                          <a
+                            href={article.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-sm font-medium text-zinc-800 dark:text-zinc-200 hover:text-sky-500 dark:hover:text-sky-400 transition-colors inline-flex items-center gap-1"
+                          >
+                            <span className="line-clamp-1">{article.headline}</span>
+                            <ExternalLink size={11} className="shrink-0 text-zinc-400 dark:text-zinc-600" />
+                          </a>
+                        ) : (
+                          <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200 line-clamp-1">
+                            {article.headline}
+                          </p>
+                        )}
+                      </div>
+                      {sent !== "neutral" && (
+                        <span className={cn(
+                          "shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-semibold border",
+                          sent === "positive"
+                            ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
+                            : "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30",
+                        )}>
+                          {sent === "positive" ? "Bullish" : "Bearish"}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-0.5">
+                      {article.source} · {timeAgoUnix(article.datetime)}
                     </p>
-                  )}
-                  <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-0.5">
-                    {article.source} · {timeAgoUnix(article.datetime)}
-                  </p>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </Card>
       )}

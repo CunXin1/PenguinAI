@@ -1,5 +1,10 @@
+import json
+from datetime import datetime, timezone
+
+import redis
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import task_failure, task_prerun, task_success
 
 from ml.core.config import ml_settings
 
@@ -66,3 +71,81 @@ celery_app.conf.beat_schedule = {
     # Celebrity holdings: managed by backend lifespan (fetch on startup + daily 19:00 ET).
     # Celery tasks remain available for manual invocation but are not scheduled here.
 }
+
+
+# ── Admin task tracking (writes execution metadata to Redis) ─────────────────
+
+_REDIS_HASH = "admin:task_runs"
+
+
+def _redis():
+    return redis.from_url(ml_settings.REDIS_URL, decode_responses=True, socket_timeout=2)
+
+
+@task_prerun.connect
+def _on_task_prerun(sender=None, task_id=None, **kwargs):
+    try:
+        r = _redis()
+        r.hset(
+            _REDIS_HASH,
+            sender.name,
+            json.dumps(
+                {
+                    "task_id": task_id,
+                    "status": "RUNNING",
+                    "started_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ),
+        )
+        r.close()
+    except Exception:
+        pass
+
+
+@task_success.connect
+def _on_task_success(sender=None, **kwargs):
+    try:
+        r = _redis()
+        raw = r.hget(_REDIS_HASH, sender.name)
+        info = json.loads(raw) if raw else {}
+        started = info.get("started_at")
+        duration = None
+        if started:
+            started_dt = datetime.fromisoformat(started)
+            duration = round((datetime.now(timezone.utc) - started_dt).total_seconds(), 2)
+        info.update(
+            {
+                "status": "SUCCESS",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "duration_s": duration,
+            }
+        )
+        r.hset(_REDIS_HASH, sender.name, json.dumps(info))
+        r.close()
+    except Exception:
+        pass
+
+
+@task_failure.connect
+def _on_task_failure(sender=None, exception=None, **kwargs):
+    try:
+        r = _redis()
+        raw = r.hget(_REDIS_HASH, sender.name)
+        info = json.loads(raw) if raw else {}
+        started = info.get("started_at")
+        duration = None
+        if started:
+            started_dt = datetime.fromisoformat(started)
+            duration = round((datetime.now(timezone.utc) - started_dt).total_seconds(), 2)
+        info.update(
+            {
+                "status": "FAILURE",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "duration_s": duration,
+                "error": str(exception)[:200] if exception else None,
+            }
+        )
+        r.hset(_REDIS_HASH, sender.name, json.dumps(info))
+        r.close()
+    except Exception:
+        pass

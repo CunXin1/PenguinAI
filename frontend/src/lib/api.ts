@@ -5,6 +5,10 @@ import type {
   CelebritySummary,
   ChartRange,
   EarningsEvent,
+  FomcNextMeeting,
+  FomcScheduleItem,
+  FomcStatement,
+  FomcTrendPoint,
   HeatmapResponse,
   MarketStatus,
   MiniQuote,
@@ -225,7 +229,29 @@ export const news = {
   market: (category = "general", minId = 0) =>
     apiFetch<NewsApiArticle[]>(`/news/market?category=${category}&min_id=${minId}`),
 
+  /** Hot ticker news from DB (pre-fetched Nasdaq-100 + key ETFs). */
+  hot: (limit = 50, ticker?: string) => {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (ticker) params.set("ticker", ticker.toUpperCase());
+    return apiFetch<NewsApiArticle[]>(`/news/hot?${params}`);
+  },
+
   /** Company news for a single ticker. */
   byTicker: (ticker: string, days = 7) =>
     apiFetch<NewsApiArticle[]>(`/news/${ticker.toUpperCase()}?days=${days}`),
+};
+
+// ── FOMC API ────────────────────────────────────────────────────────────────
+export const fomc = {
+  statements: (limit = 50) =>
+    apiFetch<FomcStatement[]>(`/fomc/statements?limit=${limit}`),
+
+  trend: (limit = 20) =>
+    apiFetch<FomcTrendPoint[]>(`/fomc/trend?limit=${limit}`),
+
+  nextMeeting: () =>
+    apiFetch<FomcNextMeeting>("/fomc/next-meeting"),
+
+  schedule: () =>
+    apiFetch<FomcScheduleItem[]>("/fomc/schedule"),
 };

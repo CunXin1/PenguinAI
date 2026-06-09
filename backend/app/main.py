@@ -18,6 +18,7 @@ from app.api.routes import (
     auth,
     celebrity_holdings,
     earnings,
+    fomc,
     market_data,
     news,
     signals,
@@ -26,7 +27,7 @@ from app.api.routes import (
     watchlist,
 )
 from app.core.config import settings
-from app.core.database import init_db
+from app.core.startup import get_startup_report, run_startup_checks
 
 logger = logging.getLogger("app.realtime")
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -275,8 +276,13 @@ def _run_marketcap_scheduler(stop_event: threading.Event):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await init_db()
+    await run_startup_checks()
     _watchdog.start()
+    app.state.watchdog = _watchdog
+
+    from app.api.routes.admin.logs import init_log_buffer
+
+    init_log_buffer()
 
     _celeb_stop.clear()
     celeb_thread = threading.Thread(
@@ -354,11 +360,40 @@ app.include_router(
     tags=["celebrity-holdings"],
 )
 app.include_router(news.router, prefix="/api/news", tags=["news"])
+app.include_router(fomc.router, prefix="/api/fomc", tags=["fomc"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 
 
 @app.get("/health")
 async def health():
     sv = _watchdog.health
-    ok = sv.get("supervisor") in ("running", "disabled")
-    return {"status": "ok" if ok else "degraded", "version": "0.1.0", "realtime": sv}
+    sv_ok = sv.get("supervisor") in ("running", "disabled")
+
+    report = get_startup_report()
+    data_readiness = {}
+    if report:
+        for check in report.checks:
+            data_readiness[check.name] = {
+                "status": check.status.value,
+                "message": check.message,
+                **({"detail": check.detail} if check.detail else {}),
+            }
+
+    overall = "ok"
+    if report and report.overall_status != "ok":
+        overall = report.overall_status
+    elif not sv_ok:
+        overall = "degraded"
+
+    return {
+        "status": overall,
+        "version": "0.1.0",
+        "realtime": sv,
+        "data_readiness": data_readiness,
+        "startup": {
+            "completed_at": (
+                report.completed_at.isoformat() if report and report.completed_at else None
+            ),
+            "overall": report.overall_status if report else "unknown",
+        },
+    }
