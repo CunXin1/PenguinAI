@@ -81,3 +81,35 @@
 - [ ] 财报前后股价反应图（earnings event overlay on price chart）
 - [ ] 按日期 / ticker / surprise 排序和筛选
 - [ ] 与信号联动：财报 surprise 如何影响信号置信度的可视化
+
+---
+
+## 代码中的 TODO / 缺口（grep 发现）
+
+### 后端 auth — 邮件发送未对接
+- [ ] `backend/app/api/routes/auth.py:73` — TODO: send verification email with link containing verify_token
+- [ ] `backend/app/api/routes/auth.py:121` — TODO: send verification email（resend）
+- [ ] `backend/app/api/routes/auth.py:168` — TODO: send email with reset link containing token
+- [ ] 对接邮件服务（SES / Resend / SendGrid），替换当前只 log token 的行为
+
+### 后端 auth — OAuth 未实现
+- [ ] `backend/app/api/routes/auth.py:227` — OAuth（Google / Apple）返回 501，需实现
+
+### ML — fetch_fundamentals stub
+- [ ] `ml/tasks/daily_pipeline.py:85` — fetch_fundamentals 是空 stub，需接 yfinance 或 Massive
+
+### 前端 mock 数据残留
+- [ ] `frontend/src/lib/mock.ts` — MOCK_USER、MOCK_UNIVERSE 仍被 screener 和个股页 fallback 使用
+- [ ] `frontend/src/app/signals/[ticker]/page.tsx:81` — 网络错误时降级到 demo data，应改为错误提示
+- [ ] Screener 页面仍读 MOCK_UNIVERSE，需对接 /api/tickers/universe 真实数据
+
+### 前端 Watchlist — localStorage 未迁移
+- [ ] `frontend/src/hooks/useWatchlist.ts` — guest 用户用 localStorage，登录用户需迁移到后端 /api/watchlist
+
+### 数据库迁移
+- [ ] Alembic baseline 缺失 — db/migrations/versions/ 为空，schema 仍靠 docker-entrypoint SQL 创建
+- [ ] 生成 baseline migration，对齐 ORM models 和 db/schema/*.sql，部署走 alembic upgrade head
+
+### 前端图表
+- [ ] 3M/1Y 图表 fallback 已修（market_data.py），Docker 重启后需验证
+- [ ] 1D 图表依赖 market_data_1min（实时流），无流时应 fallback 到 bars_30m 当天数据
