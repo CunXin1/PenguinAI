@@ -51,30 +51,30 @@ async def task_status(_=AdminUser):
     import redis.asyncio as aioredis
 
     r = aioredis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=2)
+    try:
+        # 1. Scheduled task last-run info from Redis hash
+        scheduled_tasks = []
+        for entry in _BEAT_SCHEDULE:
+            raw = await r.hget("admin:task_runs", entry["task"])
+            run_info: dict = json.loads(raw) if raw else {}
+            scheduled_tasks.append(
+                {
+                    "name": entry["name"],
+                    "task": entry["task"],
+                    "schedule": entry["schedule"],
+                    "last_run": run_info.get("started_at"),
+                    "last_status": run_info.get("status"),
+                    "last_duration_s": run_info.get("duration_s"),
+                }
+            )
 
-    # 1. Scheduled task last-run info from Redis hash
-    scheduled_tasks = []
-    for entry in _BEAT_SCHEDULE:
-        raw = await r.hget("admin:task_runs", entry["task"])
-        run_info: dict = json.loads(raw) if raw else {}
-        scheduled_tasks.append(
-            {
-                "name": entry["name"],
-                "task": entry["task"],
-                "schedule": entry["schedule"],
-                "last_run": run_info.get("started_at"),
-                "last_status": run_info.get("status"),
-                "last_duration_s": run_info.get("duration_s"),
-            }
-        )
-
-    # 2. Queue depths (Celery with Redis broker stores queues as Redis lists)
-    queues = []
-    for q_name in ("default", "ml_inference"):
-        pending = await r.llen(q_name) or 0
-        queues.append({"name": q_name, "pending": pending})
-
-    await r.aclose()
+        # 2. Queue depths (Celery with Redis broker stores queues as Redis lists)
+        queues = []
+        for q_name in ("default", "ml_inference"):
+            pending = await r.llen(q_name) or 0
+            queues.append({"name": q_name, "pending": pending})
+    finally:
+        await r.aclose()
 
     # 3. Worker info via Celery inspect (synchronous — run in thread)
     workers = []

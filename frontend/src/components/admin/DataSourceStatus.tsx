@@ -16,11 +16,20 @@ const DISPLAY_NAMES: Record<string, string> = {
 };
 
 export function DataSourceStatus() {
-  const { data, isLoading } = useQuery<AdminDataSourceStatus>({
+  const { data, isLoading, isError, refetch } = useQuery<AdminDataSourceStatus>({
     queryKey: ["admin", "datasource-status"],
     queryFn: () => admin.datasourceStatus(),
     refetchInterval: 30_000,
   });
+
+  if (isError) {
+    return (
+      <Card className="p-5">
+        <p className="text-sm text-red-600 dark:text-red-400">Failed to load data source status</p>
+        <button onClick={() => refetch()} className="text-xs text-sky-600 dark:text-sky-400 mt-2">Retry</button>
+      </Card>
+    );
+  }
 
   if (isLoading || !data) {
     return (

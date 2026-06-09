@@ -12,11 +12,30 @@ Admin Dashboard 是 PenguinAI 的系统管理仪表板，仅限 `ADMIN` tier 用
 
 ---
 
+## ADMIN 账号
+
+首次启动时自动创建 ADMIN 用户（通过 startup self-healing 检查 `check_and_seed_admin`）。
+
+**配置方式**（`.env`）：
+```env
+ADMIN_EMAIL=admin@penguinai.com
+ADMIN_PASSWORD=YourStrongPassword    # 留空 → 随机生成，打印到启动日志
+```
+
+**行为**：
+- 数据库中不存在 `ADMIN_EMAIL` 对应的用户 → 自动创建，密码取 `ADMIN_PASSWORD` 或随机生成
+- 用户已存在但密码与 `.env` 中 `ADMIN_PASSWORD` 不一致 → 自动更新密码 hash（每次启动同步）
+- 用户已存在且密码匹配 → 仅确保 tier 为 ADMIN
+
+**登录跳转**：ADMIN 用户登录后自动跳转到 `/admin`（非 ADMIN 用户跳转 `/`）。
+
+---
+
 ## 架构
 
 ### 后端
 
-后端为 FastAPI 子包结构，从原来的单文件 `admin.py`（40 行）扩展为 10 个模块：
+FastAPI 子包结构：
 
 ```
 backend/app/api/routes/admin/
@@ -32,7 +51,10 @@ backend/app/api/routes/admin/
 └── logs.py              # 内存日志缓冲 + 查询
 ```
 
-Pydantic 响应模型定义在 `backend/app/schemas/admin.py`。
+辅助文件：
+- `backend/app/schemas/admin.py` — Pydantic 响应模型
+- `backend/app/core/utils.py` — `human_size()` 共享工具（database.py + models.py 使用）
+- `backend/app/core/startup.py` — `check_and_seed_admin()` ADMIN 账号自愈
 
 ### 前端
 
@@ -69,7 +91,7 @@ frontend/src/components/admin/
 | TimescaleDB | `SELECT 1` + 延迟测量 | 连接成功 = healthy，超时 = down |
 | Redis | `PING` + 内存信息 | PONG = healthy，无响应 = down |
 | Backend API | 自检 | 始终 healthy（自身服务中） |
-| Celery Workers | `inspect.ping()` (timeout=2s) | 有响应 = healthy，无 worker = down |
+| Celery Workers | `inspect.ping()` (timeout=2s, 线程池执行) | 有响应 = healthy，无 worker = down |
 | RT Supervisor | `app.state.watchdog.health` | running = healthy, disabled = degraded |
 | IBKR Stream | supervisor health → services.ibkr | alive = healthy |
 | Finnhub WS | supervisor health → services.finnhub | alive = healthy |
@@ -79,21 +101,9 @@ frontend/src/components/admin/
 - 任何服务 down 或 degraded → `degraded`
 - 全部 healthy → `healthy`
 
-**响应示例**:
-```json
-{
-  "overall": "healthy",
-  "checked_at": "2026-06-09T15:42:00Z",
-  "services": [
-    { "name": "timescaledb", "status": "healthy", "latency_ms": 2.3, "detail": "8 connections, pool: 3/40 active" },
-    { "name": "redis", "status": "healthy", "latency_ms": 0.8, "detail": "PONG, mem=12.5M" },
-    { "name": "celery_workers", "status": "healthy", "latency_ms": null, "detail": "2 online, 0 active tasks" },
-    { "name": "realtime_supervisor", "status": "healthy", "latency_ms": null, "detail": "pid=12345, restarts=0" },
-    { "name": "ibkr_stream", "status": "healthy", "latency_ms": null, "detail": "uptime=15240s, restarts=0" },
-    { "name": "finnhub_stream", "status": "healthy", "latency_ms": null, "detail": "uptime=15240s, restarts=0" }
-  ]
-}
-```
+**技术细节**:
+- Celery `inspect()` 是同步阻塞调用，用 `asyncio.to_thread()` 包装避免阻塞事件循环
+- 探针 URL 从 `request.base_url` 动态获取，Docker 环境可用
 
 ---
 
@@ -110,6 +120,7 @@ frontend/src/components/admin/
 **关键设计决策**:
 - 行数用 `pg_stat_user_tables.n_live_tup`（O(1) 近似值），不用 `COUNT(*)`。bars_30m 有 2.36 亿行，真正 COUNT 会花几分钟。
 - 时间戳查询 `SELECT max(ts)` 在 TimescaleDB hypertable 上很快（chunk exclusion + 降序索引只读最后一个 chunk）。
+- `human_size()` 工具函数从 `app.core.utils` 导入，database.py 和 models.py 共用。
 
 **跟踪的表**: bars_30m, bars_1d, market_data_1min, signal_cache, social_posts, users, tickers, instruments, celebrity_holdings, earnings, news_articles, symbol_requests
 
@@ -120,8 +131,8 @@ frontend/src/components/admin/
 **端点**: `GET /api/admin/health/endpoints`
 **轮询**: 60 秒
 
-1. **路由列表** — 枚举 FastAPI 所有注册的路由（method + path），可展开/折叠
-2. **探针结果** — 用 httpx 对 4 个关键只读端点发内部请求，报告状态码 + 延迟
+1. **路由列表** — 枚举 FastAPI 所有注册的路由（method + path），可展开/折叠，按 HTTP method 颜色编码（GET=绿, POST=蓝, PATCH=黄, DELETE=红）
+2. **探针结果** — 用 httpx 对 4 个关键只读端点发内部请求，报告状态码 + 延迟。未执行的探针显示灰色（非红色）。
 
 **探针目标**: `/health`, `/api/market-data/status`, `/api/signals/top?limit=1`, `/api/tickers/search?q=AAPL`
 
@@ -133,7 +144,7 @@ frontend/src/components/admin/
 **轮询**: 15 秒
 
 **展示内容**:
-1. **队列深度** — `default` 和 `ml_inference` 队列中待处理任务数（通过 `redis.llen()` 查询）
+1. **队列深度** — `default` 和 `ml_inference` 队列中待处理任务数（通过异步 `redis.llen()` 查询）
 2. **Worker 卡片** — 每个在线 worker 的名称、状态、当前活跃任务数
 3. **定时任务表格** — 6 个 Beat 调度任务的上次执行时间、状态（SUCCESS/FAILURE/RUNNING）、耗时
 
@@ -148,6 +159,10 @@ Celery 信号处理器（在 `ml/tasks/celery_app.py` 中注册）在任务开�
   "duration_s": 42.3
 }
 ```
+
+**技术细节**:
+- Redis 连接用 `try/finally` 确保 `aclose()` 不泄漏
+- Celery `inspect()` 在 `asyncio.to_thread()` 中执行，不阻塞事件循环
 
 ---
 
@@ -182,7 +197,7 @@ Celery 信号处理器（在 `ml/tasks/celery_app.py` 中注册）在任务开�
 **端点**:
 - `GET /api/admin/users/stats` — 聚合统计
 - `GET /api/admin/users` — 分页列表（支持搜索、tier 筛选）
-- `PATCH /api/admin/users/{id}` — 修改 tier / 封禁
+- `PATCH /api/admin/users/{id}` — 修改 tier / 封禁（JSON body: `UserUpdateRequest`）
 
 **展示内容**:
 1. **统计卡片** — 总用户数、已验证、今日注册、本周注册
@@ -194,6 +209,7 @@ Celery 信号处理器（在 `ml/tasks/celery_app.py` 中注册）在任务开�
 - 不能修改自己的 tier（防止自降级）
 - 不能封禁自己（防止锁死）
 - tier 必须是有效值（FREE/PRO/PREMIUM/ADMIN）
+- PATCH body 通过 `UserUpdateRequest` Pydantic model 校验
 
 ---
 
@@ -217,9 +233,13 @@ Celery 信号处理器（在 `ml/tasks/celery_app.py` 中注册）在任务开�
 
 **前端交互流程**:
 1. 点击按钮 → POST 触发 → 返回 `task_id`
-2. 每 3 秒轮询 `GET /api/admin/actions/task/{task_id}`
+2. 每 3 秒轮询 `GET /api/admin/actions/task/{task_id}`（最多 60 次 = 3 分钟超时）
 3. 显示 spinning 动画直到 SUCCESS/FAILURE
 4. 5 秒后自动恢复为 idle 状态
+5. 组件卸载时 `mountedRef` 阻止后续 setState
+
+**技术细节**:
+- Celery 实例创建时同时传入 `broker` 和 `backend`（两者都是 Redis），确保 `task_result` 端点能读到结果
 
 ---
 
@@ -264,6 +284,28 @@ Celery 信号处理器（在 `ml/tasks/celery_app.py` 中注册）在任务开�
 
 ---
 
+## 主题支持
+
+所有组件同时支持 light mode 和 dark mode：
+- 文字: `text-zinc-700 dark:text-zinc-300`
+- 背景: `bg-zinc-50 dark:bg-zinc-900/40`
+- 边框: `border-zinc-200 dark:border-zinc-800`
+- 强调色: `text-emerald-600 dark:text-emerald-400` 等双色调
+- 骨架屏: `bg-zinc-200 dark:bg-zinc-800`
+
+---
+
+## 错误处理
+
+所有面板组件都有三种状态：
+1. **Loading** — 骨架屏动画
+2. **Error** — 红色错误文案 + Retry 按钮（点击触发 `refetch()`）
+3. **Success** — 正常数据展示
+
+HealthOverview 额外有全局错误样式（红色边框卡片）。
+
+---
+
 ## 轮询策略
 
 每个面板使用 TanStack React Query 的 `refetchInterval` 独立轮询，频率根据数据变化速度设置：
@@ -281,19 +323,20 @@ Celery 信号处理器（在 `ml/tasks/celery_app.py` 中注册）在任务开�
 
 ---
 
-## 访问控制
+## 访问控制（四层保护）
 
-- **Navbar 入口**: 仅 `user.tier === "ADMIN"` 时，在用户菜单下拉和移动端菜单中显示 "Admin" 链接
-- **页面保护**: `useAuth()` 检查 → 非 ADMIN 显示 "Access Denied" 卡片 + 返回按钮
-- **API 保护**: 所有端点使用 `Depends(require_tier("ADMIN"))`，非 ADMIN 用户请求返回 403
+1. **ADMIN 账号自动创建**: 启动时 `check_and_seed_admin()` 确保 ADMIN 用户存在，密码与 `.env` 同步
+2. **Navbar 入口隐藏**: 仅 `user.tier === "ADMIN"` 时，在用户菜单下拉和移动端菜单中显示 "Admin" 链接
+3. **前端页面门控**: `useAuth()` 检查 → 非 ADMIN 显示 "Access Denied" 卡片 + 返回按钮
+4. **后端 API 保护**: 所有端点使用 `Depends(require_tier("ADMIN"))`，非 ADMIN 用户请求返回 403
 
 ---
 
 ## 文件清单
 
-### 新建 (22 个文件)
+### 新建 (24 个文件)
 
-**后端 (11)**:
+**后端 (13)**:
 - `backend/app/api/routes/admin/__init__.py`
 - `backend/app/api/routes/admin/router.py`
 - `backend/app/api/routes/admin/health.py`
@@ -305,6 +348,8 @@ Celery 信号处理器（在 `ml/tasks/celery_app.py` 中注册）在任务开�
 - `backend/app/api/routes/admin/actions.py`
 - `backend/app/api/routes/admin/logs.py`
 - `backend/app/schemas/admin.py`
+- `backend/app/core/utils.py`
+- `docs/admin-dashboard.md`
 
 **前端 (11)**:
 - `frontend/src/app/admin/page.tsx`
@@ -319,10 +364,13 @@ Celery 信号处理器（在 `ml/tasks/celery_app.py` 中注册）在任务开�
 - `frontend/src/components/admin/ManualActions.tsx`
 - `frontend/src/components/admin/SystemLogs.tsx`
 
-### 修改 (5 个文件)
+### 修改 (8 个文件)
 
 - `backend/app/main.py` — lifespan 中初始化 AdminLogBuffer + 暴露 watchdog 到 `app.state`
+- `backend/app/core/startup.py` — 添加 `check_and_seed_admin()` ADMIN 账号自愈
+- `backend/app/core/config.py` — 添加 `ADMIN_EMAIL` / `ADMIN_PASSWORD` 配置项
 - `ml/tasks/celery_app.py` — 添加 Celery 信号处理器（task_prerun/success/failure → Redis）
 - `frontend/src/lib/api.ts` — 添加 `admin` API 命名空间（12 个方法）
 - `frontend/src/lib/types.ts` — 添加 admin 相关 TypeScript 类型定义
 - `frontend/src/components/layout/Navbar.tsx` — ADMIN 用户显示管理入口链接
+- `frontend/src/app/auth/login/page.tsx` — ADMIN 登录后自动跳转 `/admin`

@@ -8,11 +8,20 @@ import { cn, timeAgo } from "@/lib/utils";
 import type { AdminModelPerformance } from "@/lib/types";
 
 export function ModelPerformance() {
-  const { data, isLoading } = useQuery<AdminModelPerformance>({
+  const { data, isLoading, isError, refetch } = useQuery<AdminModelPerformance>({
     queryKey: ["admin", "model-performance"],
     queryFn: () => admin.modelPerformance(),
     refetchInterval: 300_000,
   });
+
+  if (isError) {
+    return (
+      <Card className="p-5">
+        <p className="text-sm text-red-600 dark:text-red-400">Failed to load model performance</p>
+        <button onClick={() => refetch()} className="text-xs text-sky-600 dark:text-sky-400 mt-2">Retry</button>
+      </Card>
+    );
+  }
 
   if (isLoading || !data) {
     return (
@@ -27,7 +36,8 @@ export function ModelPerformance() {
     );
   }
 
-  const maxImportance = Math.max(...Object.values(data.feature_importance), 0.01);
+  const importanceValues = Object.values(data.feature_importance);
+  const maxImportance = importanceValues.length > 0 ? Math.max(...importanceValues) : 0.01;
   const dist = data.signal_distribution;
 
   return (

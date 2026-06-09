@@ -15,11 +15,20 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 export function TaskStatus() {
-  const { data, isLoading } = useQuery<AdminTaskStatus>({
+  const { data, isLoading, isError, refetch } = useQuery<AdminTaskStatus>({
     queryKey: ["admin", "task-status"],
     queryFn: () => admin.taskStatus(),
     refetchInterval: 15_000,
   });
+
+  if (isError) {
+    return (
+      <Card className="p-5">
+        <p className="text-sm text-red-600 dark:text-red-400">Failed to load task status</p>
+        <button onClick={() => refetch()} className="text-xs text-sky-600 dark:text-sky-400 mt-2">Retry</button>
+      </Card>
+    );
+  }
 
   if (isLoading || !data) {
     return (

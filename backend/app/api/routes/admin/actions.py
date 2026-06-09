@@ -50,7 +50,7 @@ async def trigger_action(action: str, _=AdminUser):
 
     from celery import Celery
 
-    cel = Celery(broker=settings.REDIS_URL)
+    cel = Celery(broker=settings.REDIS_URL, backend=settings.REDIS_URL)
     result = cel.send_task(task_name, queue=queue)
 
     return {

@@ -337,22 +337,27 @@ async def lifespan(app: FastAPI):
         logger.warning("data.news not available — news scheduler disabled")
 
     # Seed critical market data if bars_30m is empty (checks DB → parquets → Massive API)
-    from app.core.seed_market_data import run_seed_thread
+    seed_thread = None
+    try:
+        from app.core.seed_market_data import run_seed_thread
 
-    _seed_stop.clear()
-    seed_thread = threading.Thread(
-        target=run_seed_thread,
-        args=(_seed_stop,),
-        daemon=True,
-        name="seed-data",
-    )
-    seed_thread.start()
+        _seed_stop.clear()
+        seed_thread = threading.Thread(
+            target=run_seed_thread,
+            args=(_seed_stop,),
+            daemon=True,
+            name="seed-data",
+        )
+        seed_thread.start()
+    except ImportError:
+        logger.warning("seed_market_data not available — market data seed disabled")
 
     try:
         yield
     finally:
         _seed_stop.set()
-        seed_thread.join(timeout=5)
+        if seed_thread is not None:
+            seed_thread.join(timeout=5)
         _news_stop.set()
         if news_thread is not None:
             news_thread.join(timeout=5)

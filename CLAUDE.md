@@ -33,6 +33,7 @@ db/schema/  → TimescaleDB + pgvector SQL
 | `users`             | Auth + tier (FREE/PRO/PREMIUM/ADMIN) |
 | `watchlists`        | User → ticker many-to-many |
 | `celebrity_holdings`| Smart money trades: SEC 13F (Buffett/Soros/Dalio/Ackman), ARK (Cathie Wood), Congress (Pelosi/Tuberville/MTG/Crenshaw), Trump DJT (13D) — auto-refreshed daily |
+| `news_articles`     | Per-ticker FinBERT-scored headlines (hypertable, one row per article×ticker, 90-day retention, max 50/ticker) — auto-populated by `data/news/scheduler.py` |
 | `earnings`          | EPS actual/estimate/surprise |
 | `fundamentals`      | PE ratio, market cap daily snapshot |
 | `fomc_statements`   | Hawk/dove scores, global macro filter |
@@ -202,12 +203,16 @@ frontend/src/lib/api.ts            — auth API client methods
 ```
 backend/app/api/routes/admin/      — admin API sub-package (health, db, tasks, datasources, models, users, actions, logs)
 backend/app/schemas/admin.py       — Pydantic response models for all admin endpoints
-backend/app/api/routes/admin/logs.py — AdminLogBuffer (in-memory ring buffer log handler)
+backend/app/core/utils.py          — human_size() shared utility (used by database.py + models.py)
+backend/app/core/startup.py        — check_and_seed_admin() creates ADMIN user on first startup
 ml/tasks/celery_app.py             — Celery task signal handlers (task_prerun/success/failure → Redis)
 frontend/src/app/admin/page.tsx    — admin dashboard page (ADMIN-only gate + 9 panel layout)
 frontend/src/components/admin/     — 10 admin panel components (HealthOverview, DatabaseHealth, etc.)
+frontend/src/app/auth/login/       — ADMIN login auto-redirects to /admin
 docs/admin-dashboard.md            — full admin dashboard documentation (中文)
 ```
+
+**Admin account**: Auto-seeded on startup. Configure via `.env`: `ADMIN_EMAIL` + `ADMIN_PASSWORD` (empty = random, printed to log). Password synced from `.env` on every startup.
 
 ## Celery Schedule
 
@@ -239,6 +244,7 @@ The following are **not** in the Celery beat schedule — they run via backend l
 | Massive — news | Hot-ticker news headlines + sentiment | `data/news/ingest.py` → `news_articles` hypertable | ✅ live (startup + tiered periodic) |
 | Google News RSS | Free news fallback (no API key, no sentiment) | `data/news/ingest.py`, `backend/app/api/routes/news.py` | ✅ live (fallback) |
 | Finnhub — news | Company news (free tier, 60 req/min) | `data/news/ingest.py` (last resort only) | ✅ live (last resort) |
+| Federal Reserve | FOMC statements + hawk/dove scores (FinBERT) | `data/fomc/` (scraper + scorer + loader) → `fomc_statements` | ✅ live (`make fetch-fomc`) |
 | Twitter/X · Reddit | Social sentiment | `data/scrapers/*` (Playwright / PRAW) | 🚧 planned — not created |
 | Polygon.io | Historical minute bars (supplemental) | — | ❌ legacy (no loader; superseded by Massive) |
 
@@ -304,6 +310,7 @@ make db-init       # apply db/schema/*.sql into the timescaledb container
 make bootstrap     # scripts/bootstrap_universe.py — populate ticker universe (run once)
 
 # ── Celebrity holdings ────────────────────────────
+make fetch-fomc         # FOMC statements → fomc_statements (Fed website + FinBERT scoring)
 make fetch-celebrities  # all three sources at once
 make fetch-congress     # congressional trades (Quiver Quant)
 make fetch-13f          # SEC EDGAR 13F/13D (Buffett, Soros, Dalio, Ackman, Trump)

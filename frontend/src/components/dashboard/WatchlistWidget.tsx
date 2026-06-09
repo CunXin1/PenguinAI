@@ -54,18 +54,18 @@ export function WatchlistWidget() {
               <Link
                 key={t}
                 href={`/signals/${t}`}
-                className="flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800/50 transition-colors"
+                className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800/50 transition-colors"
               >
-                <span className="font-mono font-semibold text-sm text-zinc-800 dark:text-zinc-200 w-12 shrink-0">
+                <span className="font-mono font-semibold text-sm text-zinc-800 dark:text-zinc-200 shrink-0">
                   {t}
                 </span>
                 {q?.spark && (
-                  <Sparkline data={q.spark} color={up ? "#34d399" : "#f87171"} width={56} />
+                  <Sparkline data={q.spark} color={up ? "#34d399" : "#f87171"} width={48} height={16} />
                 )}
                 <div className="flex-1" />
                 <span
                   className={cn(
-                    "font-mono text-xs w-16 text-right shrink-0",
+                    "font-mono text-xs shrink-0 text-right",
                     up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"
                   )}
                 >
@@ -74,9 +74,7 @@ export function WatchlistWidget() {
                 {sig ? (
                   <DirectionBadge direction={sig.direction} />
                 ) : (
-                  <span className="w-12 text-right text-[11px] text-zinc-400 dark:text-zinc-600">
-                    —
-                  </span>
+                  <span className="text-[11px] text-zinc-400 dark:text-zinc-600">—</span>
                 )}
               </Link>
             );

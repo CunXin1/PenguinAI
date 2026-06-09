@@ -198,4 +198,5 @@ CREATE TABLE IF NOT EXISTS fomc_statements (
     raw_text       TEXT
 );
 SELECT create_hypertable('fomc_statements', 'time', if_not_exists => TRUE);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fomc_time ON fomc_statements (time);
 CREATE INDEX IF NOT EXISTS idx_fomc_document_url ON fomc_statements (document_url);

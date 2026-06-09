@@ -210,7 +210,7 @@ export default function SignalDetailPage({ params }: Props) {
             </Link>
           </div>
 
-          <NewsSentimentBar articles={tickerNews} />
+          <NewsSentimentBar articles={tickerNews.slice(0, 6)} />
 
           <div className="space-y-3">
             {tickerNews.slice(0, 6).map((article: NewsApiArticle) => {

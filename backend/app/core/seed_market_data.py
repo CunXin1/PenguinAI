@@ -4,6 +4,15 @@ Seed critical market data on from-zero startup.
 Flow:  check DB → check local parquets → fetch from Massive API.
 Only runs when bars_30m has zero rows for the seed tickers.
 Designed to run as a background thread (non-blocking).
+
+IMPORTANT: This module runs in a BACKGROUND THREAD with its own event loop
+(via asyncio.run). It must NOT reuse the main thread's AsyncSessionLocal/engine
+because asyncpg pools are bound to the event loop that created them. Instead,
+_make_session() creates a fresh engine per call.
+
+NOTE: Massive API path provides OHLCV only (no indicators). Charts will work
+but ML signal quality remains NEUTRAL until a full import (make import-30min)
+populates indicator columns. The parquet path includes pre-computed indicators.
 """
 
 from __future__ import annotations
@@ -15,6 +24,9 @@ from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
 logger = logging.getLogger("app.seed")
 
 ET = ZoneInfo("America/New_York")
@@ -22,17 +34,39 @@ _REPO_ROOT = Path(__file__).resolve().parents[3]
 _30M_DIR = _REPO_ROOT / "data" / "30min_data"
 _DAILY_DIR = _REPO_ROOT / "data" / "daily_data"
 
-SEED_TICKERS = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA",
-    "AMD", "PLTR", "NFLX", "JPM", "V",
-    "SPY", "QQQ", "IWM", "DIA", "GLD",
-]
-
-_ETFS = {"SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "GLD", "XLF", "XLK", "ARKK", "TLT"}
+# Keep ETF set in sync with data/ingestion/massive_30min_parquet._classify_asset.
+_ETFS = {
+    "SPY", "QQQ", "IWM", "DIA", "VTI", "VOO", "GLD", "XLF", "XLK", "ARKK",
+    "IVV", "VUG", "VEA", "VTV", "IEFA", "BND", "AGG", "IWF", "IJH", "IEMG",
+    "VWO", "IJR", "VIG", "VXUS", "TLT",
+}
 
 
 def _asset_type(ticker: str) -> str:
     return "etf" if ticker in _ETFS else "stock"
+
+
+def _get_seed_tickers() -> list[str]:
+    """Derive seed tickers from bootstrap_universe (single source of truth)."""
+    try:
+        from scripts.bootstrap_universe import TICKER_UNIVERSE
+
+        return [t["ticker"] for t in TICKER_UNIVERSE]
+    except Exception:
+        return [
+            "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA",
+            "AMD", "PLTR", "NFLX", "JPM", "V",
+            "SPY", "QQQ", "IWM", "DIA", "GLD",
+        ]
+
+
+def _make_session() -> tuple[async_sessionmaker[AsyncSession], any]:
+    """Create a fresh engine + session factory for THIS event loop."""
+    from app.core.config import settings
+
+    engine = create_async_engine(settings.DATABASE_URL, pool_size=5, pool_pre_ping=True)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    return factory, engine
 
 
 # ---------------------------------------------------------------------------
@@ -40,21 +74,19 @@ def _asset_type(ticker: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _db_has_seed_bars() -> bool:
-    from sqlalchemy import text
-
-    from app.core.database import AsyncSessionLocal
-
-    async with AsyncSessionLocal() as db:
+async def _db_has_seed_bars(session_factory, tickers: list[str]) -> bool:
+    async with session_factory() as db:
         result = await db.execute(
             text(
-                "SELECT count(*) FROM instruments i"
-                " JOIN bars_30m b ON b.instrument_id = i.instrument_id"
-                " WHERE i.symbol = ANY(:tickers) LIMIT 1"
+                "SELECT EXISTS("
+                "  SELECT 1 FROM instruments i"
+                "  JOIN bars_30m b ON b.instrument_id = i.instrument_id"
+                "  WHERE i.symbol = ANY(:tickers)"
+                ")"
             ),
-            {"tickers": SEED_TICKERS},
+            {"tickers": tickers},
         )
-        return (result.scalar_one() or 0) > 0
+        return bool(result.scalar_one())
 
 
 # ---------------------------------------------------------------------------
@@ -103,8 +135,6 @@ _1D_DB_COLS = [
 
 
 async def _ensure_instrument(db, symbol: str, asset_type: str) -> int:
-    from sqlalchemy import text
-
     result = await db.execute(
         text(
             "INSERT INTO instruments (symbol, asset_type)"
@@ -123,21 +153,27 @@ async def _ensure_instrument(db, symbol: str, asset_type: str) -> int:
     return result.scalar_one()
 
 
-async def _import_parquets(parquets: dict[str, tuple[Path | None, Path | None]]) -> int:
+async def _import_parquets(
+    session_factory,
+    parquets: dict[str, tuple[Path | None, Path | None]],
+    stop: threading.Event,
+) -> int:
     import pyarrow.parquet as pq
 
-    from app.core.database import AsyncSessionLocal
-
     total = 0
-    async with AsyncSessionLocal() as db:
-        for ticker, (p30, pd) in parquets.items():
+    for ticker, (p30, pd) in parquets.items():
+        if stop.is_set():
+            logger.info("seed: stop requested, aborting parquet import")
+            break
+
+        async with session_factory() as db:
             asset = _asset_type(ticker)
             iid = await _ensure_instrument(db, ticker, asset)
 
             if p30:
                 try:
                     t = pq.read_table(p30)
-                    n = await _load_30m_arrow(db, t, iid)
+                    n = await _load_arrow(db, t, "bars_30m", _30M_DB_COLS, iid, ts_col="ts")
                     total += n
                     logger.info("seed: imported %s 30m parquet (%d bars)", ticker, n)
                 except Exception:
@@ -146,79 +182,46 @@ async def _import_parquets(parquets: dict[str, tuple[Path | None, Path | None]])
             if pd:
                 try:
                     t = pq.read_table(pd)
-                    n = await _load_1d_arrow(db, t, iid)
+                    ts_col = "last_ts" if "last_ts" in set(t.column_names) else "date"
+                    n = await _load_arrow(db, t, "bars_1d", _1D_DB_COLS, iid, ts_col=ts_col)
                     total += n
                     logger.info("seed: imported %s daily parquet (%d bars)", ticker, n)
                 except Exception:
                     logger.warning("seed: failed to import daily parquet for %s", ticker, exc_info=True)
 
-        await db.commit()
+            await db.commit()
     return total
 
 
-async def _load_30m_arrow(db, table, instrument_id: int) -> int:
-    from sqlalchemy import text
-
+async def _load_arrow(
+    db, table, target_table: str, db_cols: list[str], instrument_id: int, *, ts_col: str = "ts"
+) -> int:
+    """Generic parquet → DB loader for both 30m and 1d tables."""
     col_names = set(table.column_names)
     rows = table.to_pydict()
     n = table.num_rows
     if n == 0:
         return 0
 
-    placeholders = ", ".join(f":{c}" for c in _30M_DB_COLS)
-    cols_sql = ", ".join(_30M_DB_COLS)
+    placeholders = ", ".join(f":{c}" for c in db_cols)
+    cols_sql = ", ".join(db_cols)
     sql = text(
-        f"INSERT INTO bars_30m ({cols_sql}) VALUES ({placeholders})"
+        f"INSERT INTO {target_table} ({cols_sql}) VALUES ({placeholders})"
         " ON CONFLICT (ts, instrument_id) DO NOTHING"
     )
 
-    batch = []
-    for i in range(n):
-        row = {"instrument_id": instrument_id}
-        row["ts"] = rows["ts"][i]
-        row["rth"] = rows["rth"][i] if "rth" in col_names else True
-        for c in _30M_DB_COLS:
-            if c in ("ts", "instrument_id", "rth"):
-                continue
-            row[c] = rows.get(c, [None] * n)[i] if c in col_names else None
-        batch.append(row)
-
-        if len(batch) >= 2000:
-            await db.execute(sql, batch)
-            batch = []
-
-    if batch:
-        await db.execute(sql, batch)
-    return n
-
-
-async def _load_1d_arrow(db, table, instrument_id: int) -> int:
-    from sqlalchemy import text
-
-    col_names = set(table.column_names)
-    rows = table.to_pydict()
-    n = table.num_rows
-    if n == 0:
-        return 0
-
-    placeholders = ", ".join(f":{c}" for c in _1D_DB_COLS)
-    cols_sql = ", ".join(_1D_DB_COLS)
-    sql = text(
-        f"INSERT INTO bars_1d ({cols_sql}) VALUES ({placeholders})"
-        " ON CONFLICT (ts, instrument_id) DO NOTHING"
-    )
-
-    ts_col = "last_ts" if "last_ts" in col_names else "date"
+    ts_data = rows[ts_col]
+    col_data = {}
+    for c in db_cols:
+        if c in ("ts", "instrument_id"):
+            continue
+        col_data[c] = rows[c] if c in col_names else None
 
     batch = []
     for i in range(n):
-        row = {"instrument_id": instrument_id}
-        row["ts"] = rows[ts_col][i]
-        row["rth_bars"] = rows.get("rth_bars", [None] * n)[i]
-        for c in _1D_DB_COLS:
-            if c in ("ts", "instrument_id", "rth_bars"):
-                continue
-            row[c] = rows.get(c, [None] * n)[i] if c in col_names else None
+        row = {"instrument_id": instrument_id, "ts": ts_data[i]}
+        for c, data in col_data.items():
+            row[c] = data[i] if data is not None else None
         batch.append(row)
 
         if len(batch) >= 2000:
@@ -237,7 +240,9 @@ async def _load_1d_arrow(db, table, instrument_id: int) -> int:
 _PAGE_LIMIT = 50_000
 
 
-async def _fetch_from_massive(api_key: str, base_url: str) -> int:
+async def _fetch_from_massive(
+    session_factory, api_key: str, base_url: str, tickers: list[str], stop: threading.Event
+) -> int:
     import httpx
 
     today = date.today()
@@ -245,18 +250,18 @@ async def _fetch_from_massive(api_key: str, base_url: str) -> int:
     from_1d = (today - timedelta(days=400)).isoformat()
     to = today.isoformat()
 
-    total = 0
+    total_bars = 0
+    tickers_done = 0
     async with httpx.AsyncClient(
         headers={"Authorization": f"Bearer {api_key}"},
         timeout=30.0,
     ) as client:
-        from app.core.database import AsyncSessionLocal
+        for ticker in tickers:
+            if stop.is_set():
+                logger.info("seed: stop requested, aborting Massive fetch")
+                break
 
-        async with AsyncSessionLocal() as db:
-            for ticker in SEED_TICKERS:
-                if total > 0 and total % 5 == 0:
-                    logger.info("seed: fetched %d tickers so far...", total // 5)
-
+            async with session_factory() as db:
                 asset = _asset_type(ticker)
                 iid = await _ensure_instrument(db, ticker, asset)
 
@@ -264,8 +269,7 @@ async def _fetch_from_massive(api_key: str, base_url: str) -> int:
                     n = await _fetch_and_write_30m(
                         client, db, api_key, base_url, ticker, iid, from_30m, to
                     )
-                    total += n
-                    logger.info("seed: fetched %s 30m from Massive (%d bars)", ticker, n)
+                    total_bars += n
                 except Exception:
                     logger.warning("seed: Massive 30m fetch failed for %s", ticker, exc_info=True)
 
@@ -273,19 +277,16 @@ async def _fetch_from_massive(api_key: str, base_url: str) -> int:
                     n = await _fetch_and_write_1d(
                         client, db, api_key, base_url, ticker, iid, from_1d, to
                     )
-                    total += n
-                    logger.info("seed: fetched %s daily from Massive (%d bars)", ticker, n)
+                    total_bars += n
                 except Exception:
                     logger.warning("seed: Massive daily fetch failed for %s", ticker, exc_info=True)
 
-            await db.commit()
-    return total
+                await db.commit()
 
+            tickers_done += 1
+            logger.info("seed: %d/%d tickers done (%s)", tickers_done, len(tickers), ticker)
 
-def _with_key(url: str, api_key: str) -> str:
-    if "apiKey=" in url:
-        return url
-    return f"{url}{'&' if '?' in url else '?'}apiKey={api_key}"
+    return total_bars
 
 
 async def _massive_get(client, url: str) -> dict | None:
@@ -308,14 +309,13 @@ async def _massive_get(client, url: str) -> dict | None:
 
 
 async def _fetch_series(
-    client, api_key: str, base_url: str,
+    client, base_url: str, api_key: str,
     ticker: str, interval: str, date_from: str, date_to: str, *, adjusted: bool,
 ) -> dict[int, tuple]:
     adj = "true" if adjusted else "false"
-    url: str | None = _with_key(
+    url: str | None = (
         f"{base_url}/v2/aggs/ticker/{ticker}/range/{interval}"
-        f"/{date_from}/{date_to}?adjusted={adj}&sort=asc&limit={_PAGE_LIMIT}",
-        api_key,
+        f"/{date_from}/{date_to}?adjusted={adj}&sort=asc&limit={_PAGE_LIMIT}"
     )
     out: dict[int, tuple] = {}
     while url:
@@ -329,15 +329,15 @@ async def _fetch_series(
                 continue
             out[int(t)] = (o, h, lo, c, int(round(float(r.get("v") or 0))))
         nxt = data.get("next_url")
-        url = _with_key(nxt, api_key) if nxt else None
+        if nxt and not nxt.startswith("http"):
+            nxt = f"{base_url}{nxt}"
+        url = nxt if nxt else None
     return out
 
 
 async def _fetch_and_write_30m(client, db, api_key, base_url, ticker, iid, from_d, to_d) -> int:
-    from sqlalchemy import text
-
-    raw = await _fetch_series(client, api_key, base_url, ticker, "30/minute", from_d, to_d, adjusted=False)
-    adj = await _fetch_series(client, api_key, base_url, ticker, "30/minute", from_d, to_d, adjusted=True)
+    raw = await _fetch_series(client, base_url, api_key, ticker, "30/minute", from_d, to_d, adjusted=False)
+    adj = await _fetch_series(client, base_url, api_key, ticker, "30/minute", from_d, to_d, adjusted=True)
     if not raw and not adj:
         return 0
 
@@ -365,7 +365,7 @@ async def _fetch_and_write_30m(client, db, api_key, base_url, ticker, iid, from_
             "rv": r[4] if r else None,
             "ao": a[0] if a else None, "ah": a[1] if a else None,
             "al": a[2] if a else None, "ac": a[3] if a else None,
-            "av": r[4] if r else (a[4] if a else None),
+            "av": a[4] if a else None,
         })
         if len(batch) >= 1000:
             await db.execute(sql, batch)
@@ -377,9 +377,7 @@ async def _fetch_and_write_30m(client, db, api_key, base_url, ticker, iid, from_
 
 
 async def _fetch_and_write_1d(client, db, api_key, base_url, ticker, iid, from_d, to_d) -> int:
-    from sqlalchemy import text
-
-    adj = await _fetch_series(client, api_key, base_url, ticker, "1/day", from_d, to_d, adjusted=True)
+    adj = await _fetch_series(client, base_url, api_key, ticker, "1/day", from_d, to_d, adjusted=True)
     if not adj:
         return 0
 
@@ -411,43 +409,54 @@ async def _fetch_and_write_1d(client, db, api_key, base_url, ticker, iid, from_d
 # ---------------------------------------------------------------------------
 
 
-async def _run_seed() -> None:
-    logger.info("seed: checking if critical market data exists...")
+async def _run_seed(stop: threading.Event) -> None:
+    tickers = _get_seed_tickers()
+    logger.info("seed: checking if critical market data exists for %d tickers...", len(tickers))
 
-    if await _db_has_seed_bars():
-        logger.info("seed: bars_30m already has data for seed tickers — skipping")
-        return
+    session_factory, engine = _make_session()
+    try:
+        if await _db_has_seed_bars(session_factory, tickers):
+            logger.info("seed: bars_30m already has data for seed tickers — skipping")
+            return
 
-    parquets = _find_parquets(SEED_TICKERS)
-    if parquets:
-        logger.info("seed: found %d local parquet files — importing...", len(parquets))
-        n = await _import_parquets(parquets)
-        logger.info("seed: imported %d total bars from parquets", n)
-        return
+        if stop.is_set():
+            return
 
-    import os
+        parquets = _find_parquets(tickers)
+        if parquets:
+            logger.info("seed: found %d local parquet files — importing...", len(parquets))
+            n = await _import_parquets(session_factory, parquets, stop)
+            logger.info("seed: imported %d total bars from parquets", n)
+            return
 
-    api_key = os.getenv("MASSIVE_API_KEY", "")
-    base_url = os.getenv("MASSIVE_BASE_URL", "https://api.massive.com")
-    if not api_key:
-        logger.warning(
-            "seed: no parquets found and MASSIVE_API_KEY not set — "
-            "charts will be empty until data is loaded manually (make import-30min)"
+        if stop.is_set():
+            return
+
+        import os
+
+        api_key = os.getenv("MASSIVE_API_KEY", "")
+        base_url = os.getenv("MASSIVE_BASE_URL", "https://api.massive.com")
+        if not api_key:
+            logger.warning(
+                "seed: no parquets found and MASSIVE_API_KEY not set — "
+                "charts will be empty until data is loaded manually (make import-30min)"
+            )
+            return
+
+        logger.info(
+            "seed: no parquets found — fetching %d tickers from Massive API "
+            "(~30 days 30m + ~1 year daily, OHLCV only — no indicators)...",
+            len(tickers),
         )
-        return
-
-    logger.info(
-        "seed: no parquets found — fetching %d tickers from Massive API "
-        "(~30 days 30m + ~1 year daily)...",
-        len(SEED_TICKERS),
-    )
-    n = await _fetch_from_massive(api_key, base_url)
-    logger.info("seed: fetched %d total bars from Massive API", n)
+        n = await _fetch_from_massive(session_factory, api_key, base_url, tickers, stop)
+        logger.info("seed: fetched %d total bars from Massive API", n)
+    finally:
+        await engine.dispose()
 
 
 def run_seed_thread(stop_event: threading.Event) -> None:
     """Entry point for background thread. Safe to call from main.py lifespan."""
     try:
-        asyncio.run(_run_seed())
+        asyncio.run(_run_seed(stop_event))
     except Exception:
         logger.warning("seed: market data seed failed", exc_info=True)

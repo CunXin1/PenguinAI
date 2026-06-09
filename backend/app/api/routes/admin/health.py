@@ -220,7 +220,8 @@ async def endpoint_health(request: Request, _=AdminUser):
         "/api/signals/top?limit=1",
         "/api/tickers/search?q=AAPL",
     ]
-    async with httpx.AsyncClient(base_url="http://127.0.0.1:8000", timeout=5.0) as client:
+    base = f"{request.base_url.scheme}://{request.base_url.netloc}"
+    async with httpx.AsyncClient(base_url=base, timeout=5.0) as client:
         for endpoint in probe_targets:
             try:
                 t0 = time.perf_counter()

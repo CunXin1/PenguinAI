@@ -283,12 +283,15 @@ ORDER BY bars;
 | SEC EDGAR 13F + 13D | 机构持仓（巴菲特、索罗斯、达里奥、阿克曼、特朗普 DJT） | `celebrity_holdings` | ✅ 已接入 | `data/celebrity/sec_13f.py` |
 | Quiver Quant | 国会议员交易（佩洛西、图伯维尔等） | `celebrity_holdings` | ✅ 已接入 | `data/celebrity/congress.py` |
 | arkfunds.io | ARK 每日交易（Cathie Wood） | `celebrity_holdings` | ✅ 已接入 | `data/celebrity/ark.py` |
+| Massive — 新闻 | 热门股新闻 + 情绪 | `news_articles`（hypertable） | ✅ 已接入（启动 + 分层定时） | `data/news/ingest.py` |
+| Google News RSS | 免费新闻备选（无 key，无情绪） | 同上 | ✅ 备用 | `data/news/ingest.py` |
+| Finnhub — 新闻 | 公司新闻（免费版，60 req/min） | 同上 | ✅ 最后手段 | `data/news/ingest.py` |
 | SEC EDGAR FOMC | FOMC 声明 | `fomc_statements` | 🚧 规划中 | SEC submissions API |
 | Polygon.io | 补充 K 线 | — | ❌ 遗留占位（仅 env，无 loader） | 已被 Massive 取代 |
 
 > **现状提醒**：`data/scrapers/` 与 `polygon_loader.py` **不存在**。社媒和 FOMC 表
 > 由 schema 建好但尚未填充，相关步骤优雅降级。名人持仓 **已上线**
->（详见 `docs/celebrity-holdings.md`）。
+>（详见 `docs/celebrity-holdings.md`）。新闻模块 **已上线**（详见 `docs/news-module.md`）。
 
 ### 核心资产：历史 30 分钟 / 日线数据
 

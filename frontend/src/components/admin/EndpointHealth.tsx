@@ -11,11 +11,20 @@ import type { EndpointHealth as EndpointHealthType } from "@/lib/types";
 export function EndpointHealth() {
   const [expanded, setExpanded] = useState(false);
 
-  const { data, isLoading } = useQuery<EndpointHealthType>({
+  const { data, isLoading, isError, refetch } = useQuery<EndpointHealthType>({
     queryKey: ["admin", "endpoint-health"],
     queryFn: () => admin.healthEndpoints(),
     refetchInterval: 60_000,
   });
+
+  if (isError) {
+    return (
+      <Card className="p-5">
+        <p className="text-sm text-red-600 dark:text-red-400">Failed to load endpoint health</p>
+        <button onClick={() => refetch()} className="text-xs text-sky-600 dark:text-sky-400 mt-2">Retry</button>
+      </Card>
+    );
+  }
 
   if (isLoading || !data) {
     return (
@@ -48,11 +57,13 @@ export function EndpointHealth() {
             <span
               className={cn(
                 "inline-block h-2 w-2 rounded-full shrink-0",
-                p.status_code && p.status_code < 400
-                  ? "bg-emerald-500"
-                  : p.status_code && p.status_code < 500
-                    ? "bg-amber-500"
-                    : "bg-red-500"
+                p.status_code == null
+                  ? "bg-zinc-400 dark:bg-zinc-500"
+                  : p.status_code < 400
+                    ? "bg-emerald-500"
+                    : p.status_code < 500
+                      ? "bg-amber-500"
+                      : "bg-red-500"
               )}
             />
             <span className="text-[11px] text-zinc-700 dark:text-zinc-300 font-mono flex-1 truncate">

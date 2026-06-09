@@ -8,11 +8,20 @@ import { cn, compact, timeAgo } from "@/lib/utils";
 import type { DatabaseHealth as DBHealthType } from "@/lib/types";
 
 export function DatabaseHealth() {
-  const { data, isLoading } = useQuery<DBHealthType>({
+  const { data, isLoading, isError, refetch } = useQuery<DBHealthType>({
     queryKey: ["admin", "db-health"],
     queryFn: () => admin.dbHealth(),
     refetchInterval: 60_000,
   });
+
+  if (isError) {
+    return (
+      <Card className="p-5">
+        <p className="text-sm text-red-600 dark:text-red-400">Failed to load database health</p>
+        <button onClick={() => refetch()} className="text-xs text-sky-600 dark:text-sky-400 mt-2">Retry</button>
+      </Card>
+    );
+  }
 
   if (isLoading || !data) {
     return (

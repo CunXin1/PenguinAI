@@ -256,6 +256,12 @@ def _map_db_row(row) -> dict:
 
     ticker = row.get("ticker")
     meta = row.get("raw_metadata") or {}
+    if isinstance(meta, str):
+        import json as _json
+        try:
+            meta = _json.loads(meta)
+        except (ValueError, TypeError):
+            meta = {}
 
     return {
         "id": str(row["id"]),

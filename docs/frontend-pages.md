@@ -246,7 +246,7 @@ New password form with strength validation, accessed via email link.
 
 ### Admin Dashboard (`/admin`)
 
-Full-featured system administration dashboard. ADMIN tier only — non-admins see an "Access Denied" card.
+Full-featured system administration dashboard. ADMIN tier only — non-admins see an "Access Denied" card. ADMIN users are auto-redirected here after login.
 
 **9 monitoring panels** in responsive grid layout (`max-w-7xl`, wider than standard pages):
 
@@ -262,9 +262,15 @@ Full-featured system administration dashboard. ADMIN tier only — non-admins se
 | Manual Actions | `ManualActions` | manual | `/admin/actions/{action}` |
 | System Logs | `SystemLogs` | manual/10s | `/admin/logs` |
 
+**Theme:** Full light/dark mode support — all components use `dark:` Tailwind variants.
+
+**Error handling:** Every panel has 3 states: loading skeleton, error (with Retry button), success.
+
 **Navbar integration:** "Admin" link in user dropdown menu + mobile menu, only visible when `user.tier === "ADMIN"`.
 
-**Shared components:** Reuses `Card`, `StatTile` from `components/ui/`. New reusable `StatusDot` (green/yellow/red indicator).
+**Admin account:** Auto-seeded on backend startup via `check_and_seed_admin()`. Configure in `.env` (`ADMIN_EMAIL` / `ADMIN_PASSWORD`).
+
+**Shared components:** Reuses `Card`, `StatTile` from `components/ui/`. New reusable `StatusDot` (green/yellow/red/gray indicator).
 
 > 详细文档见 [admin-dashboard.md](./admin-dashboard.md)
 

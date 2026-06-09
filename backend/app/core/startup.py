@@ -291,10 +291,13 @@ async def check_and_heal_signal_cache() -> CheckResult:
             from app.core.config import settings
 
             c = Celery(broker=settings.REDIS_URL)
-            c.send_task("ml.tasks.hourly_signal_cache.refresh_top100", queue="ml_inference")
-            healed = True
-            heal_msg = "Dispatched refresh_top100 (queued until ML worker picks it up)"
-            logger.info("signal_cache stale — dispatched refresh_top100")
+            try:
+                c.send_task("ml.tasks.hourly_signal_cache.refresh_top100", queue="ml_inference")
+                healed = True
+                heal_msg = "Dispatched refresh_top100 (queued until ML worker picks it up)"
+                logger.info("signal_cache stale — dispatched refresh_top100")
+            finally:
+                c.close()
         except Exception as exc:
             heal_msg = f"Cannot dispatch Celery refresh: {exc}"
             logger.warning(heal_msg)
@@ -324,30 +327,25 @@ async def check_bars_data() -> CheckResult:
         from app.core.database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                text(
-                    "SELECT GREATEST(reltuples, 0)::bigint FROM pg_class"
-                    " WHERE relname = 'bars_30m'"
-                )
-            )
-            bars_count = result.scalar_one_or_none() or 0
+            result = await db.execute(text("SELECT 1 FROM bars_30m LIMIT 1"))
+            has_bars = result.first() is not None
             result = await db.execute(text("SELECT count(*) FROM instruments"))
             instruments_count = result.scalar_one()
 
-        if bars_count > 0 and instruments_count > 0:
+        if has_bars and instruments_count > 0:
             return CheckResult(
                 name="bars_30m",
                 blocking=False,
                 status=CheckStatus.OK,
-                message=f"bars_30m: {bars_count:,} rows, instruments: {instruments_count}",
+                message=f"bars_30m: has data, instruments: {instruments_count}",
                 duration_ms=(time.monotonic() - t0) * 1000,
-                detail={"bars_30m": bars_count, "instruments": instruments_count},
+                detail={"bars_30m_has_data": True, "instruments": instruments_count},
             )
 
         parts = []
         if instruments_count == 0:
             parts.append("instruments table empty")
-        if bars_count == 0:
+        if not has_bars:
             parts.append("bars_30m empty — charts and ML models will not work")
         msg = "; ".join(parts) + ". Run 'make import-30min' to load historical data."
         logger.warning("MANUAL ACTION NEEDED: %s", msg)
@@ -358,7 +356,7 @@ async def check_bars_data() -> CheckResult:
             status=CheckStatus.DEGRADED,
             message=msg,
             duration_ms=(time.monotonic() - t0) * 1000,
-            detail={"bars_30m": bars_count, "instruments": instruments_count},
+            detail={"bars_30m_has_data": False, "instruments": instruments_count},
         )
     except Exception as exc:
         return CheckResult(
@@ -376,19 +374,10 @@ async def check_market_data_1min() -> CheckResult:
         from app.core.database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as db:
-            result = await db.execute(
-                text(
-                    "SELECT GREATEST(reltuples, 0)::bigint FROM pg_class"
-                    " WHERE relname = 'market_data_1min'"
-                )
-            )
-            count = result.scalar_one_or_none() or 0
-            latest = None
-            if count > 0:
-                result = await db.execute(text("SELECT max(time) FROM market_data_1min"))
-                latest = result.scalar_one()
+            result = await db.execute(text("SELECT max(time) FROM market_data_1min"))
+            latest = result.scalar_one()
 
-        if count == 0:
+        if latest is None:
             return CheckResult(
                 name="market_data_1min",
                 blocking=False,
@@ -405,9 +394,9 @@ async def check_market_data_1min() -> CheckResult:
             name="market_data_1min",
             blocking=False,
             status=CheckStatus.OK,
-            message=f"market_data_1min: {count:,} rows, latest={latest.isoformat() if latest else 'N/A'}",
+            message=f"market_data_1min: latest={latest.isoformat()}",
             duration_ms=(time.monotonic() - t0) * 1000,
-            detail={"count": count, "latest": latest.isoformat() if latest else None},
+            detail={"latest": latest.isoformat()},
         )
     except Exception as exc:
         return CheckResult(

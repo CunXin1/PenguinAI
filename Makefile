@@ -1,4 +1,4 @@
-.PHONY: up down logs backend frontend ml-worker ibkr-stream minute-parquet fetch-earnings fetch-congress fetch-13f fetch-ark fetch-celebrities lint type-check test test-backend test-frontend db-init bootstrap
+.PHONY: up down logs backend frontend ml-worker ibkr-stream minute-parquet fetch-earnings fetch-fomc fetch-congress fetch-13f fetch-ark fetch-celebrities lint type-check test test-backend test-frontend db-init bootstrap
 
 # ── Docker Compose ────────────────────────────────────────────────────────────
 up:
@@ -47,6 +47,11 @@ fetch-13f:
 
 fetch-ark:
 	python -m data.celebrity.ark
+
+# FOMC statements → fomc_statements table. Scrapes Fed website, scores with
+# FinBERT. Incremental (skips dates already in DB). No API key needed.
+fetch-fomc:
+	python -m data.fomc.loader
 
 fetch-celebrities: fetch-congress fetch-13f fetch-ark
 

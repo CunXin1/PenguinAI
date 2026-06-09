@@ -16,6 +16,7 @@ import {
   Menu,
   X,
   LayoutGrid,
+  LogIn,
   LogOut,
   Loader2,
   Settings,
@@ -240,10 +241,10 @@ export function Navbar() {
         </Link>
 
         {/* Global market open/closed badge — single source of truth (useMarketStatus). */}
-        <MarketStatusBadge className="hidden lg:inline-flex shrink-0" />
+        <MarketStatusBadge className="hidden sm:inline-flex shrink-0" />
 
-        {/* Desktop nav: icons from lg, labels added at xl */}
-        <nav className="hidden lg:flex items-center gap-0.5">
+        {/* Nav: icons from sm, labels added at xl */}
+        <nav className="hidden sm:flex items-center gap-1">
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = isActive(href);
             return (
@@ -268,10 +269,10 @@ export function Navbar() {
         <div className="flex-1" />
 
         {/* Inline search: shown from md, width grows with the viewport */}
-        <div ref={desktopDropdownRef} className="hidden lg:block relative">
+        <div ref={desktopDropdownRef} className="relative">
           <form
             onSubmit={submitSearch}
-            className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-1.5 w-32 lg:w-40 xl:w-48 focus-within:border-sky-500/60 transition-colors"
+            className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-2 sm:px-3 py-1.5 w-16 sm:w-24 md:w-32 lg:w-40 xl:w-48 focus-within:border-sky-500/60 transition-colors"
           >
             <Search size={14} className="text-zinc-500 shrink-0" />
             <input
@@ -353,9 +354,10 @@ export function Navbar() {
         ) : (
           <Link
             href="/auth/login"
-            className="hidden sm:inline-flex px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-sm font-semibold transition-colors shrink-0"
+            className="inline-flex items-center justify-center px-1.5 sm:px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-sm font-semibold transition-colors shrink-0"
           >
-            Sign in
+            <LogIn size={16} className="sm:hidden" />
+            <span className="hidden sm:inline">Sign in</span>
           </Link>
         )}
 
@@ -365,7 +367,7 @@ export function Navbar() {
           onClick={() => setMenuOpen((o) => !o)}
           aria-label={menuOpen ? "Close menu" : "Open menu"}
           aria-expanded={menuOpen}
-          className="lg:hidden w-8 h-8 grid place-items-center rounded-lg text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800/50 transition-colors shrink-0"
+          className="sm:hidden w-8 h-8 grid place-items-center rounded-lg text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800/50 transition-colors shrink-0"
         >
           {menuOpen ? <X size={18} /> : <Menu size={18} />}
         </button>
@@ -373,7 +375,7 @@ export function Navbar() {
 
       {/* Mobile dropdown panel */}
       {menuOpen && (
-        <div className="lg:hidden border-t border-zinc-200 dark:border-zinc-800 bg-white/95 dark:bg-zinc-950/95 backdrop-blur">
+        <div className="sm:hidden border-t border-zinc-200 dark:border-zinc-800 bg-white/95 dark:bg-zinc-950/95 backdrop-blur">
           <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col gap-1">
             <div ref={mobileDropdownRef} className="relative mb-2">
               <form

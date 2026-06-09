@@ -39,21 +39,27 @@
 - [x] 数据源状态：IBKR/Finnhub/Massive 连接 + 各表数据新鲜度
 
 ## 4. 个股新闻板块
-- [ ] /signals/[ticker] 页面下方增加该 ticker 专属新闻 feed
-- [ ] 后端端点 GET /api/news/ticker/{ticker}，从 Finnhub company news API 拉取
-- [ ] FinBERT 实时打分每条新闻，显示 bullish/bearish/neutral 标签
-- [ ] 新闻情绪聚合条：展示该股近期舆论方向
+- [x] /signals/[ticker] 页面下方增加该 ticker 专属新闻 feed
+- [x] 后端端点 GET /api/news/ticker/{ticker}，从 Massive/Finnhub API 拉取（3 层 fallback）
+- [x] FinBERT 实时打分每条新闻，显示 bullish/bearish/neutral 标签（ticker-specific scoring）
+- [x] 新闻情绪聚合条：展示该股近期舆论方向
 
 ## 5. 新闻板块只展示热门股票
-- [ ] 主页 /news 只显示 MAG7 + Top ETF 等核心标的的新闻
-- [ ] 冷门股票新闻不在主页加载，减少 API 调用和页面噪声
-- [ ] 用户在个股页面点击后按需搜索并展示该股新闻
-- [ ] 新闻搜索/筛选功能：用户可输入 ticker 查看相关新闻
+- [x] 主页 /news 只显示 MAG7 + Top ETF 等核心标的的新闻（/hot 端点 + DB）
+- [x] 冷门股票新闻不在主页加载，减少 API 调用和页面噪声
+- [x] 用户在个股页面点击后按需搜索并展示该股新闻
+- [x] 新闻搜索/筛选功能：用户可输入 ticker 查看相关新闻
+- [x] 每 ticker 最多 3 条新闻避免刷屏（NEWS_MAX_PER_TICKER_FEED 可配置）
+- [x] 新闻定时入库：Tier-1 每 15 分钟，Tier-2 每 60 分钟，启动全量拉取
+- [x] FinBERT ticker-specific 打分（prepend ticker 到 headline）
+- [x] 每 ticker 最多保留 50 条（自动修剪旧文章）
+- [x] 90 天 TimescaleDB 自动清理（retention policy）
 
 ## 6. FOMC 新闻板块
-- [ ] /fomc 页面：历次 FOMC 会议声明 + hawk/dove 打分时间线
-- [ ] 可视化 hawk_dove_score 趋势图（影响全局信号的宏观过滤器）
-- [ ] 下次会议倒计时 + 市场预期利率概率（CME FedWatch）
+- [x] /fomc 页面：历次 FOMC 会议声明 + hawk/dove 打分时间线
+- [x] 可视化 hawk_dove_score 趋势图（影响全局信号的宏观过滤器）
+- [x] 下次会议倒计时（硬编码 2025-2027 FOMC 日程）
+- [ ] CME FedWatch 市场预期利率概率
 - [ ] 后端：SEC EDGAR FOMC 声明抓取 + NLP hawk/dove 分类器
 
 ## 7. 完善前端 UI/UX

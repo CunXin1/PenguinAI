@@ -20,7 +20,6 @@ RUN (repo root):
 
 import argparse
 import asyncio
-import hashlib
 import json
 import logging
 import uuid
@@ -205,7 +204,11 @@ async def fetch_google_rss(client: httpx.AsyncClient, tickers: list[str], limit:
             pub_ts = None
             if pub_el is not None and pub_el.text:
                 try:
-                    pub_ts = _parse_rfc2822(pub_el.text).isoformat()
+                    dt = _parse_rfc2822(pub_el.text)
+                    if dt.tzinfo is None:
+                        from datetime import timezone
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    pub_ts = dt.isoformat()
                 except (ValueError, TypeError):
                     pass
             articles.append({
@@ -320,10 +323,6 @@ def _article_metadata(article: dict) -> dict:
     return meta
 
 
-def _url_hash(url: str) -> str:
-    return hashlib.md5(url.encode()).hexdigest()[:12]
-
-
 # ── DB upsert ───────────────────────────────────────────────────────────────
 
 _UPSERT_SQL = text("""
@@ -342,11 +341,11 @@ _CHECK_URL_SQL = text("""
 _PRUNE_SQL = text("""
     DELETE FROM news_articles
     WHERE ticker = :ticker
-      AND (time, id) NOT IN (
-          SELECT time, id FROM news_articles
+      AND time < (
+          SELECT time FROM news_articles
           WHERE ticker = :ticker
           ORDER BY time DESC
-          LIMIT :keep
+          OFFSET :keep LIMIT 1
       )
 """)
 
