@@ -27,18 +27,101 @@ try:
     from data.news.constants import HOT_TICKERS_SET as HOT_TICKERS
 except ImportError:
     _HOT_STOCKS = [
-        "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "TSLA", "AVGO", "COST", "NFLX",
-        "AMD", "ADBE", "CRM", "INTC", "QCOM", "TXN", "AMAT", "MU", "LRCX", "KLAC",
-        "ORCL", "CSCO", "IBM", "NOW", "PANW", "CRWD", "SNOW", "PLTR", "COIN", "MSTR",
-        "JPM", "V", "MA", "BAC", "GS", "MS", "BRK.B", "UNH", "JNJ", "PFE",
-        "XOM", "CVX", "LLY", "ABBV", "MRK", "TMO", "WMT", "PG", "KO", "PEP",
-        "TMUS", "CMCSA", "AMGN", "INTU", "HON", "ISRG", "BKNG", "SBUX", "VRTX",
-        "ADP", "MDLZ", "GILD", "ADI", "REGN", "PYPL", "SNPS", "CDNS", "MRVL",
-        "ARM", "SMCI", "RIVN", "MARA", "RIOT",
+        "AAPL",
+        "MSFT",
+        "AMZN",
+        "NVDA",
+        "GOOGL",
+        "META",
+        "TSLA",
+        "AVGO",
+        "COST",
+        "NFLX",
+        "AMD",
+        "ADBE",
+        "CRM",
+        "INTC",
+        "QCOM",
+        "TXN",
+        "AMAT",
+        "MU",
+        "LRCX",
+        "KLAC",
+        "ORCL",
+        "CSCO",
+        "IBM",
+        "NOW",
+        "PANW",
+        "CRWD",
+        "SNOW",
+        "PLTR",
+        "COIN",
+        "MSTR",
+        "JPM",
+        "V",
+        "MA",
+        "BAC",
+        "GS",
+        "MS",
+        "BRK.B",
+        "UNH",
+        "JNJ",
+        "PFE",
+        "XOM",
+        "CVX",
+        "LLY",
+        "ABBV",
+        "MRK",
+        "TMO",
+        "WMT",
+        "PG",
+        "KO",
+        "PEP",
+        "TMUS",
+        "CMCSA",
+        "AMGN",
+        "INTU",
+        "HON",
+        "ISRG",
+        "BKNG",
+        "SBUX",
+        "VRTX",
+        "ADP",
+        "MDLZ",
+        "GILD",
+        "ADI",
+        "REGN",
+        "PYPL",
+        "SNPS",
+        "CDNS",
+        "MRVL",
+        "ARM",
+        "SMCI",
+        "RIVN",
+        "MARA",
+        "RIOT",
     ]
     _HOT_ETFS = [
-        "SPY", "QQQ", "DIA", "IWM", "VTI", "VOO", "XLK", "XLF", "XLE", "XLV",
-        "XLI", "SOXX", "SMH", "ARKK", "GLD", "SLV", "TLT", "HYG", "EEM", "VWO",
+        "SPY",
+        "QQQ",
+        "DIA",
+        "IWM",
+        "VTI",
+        "VOO",
+        "XLK",
+        "XLF",
+        "XLE",
+        "XLV",
+        "XLI",
+        "SOXX",
+        "SMH",
+        "ARKK",
+        "GLD",
+        "SLV",
+        "TLT",
+        "HYG",
+        "EEM",
+        "VWO",
     ]
     HOT_TICKERS = frozenset(_HOT_STOCKS + _HOT_ETFS)
 
@@ -49,7 +132,7 @@ _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 
 # ── In-memory cache ──────────────────────────────────────────────────
 _cache: dict[str, tuple[float, list]] = {}
-_MARKET_TTL = 300.0   # 5 minutes
+_MARKET_TTL = 300.0  # 5 minutes
 _COMPANY_TTL = 600.0  # 10 minutes
 
 
@@ -69,6 +152,7 @@ def _set_cache(key: str, data: list) -> None:
 
 
 # ── Mappers ──────────────────────────────────────────────────────────
+
 
 def _map_massive_article(item: dict) -> dict:
     """Map a Massive ``results[]`` item to the unified response format."""
@@ -179,6 +263,7 @@ def _map_db_row(row) -> dict:
 
 # ── Fetch helpers (each returns None on failure) ─────────────────────
 
+
 async def _fetch_massive_news(
     ticker: str | None = None,
     limit: int = 50,
@@ -213,8 +298,7 @@ async def _fetch_google_rss(
 ) -> list[dict] | None:
     """Parse Google News RSS feed. Returns None on any failure."""
     url = (
-        f"https://news.google.com/rss/search"
-        f"?q={query.replace(' ', '+')}&hl=en-US&gl=US&ceid=US:en"
+        f"https://news.google.com/rss/search?q={query.replace(' ', '+')}&hl=en-US&gl=US&ceid=US:en"
     )
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
@@ -284,6 +368,7 @@ async def _fetch_finnhub_news(
 
 
 # ── Endpoints ────────────────────────────────────────────────────────
+
 
 @router.get("/market")
 async def get_market_news(

@@ -1,12 +1,9 @@
 """Module 6b: direct unit tests for market_clock, security, and config."""
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
-from zoneinfo import ZoneInfo
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
-
-from app.core.market_clock import ET, get_market_status, is_regular_session
+from app.core.market_clock import get_market_status, is_regular_session
 from app.core.security import (
     create_access_token,
     decode_access_token,

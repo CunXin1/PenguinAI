@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, get_db
+from app.core.config import settings
 from app.core.rate_limit import (
     check_account_rate_limit,
     forgot_password_rate_limit,
@@ -14,7 +15,6 @@ from app.core.rate_limit import (
     register_rate_limit,
     reset_password_rate_limit,
 )
-from app.core.config import settings
 from app.core.security import (
     DUMMY_HASH,
     create_access_token,
@@ -65,7 +65,9 @@ async def register(
         await db.flush()
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="Email already registered"
+        ) from None
 
     verify_token = create_verify_token(email)
     # TODO: send verification email with link containing verify_token
@@ -134,9 +136,7 @@ async def login(
     email = body.email.lower()
     await check_account_rate_limit(email)
 
-    result = await db.execute(
-        select(User).where(User.email == email, User.is_active.is_(True))
-    )
+    result = await db.execute(select(User).where(User.email == email, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
 
     # Always run bcrypt to prevent timing side-channel that reveals whether the email exists
@@ -160,14 +160,12 @@ async def forgot_password(
     _rl: Annotated[None, Depends(forgot_password_rate_limit)],
 ):
     email = body.email.lower()
-    result = await db.execute(
-        select(User).where(User.email == email, User.is_active.is_(True))
-    )
+    result = await db.execute(select(User).where(User.email == email, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
 
     if user:
-        token = create_reset_token(email)
-        # TODO: send email with reset link containing token
+        _token = create_reset_token(email)  # noqa: F841 — will be used when email sending is implemented
+        # TODO: send email with reset link containing _token
         logger.info("Password reset token generated for %s", body.email)
 
     return {"message": "If this email is registered, you will receive a reset link shortly."}
@@ -186,9 +184,7 @@ async def reset_password(
             detail="Invalid or expired reset link",
         )
 
-    result = await db.execute(
-        select(User).where(User.email == email, User.is_active.is_(True))
-    )
+    result = await db.execute(select(User).where(User.email == email, User.is_active.is_(True)))
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(

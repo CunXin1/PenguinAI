@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections import defaultdict
 from datetime import UTC, datetime
 from time import monotonic
 
@@ -205,7 +204,7 @@ async def run(
         while not stop.is_set():
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=30.0)
-            for tk, bar in list(acc.bars.items()):
+            for _tk, bar in list(acc.bars.items()):
                 cross_validator.update_finnhub(bar["ticker"], bar["close"])
             result = cross_validator.check()
             if result["ibkr_stale"]:

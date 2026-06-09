@@ -50,7 +50,9 @@ async def _get_redis() -> Redis | None:
         _logger.info("Redis connected — rate limiting active")
         return _pool
     except Exception:
-        _logger.warning("Redis unavailable — rate limiting disabled (retry in %ds)", int(_RETRY_COOLDOWN))
+        _logger.warning(
+            "Redis unavailable — rate limiting disabled (retry in %ds)", int(_RETRY_COOLDOWN)
+        )
         return None
 
 

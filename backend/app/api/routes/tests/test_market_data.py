@@ -13,23 +13,29 @@ import pytest
 from app.core.database import get_db
 from app.main import app
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 class _MappingRow:
     """Dict-like object that supports dict(row) conversion, matching SA RowMapping."""
+
     def __init__(self, d: dict):
         self._d = d
+
     def __getitem__(self, key):
         return self._d[key]
+
     def get(self, key, default=None):
         return self._d.get(key, default)
+
     def keys(self):
         return self._d.keys()
+
     def __iter__(self):
         return iter(self._d)
+
     def __len__(self):
         return len(self._d)
 
@@ -42,19 +48,23 @@ def _result_with_mappings(rows: list[dict]):
 
 def _mock_db_override(execute_side_effect):
     """Create a get_db override that returns a mock session with given execute behavior."""
+
     async def _override():
         session = AsyncMock()
         session.execute = AsyncMock(side_effect=execute_side_effect)
         yield session
+
     return _override
 
 
 def _mock_db_override_single(result):
     """Create a get_db override that returns a mock session with a single execute return."""
+
     async def _override():
         session = AsyncMock()
         session.execute = AsyncMock(return_value=result)
         yield session
+
     return _override
 
 
@@ -78,6 +88,7 @@ def _restore_db_override():
 # GET /api/market-data/status
 # ---------------------------------------------------------------------------
 
+
 @patch("app.api.routes.market_data.get_market_status")
 async def test_market_status_returns_expected_keys(mock_get_status, client):
     mock_get_status.return_value = {
@@ -99,11 +110,26 @@ async def test_market_status_returns_expected_keys(mock_get_status, client):
 # GET /api/market-data/{ticker}/candles
 # ---------------------------------------------------------------------------
 
+
 async def test_candles_returns_list_of_bars(client):
     now = datetime.now(UTC)
     fake_rows = [
-        {"time": now - timedelta(hours=2), "open": 150.0, "high": 152.0, "low": 149.0, "close": 151.0, "volume": 10000},
-        {"time": now - timedelta(hours=1), "open": 151.0, "high": 153.0, "low": 150.0, "close": 152.5, "volume": 12000},
+        {
+            "time": now - timedelta(hours=2),
+            "open": 150.0,
+            "high": 152.0,
+            "low": 149.0,
+            "close": 151.0,
+            "volume": 10000,
+        },
+        {
+            "time": now - timedelta(hours=1),
+            "open": 151.0,
+            "high": 153.0,
+            "low": 150.0,
+            "close": 152.5,
+            "volume": 12000,
+        },
     ]
     app.dependency_overrides[get_db] = _mock_db_override_single(_result_with_mappings(fake_rows))
 
@@ -128,6 +154,7 @@ async def test_candles_uppercases_ticker(client):
 # ---------------------------------------------------------------------------
 # GET /api/market-data/quotes
 # ---------------------------------------------------------------------------
+
 
 async def test_quotes_empty_tickers_returns_empty(client):
     resp = await client.get("/api/market-data/quotes?tickers=")
@@ -156,6 +183,7 @@ async def test_quotes_returns_records(client):
 # GET /api/market-data/mini
 # ---------------------------------------------------------------------------
 
+
 async def test_mini_empty_tickers_returns_empty(client):
     resp = await client.get("/api/market-data/mini?tickers=")
     assert resp.status_code == 200
@@ -165,6 +193,7 @@ async def test_mini_empty_tickers_returns_empty(client):
 # ---------------------------------------------------------------------------
 # GET /api/market-data/{ticker}/series
 # ---------------------------------------------------------------------------
+
 
 async def test_series_invalid_range_returns_422(client):
     resp = await client.get("/api/market-data/AAPL/series?range=6H")
@@ -194,20 +223,31 @@ async def test_series_valid_range_returns_bars(client):
 # GET /api/market-data/heatmap
 # ---------------------------------------------------------------------------
 
+
 async def test_heatmap_returns_tiles_and_indices(client):
-    now = datetime.now(UTC)
     map_rows = [
         {
-            "ticker": "AAPL", "name": "Apple Inc.", "sector": "Technology",
+            "ticker": "AAPL",
+            "name": "Apple Inc.",
+            "sector": "Technology",
             "market_cap": 3_000_000_000_000,
-            "last_close": 190.0, "prev_close": 188.0,
-            "ret_5d": 0.01, "ret_21d": 0.03, "ret_63d": 0.05, "ret_252d": 0.15,
+            "last_close": 190.0,
+            "prev_close": 188.0,
+            "ret_5d": 0.01,
+            "ret_21d": 0.03,
+            "ret_63d": 0.05,
+            "ret_252d": 0.15,
         },
     ]
     idx_rows = [
         {
-            "symbol": "SPY", "last_close": 450.0, "prev_close": 448.0,
-            "ret_5d": 0.005, "ret_21d": 0.02, "ret_63d": 0.04, "ret_252d": 0.12,
+            "symbol": "SPY",
+            "last_close": 450.0,
+            "prev_close": 448.0,
+            "ret_5d": 0.005,
+            "ret_21d": 0.02,
+            "ret_63d": 0.04,
+            "ret_252d": 0.12,
         },
     ]
 

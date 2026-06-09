@@ -42,7 +42,7 @@ class Settings(BaseSettings):
             _logger.critical(
                 "SECRET_KEY is insecure in non-DEBUG mode! All tokens will reset on restart. "
                 "Set a strong SECRET_KEY in .env for production. "
-                "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(64))\""
+                'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
             )
         return self
 
@@ -55,15 +55,15 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # ── Rate limiting (per IP, Redis-backed) ─────────────────────
-    RATE_LIMIT_LOGIN_TIMES: int = 10       # max attempts per window
-    RATE_LIMIT_LOGIN_WINDOW: int = 60      # seconds
+    RATE_LIMIT_LOGIN_TIMES: int = 10  # max attempts per window
+    RATE_LIMIT_LOGIN_WINDOW: int = 60  # seconds
     RATE_LIMIT_REGISTER_TIMES: int = 5
     RATE_LIMIT_REGISTER_WINDOW: int = 3600
     RATE_LIMIT_FORGOT_PW_TIMES: int = 5
     RATE_LIMIT_FORGOT_PW_WINDOW: int = 3600
     RATE_LIMIT_RESET_PW_TIMES: int = 5
     RATE_LIMIT_RESET_PW_WINDOW: int = 3600
-    RATE_LIMIT_ACCOUNT_LOGIN_TIMES: int = 20   # per account (any IP)
+    RATE_LIMIT_ACCOUNT_LOGIN_TIMES: int = 20  # per account (any IP)
     RATE_LIMIT_ACCOUNT_LOGIN_WINDOW: int = 3600
 
     # ── Signal cache TTL (seconds) ────────────────────────────────

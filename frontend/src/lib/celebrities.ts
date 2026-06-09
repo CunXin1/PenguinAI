@@ -6,20 +6,20 @@ export interface CelebrityMeta {
 }
 
 export const CELEBRITIES: Record<string, CelebrityMeta> = {
+  // Institutional investors (13F filings)
   buffett: { slug: "buffett", name: "Warren Buffett", title: "Berkshire Hathaway", avatar: "WB" },
   soros: { slug: "soros", name: "George Soros", title: "Soros Fund Management", avatar: "GS" },
   dalio: { slug: "dalio", name: "Ray Dalio", title: "Bridgewater Associates", avatar: "RD" },
   ackman: { slug: "ackman", name: "Bill Ackman", title: "Pershing Square", avatar: "BA" },
-  pelosi: { slug: "pelosi", name: "Nancy Pelosi", title: "U.S. House of Representatives", avatar: "NP" },
+  // ARK Invest
   cathie_wood: { slug: "cathie_wood", name: "Cathie Wood", title: "ARK Invest", avatar: "CW" },
+  // Congress
+  pelosi: { slug: "pelosi", name: "Nancy Pelosi", title: "U.S. House Speaker", avatar: "NP" },
   tuberville: { slug: "tuberville", name: "Tommy Tuberville", title: "U.S. Senate", avatar: "TT" },
-  goldman: { slug: "goldman", name: "Daniel Goldman", title: "U.S. House of Representatives", avatar: "DG" },
-  mark_green: { slug: "mark_green", name: "Mark Green", title: "U.S. House of Representatives", avatar: "MG" },
-  gottheimer: { slug: "gottheimer", name: "Josh Gottheimer", title: "U.S. House of Representatives", avatar: "JG" },
-  khanna: { slug: "khanna", name: "Ro Khanna", title: "U.S. House of Representatives", avatar: "RK" },
-  mccaul: { slug: "mccaul", name: "Michael McCaul", title: "U.S. House of Representatives", avatar: "MM" },
-  crenshaw: { slug: "crenshaw", name: "Dan Crenshaw", title: "U.S. House of Representatives", avatar: "DC" },
-  mtg: { slug: "mtg", name: "Marjorie Taylor Greene", title: "U.S. House of Representatives", avatar: "MG" },
+  mtg: { slug: "mtg", name: "Marjorie Taylor Greene", title: "U.S. House", avatar: "MG" },
+  crenshaw: { slug: "crenshaw", name: "Dan Crenshaw", title: "U.S. House", avatar: "DC" },
+  // President
+  trump: { slug: "trump", name: "Donald Trump", title: "U.S. President", avatar: "DT" },
 };
 
 const AVATAR_COLORS = [

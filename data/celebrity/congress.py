@@ -1,8 +1,8 @@
-"""House + Senate Stock Watcher → ``celebrity_holdings`` table ingestion.
+"""Quiver Quant congressional trading API → ``celebrity_holdings`` table ingestion.
 
-Free, no API key. Downloads the full transaction JSON from the public S3
-buckets maintained by the House/Senate Stock Watcher projects and upserts
-transactions from a curated list of politicians into celebrity_holdings.
+Free, no API key. Fetches recent congressional stock transactions from
+the Quiver Quant public API and upserts trades from a curated list of
+politicians into celebrity_holdings.
 
 RUN (from repo root, with .env present and Postgres up):
     python -m data.celebrity.congress
@@ -29,10 +29,8 @@ QUIVER_URL = "https://api.quiverquant.com/beta/live/congresstrading"
 CONGRESS_CELEBRITIES: dict[str, str] = {
     "Nancy Pelosi": "pelosi",
     "Tommy Tuberville": "tuberville",
-    "Daniel Goldman": "goldman",
-    "Daniel S. Goldman": "goldman",
-    "Mark Green": "mark_green",
     "Marjorie Taylor Greene": "mtg",
+    "Dan Crenshaw": "crenshaw",
 }
 
 _ACTION_MAP: dict[str, str] = {

@@ -103,10 +103,10 @@ async def main() -> None:
     async def watched_symbols() -> list[str]:
         return sorted((await _distinct_1min_tickers(engine)) | ibkr_set)
 
-    factory_kw = dict(
-        ibkr_symbols=IBKR_SYMBOLS, poll_symbols=poll_symbols,
-        watched_symbols=watched_symbols, cross_validator=xv,
-    )
+    factory_kw = {
+        "ibkr_symbols": IBKR_SYMBOLS, "poll_symbols": poll_symbols,
+        "watched_symbols": watched_symbols, "cross_validator": xv,
+    }
 
     services: dict[str, _ServiceState] = {}
     svc_names = []

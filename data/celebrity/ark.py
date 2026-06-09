@@ -104,7 +104,7 @@ async def _fetch_fund_trades(
             logger.warning("  %s: HTTP %d", fund, resp.status_code)
             return []
         data = resp.json()
-        trades = data.get("trades") or data if isinstance(data, list) else data.get("trades", [])
+        trades = data if isinstance(data, list) else data.get("trades", [])
         if isinstance(trades, list):
             for t in trades:
                 t["fund"] = fund

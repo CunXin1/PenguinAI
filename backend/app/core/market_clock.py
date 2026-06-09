@@ -30,7 +30,11 @@ _nyse = xcals.get_calendar("XNYS")
 def is_regular_session(now_utc: datetime) -> bool:
     """True when `now_utc` falls inside an NYSE regular trading session,
     respecting all holidays, early closes, and special sessions."""
-    ts = pd.Timestamp(now_utc, tz="UTC") if now_utc.tzinfo is None else pd.Timestamp(now_utc).tz_convert("UTC")
+    ts = (
+        pd.Timestamp(now_utc, tz="UTC")
+        if now_utc.tzinfo is None
+        else pd.Timestamp(now_utc).tz_convert("UTC")
+    )
     if not _nyse.is_session(ts.normalize().tz_localize(None)):
         return False
     try:

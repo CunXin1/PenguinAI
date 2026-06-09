@@ -1,6 +1,6 @@
 """Module 5: tests for /api/tickers and /api/symbols endpoints."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -188,9 +188,7 @@ async def test_request_new_symbol(client: AsyncClient):
     assert data["status"] == "pending"
 
 
-async def test_request_already_covered_symbol(
-    client: AsyncClient, multiple_tickers: list[Ticker]
-):
+async def test_request_already_covered_symbol(client: AsyncClient, multiple_tickers: list[Ticker]):
     """POST /api/symbols/request for a covered ticker returns already_covered."""
     resp = await client.post("/api/symbols/request", json={"symbol": "AAPL"})
     assert resp.status_code == 200
@@ -205,17 +203,11 @@ async def test_request_already_covered_symbol(
 async def test_list_symbol_requests_non_admin_forbidden(
     client: AsyncClient, test_user: User, auth_headers
 ):
-    resp = await client.get(
-        "/api/symbols/requests", headers=auth_headers(test_user)
-    )
+    resp = await client.get("/api/symbols/requests", headers=auth_headers(test_user))
     assert resp.status_code == 403
 
 
-async def test_list_symbol_requests_admin_ok(
-    client: AsyncClient, admin_user: User, auth_headers
-):
-    resp = await client.get(
-        "/api/symbols/requests", headers=auth_headers(admin_user)
-    )
+async def test_list_symbol_requests_admin_ok(client: AsyncClient, admin_user: User, auth_headers):
+    resp = await client.get("/api/symbols/requests", headers=auth_headers(admin_user))
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)

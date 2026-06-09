@@ -112,7 +112,7 @@ class GemmaAgent:
         """Agent 2: call Gemma 4 with locked JSON output schema."""
         user_message = (
             f"Analyze the following financial signal data for {context['ticker']} "
-            f"and output a signal JSON:\n\n{json.dumps(context, indent=2)}"
+            f"and output a signal JSON:\n\n{json.dumps(context, indent=2, default=str)}"
         )
 
         last_exc: Exception | None = None

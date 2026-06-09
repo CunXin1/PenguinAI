@@ -70,9 +70,7 @@ async def request_symbol(
         symbol=symbol,
         status=row.status,
         request_count=row.request_count,
-        message=(
-            f"Thanks — we logged your request for {symbol} and will review adding it."
-        ),
+        message=(f"Thanks — we logged your request for {symbol} and will review adding it."),
     )
 
 

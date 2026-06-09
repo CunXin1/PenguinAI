@@ -36,8 +36,12 @@ from decimal import Decimal  # noqa: E402
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
-from sqlalchemy import DateTime, String, Text, TypeDecorator, event  # noqa: E402
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
+from sqlalchemy import DateTime, String, Text, TypeDecorator  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app.core.database import Base, get_db  # noqa: E402
@@ -59,17 +63,17 @@ _test_engine = create_async_engine(
     poolclass=StaticPool,
     connect_args={"check_same_thread": False},
 )
-_TestSessionLocal = async_sessionmaker(
-    _test_engine, class_=AsyncSession, expire_on_commit=False
-)
+_TestSessionLocal = async_sessionmaker(_test_engine, class_=AsyncSession, expire_on_commit=False)
 
 
 # ---------------------------------------------------------------------------
 # Patch PostgreSQL-specific column types so SQLite DDL works
 # ---------------------------------------------------------------------------
 
+
 class _JSONList(TypeDecorator):
     """Store Python lists as JSON text in SQLite (replaces PG ARRAY)."""
+
     impl = Text
     cache_ok = True
 
@@ -86,6 +90,7 @@ class _JSONList(TypeDecorator):
 
 class _TZDateTime(TypeDecorator):
     """Ensure datetimes read from SQLite are UTC-aware (PG does this natively)."""
+
     impl = DateTime
     cache_ok = True
 
@@ -138,6 +143,7 @@ async def _drop_tables() -> None:
 # Override FastAPI dependency
 # ---------------------------------------------------------------------------
 
+
 async def _override_get_db():
     async with _TestSessionLocal() as session:
         try:
@@ -154,6 +160,7 @@ app.dependency_overrides[get_db] = _override_get_db
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 async def _setup_teardown_tables():

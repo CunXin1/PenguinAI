@@ -39,7 +39,8 @@ def _to_holding(row) -> dict:
 @router.get("/stats/summary")
 async def get_stats(db: Annotated[AsyncSession, Depends(get_db)]):
     """Per-celebrity aggregate stats."""
-    rows = await db.execute(text("""
+    rows = await db.execute(
+        text("""
         SELECT celebrity,
                COUNT(*)                                    AS total_trades,
                COUNT(*) FILTER (WHERE action = 'BUY')     AS buys,
@@ -48,7 +49,8 @@ async def get_stats(db: Annotated[AsyncSession, Depends(get_db)]):
         FROM celebrity_holdings
         GROUP BY celebrity
         ORDER BY latest_trade DESC
-    """))
+    """)
+    )
     return [
         {
             "celebrity": r["celebrity"],

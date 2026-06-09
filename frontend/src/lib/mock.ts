@@ -273,28 +273,38 @@ export function mockSignalDetail(ticker: string): Signal {
 
 // ── Celebrity Holdings mock data ─────────────────────────────────────────────
 export const MOCK_CELEB_HOLDINGS: CelebrityHolding[] = [
+  // Buffett (13F)
   { id: "ch1", reported_at: "2026-05-15T00:00:00Z", celebrity: "buffett", ticker: "AAPL", ticker_name: "Apple Inc.", action: "HOLD", shares: 400_000_000, value_usd: 85_720_000_000, source_type: "13F", filing_url: null },
   { id: "ch2", reported_at: "2026-05-15T00:00:00Z", celebrity: "buffett", ticker: "BAC", ticker_name: "Bank of America", action: "BUY", shares: 1_032_852_006, value_usd: 44_012_000_000, source_type: "13F", filing_url: null },
   { id: "ch3", reported_at: "2026-05-15T00:00:00Z", celebrity: "buffett", ticker: "KO", ticker_name: "Coca-Cola Co.", action: "HOLD", shares: 400_000_000, value_usd: 25_200_000_000, source_type: "13F", filing_url: null },
-  { id: "ch4", reported_at: "2026-06-02T00:00:00Z", celebrity: "pelosi", ticker: "NVDA", ticker_name: "NVIDIA Corp.", action: "BUY", shares: null, value_usd: 5_000_000, source_type: "daily_disclosure", filing_url: null },
-  { id: "ch5", reported_at: "2026-06-01T00:00:00Z", celebrity: "pelosi", ticker: "GOOGL", ticker_name: "Alphabet Inc.", action: "BUY", shares: null, value_usd: 1_000_000, source_type: "daily_disclosure", filing_url: null },
-  { id: "ch6", reported_at: "2026-06-04T00:00:00Z", celebrity: "cathie_wood", ticker: "TSLA", ticker_name: "Tesla Inc.", action: "BUY", shares: 150_000, value_usd: null, source_type: "daily_disclosure", filing_url: null },
-  { id: "ch7", reported_at: "2026-06-04T00:00:00Z", celebrity: "cathie_wood", ticker: "PLTR", ticker_name: "Palantir Technologies", action: "BUY", shares: 500_000, value_usd: null, source_type: "daily_disclosure", filing_url: null },
-  { id: "ch8", reported_at: "2026-06-03T00:00:00Z", celebrity: "cathie_wood", ticker: "COIN", ticker_name: "Coinbase Global", action: "SELL", shares: 200_000, value_usd: null, source_type: "daily_disclosure", filing_url: null },
-  { id: "ch9", reported_at: "2026-06-03T00:00:00Z", celebrity: "cathie_wood", ticker: "ROKU", ticker_name: "Roku Inc.", action: "BUY", shares: 350_000, value_usd: null, source_type: "daily_disclosure", filing_url: null },
-  { id: "ch10", reported_at: "2026-05-15T00:00:00Z", celebrity: "soros", ticker: "AMZN", ticker_name: "Amazon.com Inc.", action: "BUY", shares: 2_000_000, value_usd: 372_600_000, source_type: "13F", filing_url: null },
-  { id: "ch11", reported_at: "2026-05-15T00:00:00Z", celebrity: "soros", ticker: "MSFT", ticker_name: "Microsoft Corp.", action: "SELL", shares: 500_000, value_usd: 226_050_000, source_type: "13F", filing_url: null },
-  { id: "ch12", reported_at: "2026-05-15T00:00:00Z", celebrity: "dalio", ticker: "SPY", ticker_name: "SPDR S&P 500 ETF", action: "SELL", shares: 1_500_000, value_usd: 795_000_000, source_type: "13F", filing_url: null },
-  { id: "ch13", reported_at: "2026-05-20T00:00:00Z", celebrity: "tuberville", ticker: "AAPL", ticker_name: "Apple Inc.", action: "BUY", shares: null, value_usd: 250_000, source_type: "daily_disclosure", filing_url: null },
-  { id: "ch14", reported_at: "2026-05-15T00:00:00Z", celebrity: "ackman", ticker: "QQQ", ticker_name: "Invesco QQQ Trust", action: "BUY", shares: 800_000, value_usd: 395_200_000, source_type: "13F", filing_url: null },
+  // Soros (13F)
+  { id: "ch4", reported_at: "2026-05-15T00:00:00Z", celebrity: "soros", ticker: "AMZN", ticker_name: "Amazon.com Inc.", action: "BUY", shares: 2_000_000, value_usd: 372_600_000, source_type: "13F", filing_url: null },
+  { id: "ch5", reported_at: "2026-05-15T00:00:00Z", celebrity: "soros", ticker: "MSFT", ticker_name: "Microsoft Corp.", action: "SELL", shares: 500_000, value_usd: 226_050_000, source_type: "13F", filing_url: null },
+  // Dalio (13F)
+  { id: "ch6", reported_at: "2026-05-15T00:00:00Z", celebrity: "dalio", ticker: "SPY", ticker_name: "SPDR S&P 500 ETF", action: "SELL", shares: 1_500_000, value_usd: 795_000_000, source_type: "13F", filing_url: null },
+  // Ackman (13F)
+  { id: "ch7", reported_at: "2026-05-15T00:00:00Z", celebrity: "ackman", ticker: "QQQ", ticker_name: "Invesco QQQ Trust", action: "BUY", shares: 800_000, value_usd: 395_200_000, source_type: "13F", filing_url: null },
+  // Cathie Wood (ARK)
+  { id: "ch8", reported_at: "2026-06-04T00:00:00Z", celebrity: "cathie_wood", ticker: "TSLA", ticker_name: "Tesla Inc.", action: "BUY", shares: 150_000, value_usd: null, source_type: "daily_disclosure", filing_url: null },
+  { id: "ch9", reported_at: "2026-06-04T00:00:00Z", celebrity: "cathie_wood", ticker: "PLTR", ticker_name: "Palantir Technologies", action: "BUY", shares: 500_000, value_usd: null, source_type: "daily_disclosure", filing_url: null },
+  { id: "ch10", reported_at: "2026-06-03T00:00:00Z", celebrity: "cathie_wood", ticker: "COIN", ticker_name: "Coinbase Global", action: "SELL", shares: 200_000, value_usd: null, source_type: "daily_disclosure", filing_url: null },
+  // Pelosi (Congress)
+  { id: "ch11", reported_at: "2026-06-02T00:00:00Z", celebrity: "pelosi", ticker: "NVDA", ticker_name: "NVIDIA Corp.", action: "BUY", shares: null, value_usd: 5_000_000, source_type: "daily_disclosure", filing_url: null },
+  // Tuberville (Congress)
+  { id: "ch12", reported_at: "2026-05-20T00:00:00Z", celebrity: "tuberville", ticker: "AAPL", ticker_name: "Apple Inc.", action: "BUY", shares: null, value_usd: 250_000, source_type: "daily_disclosure", filing_url: null },
+  // Trump (OGE disclosure)
+  { id: "ch13", reported_at: "2026-01-20T00:00:00Z", celebrity: "trump", ticker: "DJT", ticker_name: "Trump Media & Technology", action: "HOLD", shares: 114_750_000, value_usd: 3_500_000_000, source_type: "daily_disclosure", filing_url: null },
 ];
 
 export const MOCK_CELEB_STATS: CelebritySummary[] = [
-  { celebrity: "cathie_wood", total_trades: 156, buys: 92, sells: 64, latest_trade: "2026-06-04T00:00:00Z" },
-  { celebrity: "pelosi", total_trades: 18, buys: 14, sells: 4, latest_trade: "2026-06-02T00:00:00Z" },
   { celebrity: "buffett", total_trades: 24, buys: 8, sells: 4, latest_trade: "2026-05-15T00:00:00Z" },
   { celebrity: "soros", total_trades: 31, buys: 16, sells: 15, latest_trade: "2026-05-15T00:00:00Z" },
   { celebrity: "dalio", total_trades: 42, buys: 20, sells: 22, latest_trade: "2026-05-15T00:00:00Z" },
   { celebrity: "ackman", total_trades: 12, buys: 7, sells: 5, latest_trade: "2026-05-15T00:00:00Z" },
+  { celebrity: "cathie_wood", total_trades: 156, buys: 92, sells: 64, latest_trade: "2026-06-04T00:00:00Z" },
+  { celebrity: "pelosi", total_trades: 18, buys: 14, sells: 4, latest_trade: "2026-06-02T00:00:00Z" },
   { celebrity: "tuberville", total_trades: 8, buys: 6, sells: 2, latest_trade: "2026-05-20T00:00:00Z" },
+  { celebrity: "mtg", total_trades: 5, buys: 3, sells: 2, latest_trade: "2026-05-10T00:00:00Z" },
+  { celebrity: "crenshaw", total_trades: 6, buys: 4, sells: 2, latest_trade: "2026-05-08T00:00:00Z" },
+  { celebrity: "trump", total_trades: 1, buys: 0, sells: 0, latest_trade: "2026-01-20T00:00:00Z" },
 ];

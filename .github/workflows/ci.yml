@@ -3,17 +3,60 @@ name: CI
 on:
   push:
     branches: [main, dev]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/CODEOWNERS"
+      - ".github/pull_request_template.md"
   pull_request:
     branches: [main, dev]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/CODEOWNERS"
+      - ".github/pull_request_template.md"
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# ── Detect which directories changed ───────────────────────────────────────
 jobs:
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      ml: ${{ steps.filter.outputs.ml }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      docker: ${{ steps.filter.outputs.docker }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - 'db/schema/**'
+            ml:
+              - 'ml/**'
+              - 'data/**'
+              - 'scripts/**'
+            frontend:
+              - 'frontend/**'
+            docker:
+              - '**/Dockerfile'
+              - 'docker-compose.yml'
+              - 'nginx/**'
+
   # ── Backend: lint + type-check + tests ─────────────────────────────────────
   backend:
     name: Backend CI
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
 
     services:
@@ -81,6 +124,8 @@ jobs:
   # ── ML layer: lint only (no GPU in CI) ────────────────────────────────────
   ml-lint:
     name: ML Lint
+    needs: changes
+    if: needs.changes.outputs.ml == 'true'
     runs-on: ubuntu-latest
 
     defaults:
@@ -104,6 +149,8 @@ jobs:
   # ── Frontend: type-check + lint + build ───────────────────────────────────
   frontend:
     name: Frontend CI
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
 
     defaults:
@@ -136,9 +183,9 @@ jobs:
   # ── Docker: verify all images build ───────────────────────────────────────
   docker-build:
     name: Docker Build Check
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.docker == 'true'
     runs-on: ubuntu-latest
-    # Only run on PRs to main to avoid slowness on every push
-    if: github.event_name == 'pull_request'
 
     steps:
       - uses: actions/checkout@v4

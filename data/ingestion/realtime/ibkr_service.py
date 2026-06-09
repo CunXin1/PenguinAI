@@ -170,7 +170,7 @@ async def _heartbeat(ib) -> bool:
     try:
         await asyncio.wait_for(ib.reqCurrentTimeAsync(), timeout=_HEARTBEAT_TIMEOUT)
         return True
-    except (asyncio.TimeoutError, Exception):
+    except (TimeoutError, Exception):
         return False
 
 

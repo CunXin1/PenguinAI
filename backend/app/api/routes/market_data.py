@@ -39,7 +39,10 @@ async def market_status(response: Response, db: AsyncSession = Depends(get_db)):
 
     async with _get_status_lock():
         now_mono = time.monotonic()
-        if _status_cache["data"] is not None and (now_mono - _status_cache["ts"]) < _STATUS_CACHE_TTL:
+        if (
+            _status_cache["data"] is not None
+            and (now_mono - _status_cache["ts"]) < _STATUS_CACHE_TTL
+        ):
             response.headers["Cache-Control"] = "public, max-age=5"
             return _status_cache["data"]
         result = await get_market_status(db)
@@ -224,9 +227,9 @@ async def get_mini(
     #    (the latest bar's ET-session start). The correlated form (m.time >= a
     #    per-row LATERAL value) defeated chunk exclusion → a Merge-Append SkipScan
     #    over every chunk (~6s). A plain bind-param bound prunes to one chunk (~0.2s).
-    sess_start = latest_t.astimezone(ET).replace(
-        hour=0, minute=0, second=0, microsecond=0
-    ).astimezone(UTC)
+    sess_start = (
+        latest_t.astimezone(ET).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(UTC)
+    )
     spark_rows = await db.execute(
         text("""
             SELECT ticker, time_bucket(INTERVAL '5 minutes', time) AS b, last(close, time) AS c

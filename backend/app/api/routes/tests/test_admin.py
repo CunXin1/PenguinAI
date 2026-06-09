@@ -24,9 +24,7 @@ def _restore_db_override():
 async def test_pipeline_status_non_admin_forbidden(
     client: AsyncClient, test_user: User, auth_headers
 ):
-    resp = await client.get(
-        "/api/admin/pipeline/status", headers=auth_headers(test_user)
-    )
+    resp = await client.get("/api/admin/pipeline/status", headers=auth_headers(test_user))
     assert resp.status_code == 403
 
 
@@ -51,9 +49,7 @@ async def test_pipeline_status_admin_ok(
 
     app.dependency_overrides[get_db] = _override
 
-    resp = await client.get(
-        "/api/admin/pipeline/status", headers=auth_headers(admin_user)
-    )
+    resp = await client.get("/api/admin/pipeline/status", headers=auth_headers(admin_user))
     assert resp.status_code == 200
     data = resp.json()
     assert "db_stats" in data
@@ -62,9 +58,7 @@ async def test_pipeline_status_admin_ok(
 async def test_cache_refresh_non_admin_forbidden(
     client: AsyncClient, test_user: User, auth_headers
 ):
-    resp = await client.post(
-        "/api/admin/cache/refresh", headers=auth_headers(test_user)
-    )
+    resp = await client.post("/api/admin/cache/refresh", headers=auth_headers(test_user))
     assert resp.status_code == 403
 
 
@@ -75,9 +69,7 @@ async def test_cache_refresh_admin_triggers_celery(
         mock_app = MagicMock()
         MockCelery.return_value = mock_app
 
-        resp = await client.post(
-            "/api/admin/cache/refresh", headers=auth_headers(admin_user)
-        )
+        resp = await client.post("/api/admin/cache/refresh", headers=auth_headers(admin_user))
 
     assert resp.status_code == 200
     assert resp.json() == {"triggered": True}

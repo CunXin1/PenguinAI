@@ -15,9 +15,10 @@ RUN (repo root; needs MASSIVE_API_KEY in .env):
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 
 import httpx
@@ -218,10 +219,8 @@ async def fetch_google_news_rss(query: str = "stock market") -> list[dict]:
 
         published_at = None
         if pub_el is not None and pub_el.text:
-            try:
-                published_at = parsedate_to_datetime(pub_el.text).astimezone(timezone.utc)
-            except (ValueError, TypeError):
-                pass
+            with contextlib.suppress(ValueError, TypeError):
+                published_at = parsedate_to_datetime(pub_el.text).astimezone(UTC)
 
         articles.append({
             "title": title_el.text if title_el is not None else "",

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -40,7 +41,10 @@ class _SupervisorWatchdog:
     def __init__(self):
         self.proc: subprocess.Popen | None = None
         self.enabled = os.getenv("REALTIME_ENABLED", "true").strip().lower() not in (
-            "0", "false", "no", "off",
+            "0",
+            "false",
+            "no",
+            "off",
         )
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -55,7 +59,9 @@ class _SupervisorWatchdog:
             return
         self._spawn()
         if self.proc is not None:
-            self._thread = threading.Thread(target=self._watch_loop, daemon=True, name="sv-watchdog")
+            self._thread = threading.Thread(
+                target=self._watch_loop, daemon=True, name="sv-watchdog"
+            )
             self._thread.start()
 
     def stop(self) -> None:
@@ -107,10 +113,8 @@ class _SupervisorWatchdog:
                 continue
 
             line = b""
-            try:
+            with contextlib.suppress(Exception):
                 line = self.proc.stdout.readline()  # type: ignore[union-attr]
-            except Exception:  # noqa: BLE001
-                pass
 
             if line:
                 decoded = line.decode("utf-8", errors="replace").strip()
@@ -139,9 +143,11 @@ class _SupervisorWatchdog:
                     )
                     return
 
-                backoff = min(2 ** self._restart_count, 60)
+                backoff = min(2**self._restart_count, 60)
                 self._restart_count += 1
-                logger.info("restarting supervisor in %ds (attempt #%d)", backoff, self._restart_count)
+                logger.info(
+                    "restarting supervisor in %ds (attempt #%d)", backoff, self._restart_count
+                )
                 if self._stop.wait(backoff):
                     return
                 self._spawn()
@@ -152,6 +158,7 @@ _watchdog = _SupervisorWatchdog()
 
 async def _fetch_celebrity_holdings():
     """Run all three celebrity holdings ingestion tasks."""
+    db_url = settings.DATABASE_URL
     loaders = [
         ("congress", "data.celebrity.congress"),
         ("ark", "data.celebrity.ark"),
@@ -159,8 +166,14 @@ async def _fetch_celebrity_holdings():
     ]
     for name, module_path in loaders:
         try:
-            mod = __import__(module_path, fromlist=["run_default"])
-            count = await mod.run_default()
+            mod = __import__(module_path, fromlist=["run_loader"])
+            if name == "13f":
+                from data.celebrity.sec_13f import LoaderSettings
+
+                ua = LoaderSettings().SEC_USER_AGENT
+                count = await mod.run_loader(db_url, ua)
+            else:
+                count = await mod.run_loader(db_url)
             logger.info("celebrity/%s: upserted %d rows", name, count)
         except Exception:
             logger.warning("celebrity/%s: fetch failed", name, exc_info=True)
@@ -217,8 +230,10 @@ async def lifespan(app: FastAPI):
     _watchdog.start()
     _celeb_stop.clear()
     celeb_thread = threading.Thread(
-        target=_run_celebrity_scheduler, args=(_celeb_stop,),
-        daemon=True, name="celeb-fetch",
+        target=_run_celebrity_scheduler,
+        args=(_celeb_stop,),
+        daemon=True,
+        name="celeb-fetch",
     )
     celeb_thread.start()
     try:
@@ -253,7 +268,8 @@ app.include_router(watchlist.router, prefix="/api/watchlist", tags=["watchlist"]
 app.include_router(market_data.router, prefix="/api/market-data", tags=["market-data"])
 app.include_router(earnings.router, prefix="/api/earnings", tags=["earnings"])
 app.include_router(
-    celebrity_holdings.router, prefix="/api/celebrity-holdings",
+    celebrity_holdings.router,
+    prefix="/api/celebrity-holdings",
     tags=["celebrity-holdings"],
 )
 app.include_router(news.router, prefix="/api/news", tags=["news"])

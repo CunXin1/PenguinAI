@@ -174,7 +174,7 @@ async def run(
                     await asyncio.wait_for(stop.wait(), timeout=interval)
                 continue
             jitters = [random.uniform(0, interval * 0.3) for _ in batch]
-            res = await asyncio.gather(*(one(client, s, j) for s, j in zip(batch, jitters)))
+            res = await asyncio.gather(*(one(client, s, j) for s, j in zip(batch, jitters, strict=False)))
             total = sum(res)
             if total:
                 fb_total = sum(res[len(symbols):])
