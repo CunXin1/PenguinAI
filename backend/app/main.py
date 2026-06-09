@@ -230,6 +230,7 @@ _celeb_stop = threading.Event()
 _earnings_stop = threading.Event()
 _mcap_stop = threading.Event()
 _news_stop = threading.Event()
+_seed_stop = threading.Event()
 
 
 def _run_marketcap_scheduler(stop_event: threading.Event):
@@ -335,9 +336,23 @@ async def lifespan(app: FastAPI):
     except ImportError:
         logger.warning("data.news not available — news scheduler disabled")
 
+    # Seed critical market data if bars_30m is empty (checks DB → parquets → Massive API)
+    from app.core.seed_market_data import run_seed_thread
+
+    _seed_stop.clear()
+    seed_thread = threading.Thread(
+        target=run_seed_thread,
+        args=(_seed_stop,),
+        daemon=True,
+        name="seed-data",
+    )
+    seed_thread.start()
+
     try:
         yield
     finally:
+        _seed_stop.set()
+        seed_thread.join(timeout=5)
         _news_stop.set()
         if news_thread is not None:
             news_thread.join(timeout=5)

@@ -44,7 +44,7 @@ export default function NewsPage() {
     queryKey: ["hotNews"],
     queryFn: async () => {
       try {
-        const raw = await newsApi.hot(50);
+        const raw = await newsApi.hot(100);
         if (raw.length > 0) return raw.map(mapApiArticle);
       } catch { /* fall through */ }
       const raw = await newsApi.market();
@@ -65,10 +65,17 @@ export default function NewsPage() {
   });
 
   const isLoading = activeTicker ? tickerLoading : hotLoading;
-  const allNews = useMemo(
-    () => (activeTicker ? tickerArticles : hotArticles) ?? [],
-    [activeTicker, tickerArticles, hotArticles],
-  );
+  const allNews = useMemo(() => {
+    const raw = (activeTicker ? tickerArticles : hotArticles) ?? [];
+    if (activeTicker) return raw;
+    const maxPerTicker = Number(process.env.NEXT_PUBLIC_NEWS_MAX_PER_TICKER_FEED) || 3;
+    const perTicker: Record<string, number> = {};
+    return raw.filter((n) => {
+      const t = n.tickers?.[0] ?? "_none";
+      perTicker[t] = (perTicker[t] ?? 0) + 1;
+      return perTicker[t] <= maxPerTicker;
+    });
+  }, [activeTicker, tickerArticles, hotArticles]);
 
   const counts = useMemo(
     () => ({

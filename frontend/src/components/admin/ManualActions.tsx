@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Play, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
@@ -27,7 +27,13 @@ type ActionState = "idle" | "triggered" | "polling" | "success" | "failure";
 
 export function ManualActions() {
   const [states, setStates] = useState<Record<string, ActionState>>({});
-  const [taskIds, setTaskIds] = useState<Record<string, string>>({});
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const triggerMutation = useMutation({
     mutationFn: (action: string) => admin.triggerAction(action),
@@ -36,47 +42,56 @@ export function ManualActions() {
     },
     onSuccess: (data, action) => {
       if (data.task_id) {
-        setTaskIds((prev) => ({ ...prev, [action]: data.task_id! }));
         setStates((prev) => ({ ...prev, [action]: "polling" }));
         pollTask(action, data.task_id);
       } else {
         setStates((prev) => ({ ...prev, [action]: "success" }));
-        setTimeout(() => setStates((prev) => ({ ...prev, [action]: "idle" })), 5000);
+        setTimeout(() => {
+          if (mountedRef.current) setStates((prev) => ({ ...prev, [action]: "idle" }));
+        }, 5000);
       }
     },
     onError: (_, action) => {
       setStates((prev) => ({ ...prev, [action]: "failure" }));
-      setTimeout(() => setStates((prev) => ({ ...prev, [action]: "idle" })), 5000);
+      setTimeout(() => {
+        if (mountedRef.current) setStates((prev) => ({ ...prev, [action]: "idle" }));
+      }, 5000);
     },
   });
 
   async function pollTask(action: string, taskId: string) {
     for (let i = 0; i < 60; i++) {
+      if (!mountedRef.current) return;
       await new Promise((r) => setTimeout(r, 3000));
+      if (!mountedRef.current) return;
       try {
         const result = await admin.taskResult(taskId);
         if (result.status === "SUCCESS") {
-          setStates((prev) => ({ ...prev, [action]: "success" }));
-          setTimeout(() => setStates((prev) => ({ ...prev, [action]: "idle" })), 5000);
+          if (mountedRef.current) setStates((prev) => ({ ...prev, [action]: "success" }));
+          setTimeout(() => {
+            if (mountedRef.current) setStates((prev) => ({ ...prev, [action]: "idle" }));
+          }, 5000);
           return;
         }
         if (result.status === "FAILURE" || result.status === "REVOKED") {
-          setStates((prev) => ({ ...prev, [action]: "failure" }));
-          setTimeout(() => setStates((prev) => ({ ...prev, [action]: "idle" })), 5000);
+          if (mountedRef.current) setStates((prev) => ({ ...prev, [action]: "failure" }));
+          setTimeout(() => {
+            if (mountedRef.current) setStates((prev) => ({ ...prev, [action]: "idle" }));
+          }, 5000);
           return;
         }
       } catch {
         break;
       }
     }
-    setStates((prev) => ({ ...prev, [action]: "idle" }));
+    if (mountedRef.current) setStates((prev) => ({ ...prev, [action]: "idle" }));
   }
 
   return (
     <Card className="p-5 space-y-4">
       <div className="flex items-center gap-2">
-        <Play size={16} className="text-sky-400" />
-        <h2 className="text-sm font-semibold text-zinc-200">Manual Actions</h2>
+        <Play size={16} className="text-sky-500 dark:text-sky-400" />
+        <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Manual Actions</h2>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -94,34 +109,34 @@ export function ManualActions() {
                   ? "border-emerald-500/30 bg-emerald-500/5"
                   : state === "failure"
                     ? "border-red-500/30 bg-red-500/5"
-                    : "border-zinc-800 bg-zinc-900/40 hover:bg-zinc-800/60",
+                    : "border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 hover:bg-zinc-100 dark:hover:bg-zinc-800/60",
                 running && "opacity-70 cursor-wait"
               )}
             >
               {running ? (
-                <Loader2 size={14} className="text-sky-400 animate-spin shrink-0" />
+                <Loader2 size={14} className="text-sky-500 dark:text-sky-400 animate-spin shrink-0" />
               ) : (
                 <Play
                   size={14}
                   className={cn(
                     "shrink-0",
                     state === "success"
-                      ? "text-emerald-400"
+                      ? "text-emerald-500"
                       : state === "failure"
-                        ? "text-red-400"
-                        : "text-zinc-500"
+                        ? "text-red-500"
+                        : "text-zinc-400 dark:text-zinc-500"
                   )}
                 />
               )}
               <div className="min-w-0">
-                <p className="text-xs font-medium text-zinc-200">{action.label}</p>
+                <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200">{action.label}</p>
                 <p className="text-[10px] text-zinc-500 truncate">{action.description}</p>
               </div>
               {state === "success" && (
-                <span className="ml-auto text-[10px] text-emerald-400 shrink-0">Done</span>
+                <span className="ml-auto text-[10px] text-emerald-600 dark:text-emerald-400 shrink-0">Done</span>
               )}
               {state === "failure" && (
-                <span className="ml-auto text-[10px] text-red-400 shrink-0">Failed</span>
+                <span className="ml-auto text-[10px] text-red-600 dark:text-red-400 shrink-0">Failed</span>
               )}
             </button>
           );

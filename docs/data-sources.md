@@ -217,11 +217,28 @@ keyword-based hawk/dove scoring, consumed by
 `signal_engine._apply_macro_filter()`. The FOMC filter no-ops when the
 table is empty.
 
-### 7. News *(table only)*
+### 7. News *(live)*
 
-`news_articles` exists in the schema (with FinBERT score + embedding columns) but
-nothing populates it yet, and there is no `/api/news` endpoint — the frontend
-News pages run on mock data.
+**Files**: `data/news/ingest.py` (fetch + FinBERT score + store) · `data/news/scheduler.py`
+(lifespan thread) · `data/news/constants.py` (tier definitions)
+
+**Source priority**: Massive API (paid, primary) → Google News RSS (free, secondary)
+→ Finnhub REST (free tier, last resort — save quota for earnings/realtime).
+
+**Storage**: `news_articles` hypertable — one row per (article, ticker). Same article
+can have different `finbert_score` for different tickers (e.g. "Intel surges on
+Google order" is negative for NVDA, positive for INTC). FinBERT prepends the ticker
+to the headline before scoring.
+
+**Schedule**: Backend lifespan thread — full ingest on startup, then tier-1 (MAG7 +
+top ETFs, 12 tickers) every 15 min, tier-2 (remaining ~81 hot tickers) every 60 min.
+Cold tickers are fetched on-demand via the API, cached 10 min, not stored.
+
+**Retention**: TimescaleDB `drop_chunks` auto-prunes at 90 days. Per-ticker limit of
+20 articles per fetch to avoid bloat.
+
+**API**: `/api/news/market` (general feed), `/api/news/hot` (DB-backed), `/api/news/{ticker}`
+(hot=DB→fallback, cold=API-only). All return unified JSON with `sentiment` + `sentiment_score`.
 
 ### Data Quality Considerations
 

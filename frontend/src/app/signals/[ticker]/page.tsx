@@ -213,7 +213,7 @@ export default function SignalDetailPage({ params }: Props) {
           <NewsSentimentBar articles={tickerNews} />
 
           <div className="space-y-3">
-            {tickerNews.slice(0, 5).map((article: NewsApiArticle) => {
+            {tickerNews.slice(0, 6).map((article: NewsApiArticle) => {
               const sent = article.sentiment ?? "neutral";
               return (
                 <div key={article.id} className="flex items-start gap-2.5">

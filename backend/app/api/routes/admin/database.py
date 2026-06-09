@@ -8,17 +8,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_tier
 from app.core.database import engine
+from app.core.utils import human_size
 
 router = APIRouter()
 AdminUser = Depends(require_tier("ADMIN"))
-
-
-def _human_size(nbytes: int) -> str:
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if abs(nbytes) < 1024:
-            return f"{nbytes:.1f} {unit}"
-        nbytes /= 1024  # type: ignore[assignment]
-    return f"{nbytes:.1f} PB"
 
 
 # Tables we care about + their timestamp column (if any) for freshness
@@ -97,7 +90,7 @@ async def db_health(
                 "name": table_name,
                 "approx_rows": int(row["approx_rows"] or 0),
                 "size_bytes": size_bytes,
-                "size_human": _human_size(size_bytes),
+                "size_human": human_size(size_bytes),
                 "latest_ts": latest_ts.isoformat() if latest_ts else None,
             }
         )
@@ -111,5 +104,5 @@ async def db_health(
         "active_connections": active_connections,
         "tables": tables,
         "total_db_size_bytes": total_bytes,
-        "total_db_size_human": _human_size(total_bytes),
+        "total_db_size_human": human_size(total_bytes),
     }

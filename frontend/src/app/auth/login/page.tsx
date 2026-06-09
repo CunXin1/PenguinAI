@@ -92,7 +92,13 @@ export default function LoginPage() {
       if (mode === "register") {
         router.push("/auth/verify-pending");
       } else {
-        router.push("/");
+        // ADMIN users go straight to the admin dashboard
+        try {
+          const me = await auth.me();
+          router.push(me.tier === "ADMIN" ? "/admin" : "/");
+        } catch {
+          router.push("/");
+        }
       }
     } catch (err: any) {
       const detail = err?.data?.detail;

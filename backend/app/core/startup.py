@@ -324,8 +324,13 @@ async def check_bars_data() -> CheckResult:
         from app.core.database import AsyncSessionLocal
 
         async with AsyncSessionLocal() as db:
-            result = await db.execute(text("SELECT count(*) FROM bars_30m"))
-            bars_count = result.scalar_one()
+            result = await db.execute(
+                text(
+                    "SELECT GREATEST(reltuples, 0)::bigint FROM pg_class"
+                    " WHERE relname = 'bars_30m'"
+                )
+            )
+            bars_count = result.scalar_one_or_none() or 0
             result = await db.execute(text("SELECT count(*) FROM instruments"))
             instruments_count = result.scalar_one()
 
@@ -372,10 +377,16 @@ async def check_market_data_1min() -> CheckResult:
 
         async with AsyncSessionLocal() as db:
             result = await db.execute(
-                text("SELECT count(*), max(time) FROM market_data_1min")
+                text(
+                    "SELECT GREATEST(reltuples, 0)::bigint FROM pg_class"
+                    " WHERE relname = 'market_data_1min'"
+                )
             )
-            row = result.one()
-            count, latest = row[0], row[1]
+            count = result.scalar_one_or_none() or 0
+            latest = None
+            if count > 0:
+                result = await db.execute(text("SELECT max(time) FROM market_data_1min"))
+                latest = result.scalar_one()
 
         if count == 0:
             return CheckResult(
@@ -404,6 +415,107 @@ async def check_market_data_1min() -> CheckResult:
             blocking=False,
             status=CheckStatus.DEGRADED,
             message=f"market_data_1min check failed: {exc}",
+            duration_ms=(time.monotonic() - t0) * 1000,
+        )
+
+
+async def check_and_seed_admin() -> CheckResult:
+    """Ensure at least one ADMIN user exists. Create or sync from .env config."""
+    t0 = time.monotonic()
+    try:
+        import secrets
+
+        from app.core.config import settings
+        from app.core.database import AsyncSessionLocal
+        from app.core.security import hash_password, verify_password
+
+        email = settings.ADMIN_EMAIL
+        explicit_pw = settings.ADMIN_PASSWORD  # empty string if not set in .env
+
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                text("SELECT id, email, password_hash FROM users WHERE email = :email"),
+                {"email": email},
+            )
+            existing = result.first()
+
+        # Case 1: user exists with correct email
+        if existing is not None:
+            # If .env has an explicit password, make sure the hash matches
+            if explicit_pw and not verify_password(explicit_pw, existing.password_hash or ""):
+                pw_hash = hash_password(explicit_pw)
+                async with AsyncSessionLocal() as db:
+                    await db.execute(
+                        text(
+                            "UPDATE users SET password_hash = :pw_hash, tier = 'ADMIN', "
+                            "is_active = true, email_verified = true WHERE email = :email"
+                        ),
+                        {"pw_hash": pw_hash, "email": email},
+                    )
+                    await db.commit()
+                return CheckResult(
+                    name="admin_user",
+                    blocking=False,
+                    status=CheckStatus.HEALED,
+                    message=f"ADMIN password synced from .env: {email}",
+                    healed=True,
+                    duration_ms=(time.monotonic() - t0) * 1000,
+                )
+
+            # Ensure tier is ADMIN even if account was previously downgraded
+            async with AsyncSessionLocal() as db:
+                await db.execute(
+                    text(
+                        "UPDATE users SET tier = 'ADMIN', is_active = true, "
+                        "email_verified = true WHERE email = :email AND tier != 'ADMIN'"
+                    ),
+                    {"email": email},
+                )
+                await db.commit()
+
+            return CheckResult(
+                name="admin_user",
+                blocking=False,
+                status=CheckStatus.OK,
+                message=f"ADMIN user exists: {email}",
+                duration_ms=(time.monotonic() - t0) * 1000,
+            )
+
+        # Case 2: no user with this email — create one
+        password = explicit_pw or secrets.token_urlsafe(16)
+        pw_hash = hash_password(password)
+
+        async with AsyncSessionLocal() as db:
+            await db.execute(
+                text("""
+                    INSERT INTO users (email, password_hash, display_name, tier, is_active, email_verified)
+                    VALUES (:email, :pw_hash, 'Admin', 'ADMIN', true, true)
+                """),
+                {"email": email, "pw_hash": pw_hash},
+            )
+            await db.commit()
+
+        logger.warning("=" * 60)
+        logger.warning("ADMIN account created:")
+        logger.warning("  Email:    %s", email)
+        logger.warning("  Password: %s", password)
+        logger.warning("  *** Change this password immediately! ***")
+        logger.warning("=" * 60)
+
+        return CheckResult(
+            name="admin_user",
+            blocking=False,
+            status=CheckStatus.HEALED,
+            message=f"Created ADMIN user: {email}",
+            healed=True,
+            duration_ms=(time.monotonic() - t0) * 1000,
+        )
+    except Exception as exc:
+        return CheckResult(
+            name="admin_user",
+            blocking=False,
+            status=CheckStatus.DEGRADED,
+            message=f"Admin seed failed: {exc}",
             duration_ms=(time.monotonic() - t0) * 1000,
         )
 
@@ -444,6 +556,7 @@ async def run_startup_checks() -> StartupReport:
 
     non_blocking = [
         check_redis,
+        check_and_seed_admin,
         check_and_heal_signal_cache,
         check_bars_data,
         check_market_data_1min,

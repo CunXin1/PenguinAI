@@ -11,17 +11,17 @@ import type { SystemHealthOverview } from "@/lib/types";
 const BANNER: Record<string, { bg: string; text: string; label: string }> = {
   healthy: {
     bg: "bg-emerald-500/10 border-emerald-500/30",
-    text: "text-emerald-400",
+    text: "text-emerald-600 dark:text-emerald-400",
     label: "All Systems Operational",
   },
   degraded: {
     bg: "bg-amber-500/10 border-amber-500/30",
-    text: "text-amber-400",
+    text: "text-amber-600 dark:text-amber-400",
     label: "Degraded Performance",
   },
   critical: {
     bg: "bg-red-500/10 border-red-500/30",
-    text: "text-red-400",
+    text: "text-red-600 dark:text-red-400",
     label: "Critical — Action Required",
   },
 };
@@ -46,10 +46,10 @@ export function HealthOverview() {
   if (isLoading) {
     return (
       <Card className="p-5">
-        <div className="h-8 w-48 bg-zinc-800 rounded animate-pulse" />
+        <div className="h-8 w-48 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse" />
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
           {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="h-16 bg-zinc-800 rounded-lg animate-pulse" />
+            <div key={i} className="h-16 bg-zinc-200 dark:bg-zinc-800 rounded-lg animate-pulse" />
           ))}
         </div>
       </Card>
@@ -59,7 +59,7 @@ export function HealthOverview() {
   if (isError || !data) {
     return (
       <Card className="p-5 border-red-500/30">
-        <p className="text-red-400 text-sm">Failed to load system health</p>
+        <p className="text-red-500 dark:text-red-400 text-sm">Failed to load system health</p>
       </Card>
     );
   }
@@ -80,16 +80,16 @@ export function HealthOverview() {
         {data.services.map((svc) => (
           <div
             key={svc.name}
-            className="flex items-start gap-2.5 rounded-lg border border-zinc-800 bg-zinc-900/40 p-3"
+            className="flex items-start gap-2.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-3"
           >
             <StatusDot status={svc.status} className="mt-1" />
             <div className="min-w-0">
-              <p className="text-xs font-medium text-zinc-200 truncate">
+              <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200 truncate">
                 {DISPLAY_NAMES[svc.name] ?? svc.name}
               </p>
               <p className="text-[11px] text-zinc-500 truncate mt-0.5">{svc.detail}</p>
               {svc.latency_ms != null && (
-                <p className="text-[10px] text-zinc-600 mt-0.5">{svc.latency_ms}ms</p>
+                <p className="text-[10px] text-zinc-400 dark:text-zinc-600 mt-0.5">{svc.latency_ms}ms</p>
               )}
             </div>
           </div>

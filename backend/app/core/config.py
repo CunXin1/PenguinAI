@@ -105,6 +105,10 @@ class Settings(BaseSettings):
     GEMMA_API_KEY: str = ""
     FINBERT_MODEL: str = "ProsusAI/finbert"
 
+    # ── Admin seed ─────────────────────────────────────────────────
+    ADMIN_EMAIL: str = "admin@penguinai.com"
+    ADMIN_PASSWORD: str = ""  # auto-generated on first startup if empty
+
     # ── OAuth (future) ────────────────────────────────────────────
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""

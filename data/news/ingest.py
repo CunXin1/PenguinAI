@@ -1,15 +1,17 @@
 """Fetch news for hot tickers, score with FinBERT, store in news_articles hypertable.
 
+Source priority:
+  1. Massive API (paid) — primary, no artificial rate limit needed
+  2. Google News RSS     — free, no key, no sentiment, general market headlines
+  3. Finnhub REST        — FREE TIER, 60 req/min — last resort only (save quota for
+                           earnings, realtime, and other Finnhub-only features)
+
 One row per (article, ticker) — same article can have different FinBERT scores for
 different tickers because we prepend the ticker to the headline before scoring.
 
-Storage:
-  news_articles (hypertable):
-    time, ticker, headline, source, url, finbert_score, finbert_label, raw_metadata
-
 Dedup: ON CONFLICT on (time, id) — skips articles already stored for that ticker.
 
-RUN (repo root; needs MASSIVE_API_KEY or FINNHUB_API_KEY in .env):
+RUN (repo root):
     python -m data.news.ingest                  # one-shot, all hot tickers
     python -m data.news.ingest --tier 1          # tier-1 only
     python -m data.news.ingest --ticker NVDA     # single ticker
@@ -28,7 +30,7 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from data.news.constants import HOT_TICKERS_LIST, TIER1_TICKERS, TIER2_TICKERS
+from data.news.constants import HOT_TICKERS_LIST, MAX_ARTICLES_PER_TICKER, TIER1_TICKERS, TIER2_TICKERS
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("news.ingest")
@@ -123,32 +125,109 @@ def _extract_massive_sentiment(article: dict, ticker: str) -> tuple[str | None, 
     return None, None
 
 
+# ── Rate limiter ────────────────────────────────────────────────────────────
+
+class _RateLimiter:
+    """Simple async rate limiter — enforces minimum interval between calls."""
+
+    def __init__(self, calls_per_sec: float):
+        self._interval = 1.0 / calls_per_sec
+        self._last = 0.0
+
+    async def wait(self):
+        import time as _time
+        now = _time.monotonic()
+        gap = self._interval - (now - self._last)
+        if gap > 0:
+            await asyncio.sleep(gap)
+        self._last = _time.monotonic()
+
+
+# Massive paid: stress test showed 54+ req/min with zero throttling.
+# No artificial delay — network latency (~1s/call) is the natural limiter.
+_massive_limiter = None
+# Finnhub free: 60 req/min, use 25/min to leave headroom for the API route
+_finnhub_limiter = _RateLimiter(25.0 / 60.0)
+
+
 # ── Fetch helpers ───────────────────────────────────────────────────────────
 
 async def fetch_massive(
     client: httpx.AsyncClient, tickers: list[str], limit: int = 50
 ) -> list[dict]:
+    """Fetch news from Massive. Uses ticker.any_of for batches, ticker for single."""
     if not MASSIVE_API_KEY:
         return []
-    ticker_param = ",".join(tickers)
+    if _massive_limiter:
+        await _massive_limiter.wait()
+    if len(tickers) == 1:
+        params = {"ticker": tickers[0], "limit": limit}
+    else:
+        params = {"ticker.any_of": ",".join(tickers), "limit": limit}
     try:
         resp = await client.get(
             f"{MASSIVE_BASE_URL}/v2/reference/news",
-            params={"ticker": ticker_param, "limit": limit},
+            params=params,
             headers={"Authorization": f"Bearer {MASSIVE_API_KEY}"},
         )
+        if resp.status_code == 429:
+            logger.warning("Massive rate limited — backing off 30s")
+            await asyncio.sleep(30)
+            return []
         if resp.status_code != 200:
-            logger.warning("Massive %d for %s", resp.status_code, ticker_param)
+            logger.warning("Massive %d for %s", resp.status_code, ",".join(tickers))
             return []
         return (resp.json().get("results") or [])
     except Exception as exc:
-        logger.warning("Massive fetch failed for %s: %s", ticker_param, exc)
+        logger.warning("Massive fetch failed for %s: %s", ",".join(tickers), exc)
+        return []
+
+
+async def fetch_google_rss(client: httpx.AsyncClient, tickers: list[str], limit: int = 30) -> list[dict]:
+    """Fetch from Google News RSS. Free, no key, but no sentiment or ticker filtering."""
+    query = "+".join(f"{t}+stock" for t in tickers[:3])
+    url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+    try:
+        import xml.etree.ElementTree as ET
+        from email.utils import parsedate_to_datetime as _parse_rfc2822
+
+        resp = await client.get(url, timeout=10.0)
+        if resp.status_code != 200:
+            logger.warning("Google RSS %d for %s", resp.status_code, query)
+            return []
+        root = ET.fromstring(resp.text)
+        articles = []
+        for item_el in root.iter("item"):
+            title_el = item_el.find("title")
+            link_el = item_el.find("link")
+            source_el = item_el.find("source")
+            pub_el = item_el.find("pubDate")
+            pub_ts = None
+            if pub_el is not None and pub_el.text:
+                try:
+                    pub_ts = _parse_rfc2822(pub_el.text).isoformat()
+                except (ValueError, TypeError):
+                    pass
+            articles.append({
+                "title": title_el.text if title_el is not None else "",
+                "article_url": link_el.text if link_el is not None else "",
+                "published_utc": pub_ts,
+                "publisher": {"name": source_el.text if source_el is not None else "Google News"},
+                "tickers": [t.upper() for t in tickers],
+                "_source": "google",
+            })
+            if len(articles) >= limit:
+                break
+        return articles
+    except Exception as exc:
+        logger.warning("Google RSS fetch failed for %s: %s", query, exc)
         return []
 
 
 async def fetch_finnhub(client: httpx.AsyncClient, ticker: str, days: int = 7) -> list[dict]:
     if not FINNHUB_API_KEY:
         return []
+    await _finnhub_limiter.wait()
     today = datetime.now(UTC).date()
     from_date = today - timedelta(days=days)
     try:
@@ -161,6 +240,10 @@ async def fetch_finnhub(client: httpx.AsyncClient, ticker: str, days: int = 7) -
                 "token": FINNHUB_API_KEY,
             },
         )
+        if resp.status_code == 429:
+            logger.warning("Finnhub rate limited for %s — backing off", ticker)
+            await asyncio.sleep(10)
+            return []
         if resp.status_code != 200:
             return []
         items = resp.json()
@@ -199,6 +282,7 @@ def _article_time(article: dict) -> datetime | None:
             return _parse_ts(pub)
         except (ValueError, TypeError):
             pass
+    # Google RSS: published_utc is already ISO from our parser
     return None
 
 
@@ -253,6 +337,17 @@ _UPSERT_SQL = text("""
 
 _CHECK_URL_SQL = text("""
     SELECT 1 FROM news_articles WHERE url = :url AND ticker = :ticker LIMIT 1
+""")
+
+_PRUNE_SQL = text("""
+    DELETE FROM news_articles
+    WHERE ticker = :ticker
+      AND (time, id) NOT IN (
+          SELECT time, id FROM news_articles
+          WHERE ticker = :ticker
+          ORDER BY time DESC
+          LIMIT :keep
+      )
 """)
 
 
@@ -320,13 +415,20 @@ async def ingest_tickers(
 
             for i in range(0, len(tickers), _BATCH_SIZE):
                 batch = tickers[i:i + _BATCH_SIZE]
+
+                # Priority 1: Massive (paid, no rate limit concern)
                 articles = await fetch_massive(client, batch, limit=50)
 
+                # Priority 2: Google News RSS (free, no key)
                 if not articles:
-                    # Fallback: fetch individually from Finnhub
+                    articles = await fetch_google_rss(client, batch, limit=30)
+
+                # Priority 3: Finnhub (FREE tier — last resort, save quota)
+                if not articles:
                     for t in batch:
                         fh = await fetch_finnhub(client, t, days=7)
                         all_articles[t].extend(fh[:20])
+                    logger.info("Batch %s: Finnhub fallback", ",".join(batch))
                     continue
 
                 # Distribute articles to the tickers they mention
@@ -336,7 +438,8 @@ async def ingest_tickers(
                         if t.upper() in mentioned:
                             all_articles[t].append(article)
 
-                logger.info("Fetched %d articles for batch %s", len(articles), ",".join(batch))
+                src = "Massive" if articles and articles[0].get("_source") != "google" else "Google RSS"
+                logger.info("Fetched %d articles for batch %s via %s", len(articles), ",".join(batch), src)
 
             # Score + store per ticker
             for ticker, articles in all_articles.items():
@@ -352,6 +455,10 @@ async def ingest_tickers(
 
                 async with session_factory() as session:
                     n = await store_articles(session, articles, ticker, sentiments)
+                    # Prune excess — keep only the newest MAX_ARTICLES_PER_TICKER
+                    await session.execute(
+                        _PRUNE_SQL, {"ticker": ticker, "keep": MAX_ARTICLES_PER_TICKER}
+                    )
                     await session.commit()
                     if n > 0:
                         logger.info("%s: stored %d new articles", ticker, n)

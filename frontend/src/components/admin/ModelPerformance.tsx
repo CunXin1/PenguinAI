@@ -17,10 +17,10 @@ export function ModelPerformance() {
   if (isLoading || !data) {
     return (
       <Card className="p-5">
-        <div className="h-6 w-44 bg-zinc-800 rounded animate-pulse" />
+        <div className="h-6 w-44 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse" />
         <div className="mt-4 space-y-2">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-6 bg-zinc-800 rounded animate-pulse" />
+            <div key={i} className="h-6 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse" />
           ))}
         </div>
       </Card>
@@ -33,8 +33,8 @@ export function ModelPerformance() {
   return (
     <Card className="p-5 space-y-4">
       <div className="flex items-center gap-2">
-        <Brain size={16} className="text-sky-400" />
-        <h2 className="text-sm font-semibold text-zinc-200">Models</h2>
+        <Brain size={16} className="text-sky-500 dark:text-sky-400" />
+        <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Models</h2>
       </div>
 
       {/* Model files */}
@@ -42,9 +42,9 @@ export function ModelPerformance() {
         {data.models.map((m) => (
           <div
             key={m.name}
-            className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 flex-1 min-w-[140px]"
+            className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-3 flex-1 min-w-[140px]"
           >
-            <p className="text-xs font-medium text-zinc-200">{m.name}</p>
+            <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200">{m.name}</p>
             {m.exists ? (
               <>
                 <p className="text-[10px] text-zinc-500 mt-1">{m.size_human}</p>
@@ -53,7 +53,7 @@ export function ModelPerformance() {
                 )}
               </>
             ) : (
-              <p className="text-[10px] text-red-400 mt-1">not found</p>
+              <p className="text-[10px] text-red-500 dark:text-red-400 mt-1">not found</p>
             )}
           </div>
         ))}
@@ -71,20 +71,20 @@ export function ModelPerformance() {
                 className={cn(
                   "px-1.5 py-0.5 rounded text-[10px] font-semibold border",
                   dir === "LONG"
-                    ? "text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
+                    ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
                     : dir === "SHORT"
-                      ? "text-red-400 bg-red-500/10 border-red-500/30"
-                      : "text-zinc-400 bg-zinc-800 border-zinc-700"
+                      ? "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30"
+                      : "text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700"
                 )}
               >
                 {dir}
               </span>
-              <span className="text-zinc-400">{count}</span>
+              <span className="text-zinc-600 dark:text-zinc-400">{count}</span>
             </div>
           ))}
           {dist.avg_confidence != null && (
             <span className="text-zinc-500 ml-auto">
-              avg conf: <span className="text-zinc-300">{(dist.avg_confidence * 100).toFixed(1)}%</span>
+              avg conf: <span className="text-zinc-700 dark:text-zinc-300">{(dist.avg_confidence * 100).toFixed(1)}%</span>
             </span>
           )}
         </div>
@@ -99,10 +99,10 @@ export function ModelPerformance() {
           <div className="space-y-1">
             {Object.entries(data.feature_importance).map(([name, val]) => (
               <div key={name} className="flex items-center gap-2">
-                <span className="text-[10px] text-zinc-400 font-mono w-28 truncate shrink-0">
+                <span className="text-[10px] text-zinc-600 dark:text-zinc-400 font-mono w-28 truncate shrink-0">
                   {name}
                 </span>
-                <div className="flex-1 h-3 rounded bg-zinc-800 overflow-hidden">
+                <div className="flex-1 h-3 rounded bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
                   <div
                     className="h-full rounded bg-sky-500/60"
                     style={{ width: `${(val / maxImportance) * 100}%` }}

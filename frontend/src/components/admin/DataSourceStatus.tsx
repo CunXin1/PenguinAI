@@ -25,10 +25,10 @@ export function DataSourceStatus() {
   if (isLoading || !data) {
     return (
       <Card className="p-5">
-        <div className="h-6 w-48 bg-zinc-800 rounded animate-pulse" />
+        <div className="h-6 w-48 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse" />
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-20 bg-zinc-800 rounded-lg animate-pulse" />
+            <div key={i} className="h-20 bg-zinc-200 dark:bg-zinc-800 rounded-lg animate-pulse" />
           ))}
         </div>
       </Card>
@@ -38,8 +38,8 @@ export function DataSourceStatus() {
   return (
     <Card className="p-5 space-y-4">
       <div className="flex items-center gap-2">
-        <Radio size={16} className="text-sky-400" />
-        <h2 className="text-sm font-semibold text-zinc-200">Data Sources</h2>
+        <Radio size={16} className="text-sky-500 dark:text-sky-400" />
+        <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Data Sources</h2>
       </div>
 
       {/* Realtime sources */}
@@ -47,11 +47,11 @@ export function DataSourceStatus() {
         {data.realtime.map((src) => (
           <div
             key={src.name}
-            className="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3 space-y-1.5"
+            className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-3 space-y-1.5"
           >
             <div className="flex items-center gap-2">
               <StatusDot status={src.alive ? "healthy" : "down"} />
-              <span className="text-xs font-medium text-zinc-200">
+              <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200">
                 {DISPLAY_NAMES[src.name] ?? src.name}
               </span>
             </div>
@@ -61,7 +61,7 @@ export function DataSourceStatus() {
               </p>
             )}
             {src.restarts > 0 && (
-              <p className="text-[10px] text-amber-400">{src.restarts} restarts</p>
+              <p className="text-[10px] text-amber-600 dark:text-amber-400">{src.restarts} restarts</p>
             )}
           </div>
         ))}
@@ -74,9 +74,9 @@ export function DataSourceStatus() {
           {data.freshness.map((f) => (
             <div
               key={f.table}
-              className="flex items-center justify-between rounded border border-zinc-800/50 px-2.5 py-1.5"
+              className="flex items-center justify-between rounded border border-zinc-200 dark:border-zinc-800/50 px-2.5 py-1.5"
             >
-              <span className="text-[11px] text-zinc-400 font-mono">{f.table}</span>
+              <span className="text-[11px] text-zinc-600 dark:text-zinc-400 font-mono">{f.table}</span>
               <span className="text-[10px] text-zinc-500">
                 {f.latest_ts ? timeAgo(f.latest_ts) : "—"}
               </span>
@@ -90,7 +90,7 @@ export function DataSourceStatus() {
         <div className="flex gap-4 text-[11px] text-zinc-500">
           {Object.entries(data.coverage).map(([key, val]) => (
             <span key={key}>
-              <span className="text-zinc-300 font-mono">{val}</span>{" "}
+              <span className="text-zinc-700 dark:text-zinc-300 font-mono">{val}</span>{" "}
               {key.replace(/_/g, " ")}
             </span>
           ))}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
 from fastapi import APIRouter, Depends
@@ -47,15 +48,14 @@ _BEAT_SCHEDULE = [
 @router.get("/status")
 async def task_status(_=AdminUser):
     """Celery task history, queue depths, and worker info."""
-    import redis as sync_redis
-    from celery import Celery
+    import redis.asyncio as aioredis
 
-    r = sync_redis.from_url(settings.REDIS_URL, decode_responses=True, socket_timeout=2)
+    r = aioredis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=2)
 
     # 1. Scheduled task last-run info from Redis hash
     scheduled_tasks = []
     for entry in _BEAT_SCHEDULE:
-        raw = r.hget("admin:task_runs", entry["task"])
+        raw = await r.hget("admin:task_runs", entry["task"])
         run_info: dict = json.loads(raw) if raw else {}
         scheduled_tasks.append(
             {
@@ -71,22 +71,28 @@ async def task_status(_=AdminUser):
     # 2. Queue depths (Celery with Redis broker stores queues as Redis lists)
     queues = []
     for q_name in ("default", "ml_inference"):
-        pending = r.llen(q_name) or 0
+        pending = await r.llen(q_name) or 0
         queues.append({"name": q_name, "pending": pending})
 
-    # 3. Worker info via Celery inspect
+    await r.aclose()
+
+    # 3. Worker info via Celery inspect (synchronous — run in thread)
     workers = []
     try:
-        cel = Celery(broker=settings.REDIS_URL)
-        inspector = cel.control.inspect(timeout=2.0)
-        ping_resp = inspector.ping() or {}
-        active_resp = inspector.active() or {}
-        stats_resp = inspector.stats() or {}
+        from celery import Celery
+
+        def _inspect_workers():
+            cel = Celery(broker=settings.REDIS_URL)
+            inspector = cel.control.inspect(timeout=2.0)
+            return inspector.ping() or {}, inspector.active() or {}, inspector.stats() or {}
+
+        ping_resp, active_resp, stats_resp = await asyncio.to_thread(_inspect_workers)
 
         for worker_name in ping_resp:
             stats = stats_resp.get(worker_name, {})
             active = active_resp.get(worker_name, [])
             pool_info = stats.get("pool", {})
+            total_processed = stats.get("total", {})
             worker_queues = [
                 q.get("name", "?")
                 for q in (stats.get("consumer", {}).get("queues", []) or [])
@@ -96,11 +102,7 @@ async def task_status(_=AdminUser):
                     "name": worker_name,
                     "status": "online",
                     "active_tasks": len(active),
-                    "processed": stats.get("total", {}).get(
-                        "ml.tasks.hourly_signal_cache.refresh_top100", 0
-                    )
-                    if not stats.get("total")
-                    else sum(stats.get("total", {}).values()),
+                    "processed": sum(total_processed.values()) if total_processed else 0,
                     "concurrency": pool_info.get("max-concurrency", 0),
                     "queues": worker_queues,
                 }
@@ -108,7 +110,6 @@ async def task_status(_=AdminUser):
     except Exception:
         pass
 
-    r.close()
     return {
         "scheduled_tasks": scheduled_tasks,
         "queues": queues,

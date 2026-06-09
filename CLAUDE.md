@@ -219,9 +219,10 @@ docs/admin-dashboard.md            — full admin dashboard documentation (中�
 | `fetch_fundamentals` | 8am ET weekdays | default |
 | `validate_symbol_requests` | Every 6h | default |
 
-The following are **not** in the Celery beat schedule — they run via backend lifespan threads (startup + daily). Celery tasks remain defined for manual invocation:
+The following are **not** in the Celery beat schedule — they run via backend lifespan threads (startup + periodic). Celery tasks remain defined for manual invocation:
 - **Earnings** (`fetch_earnings`): startup + 2×/weekday (08:00 ET pre-market, 18:00 ET post-market). See `docs/earnings.md`.
 - **Celebrity holdings** (`fetch_congress_trades`, `fetch_13f_filings`, `fetch_ark_trades`): startup + daily 19:00 ET.
+- **News** (`data.news.scheduler`): startup full ingest + tier-1 (MAG7 + top ETFs) every 15 min + tier-2 (rest) every 60 min. Source priority: Massive (paid) → Google News RSS (free) → Finnhub (free tier, last resort). FinBERT scores each headline per ticker.
 
 ## Data Sources
 
@@ -235,6 +236,9 @@ The following are **not** in the Celery beat schedule — they run via backend l
 | SEC EDGAR 13F/13D | Institutional holdings (Buffett, Soros, Dalio, Ackman) + Trump DJT | `data/celebrity/sec_13f.py` | ✅ live (daily auto-fetch) |
 | Quiver Quant | Congressional trades (Pelosi, Tuberville, MTG, Crenshaw) | `data/celebrity/congress.py` | ✅ live (daily auto-fetch) |
 | arkfunds.io | ARK Invest daily trades (Cathie Wood) | `data/celebrity/ark.py` | ✅ live (daily auto-fetch) |
+| Massive — news | Hot-ticker news headlines + sentiment | `data/news/ingest.py` → `news_articles` hypertable | ✅ live (startup + tiered periodic) |
+| Google News RSS | Free news fallback (no API key, no sentiment) | `data/news/ingest.py`, `backend/app/api/routes/news.py` | ✅ live (fallback) |
+| Finnhub — news | Company news (free tier, 60 req/min) | `data/news/ingest.py` (last resort only) | ✅ live (last resort) |
 | Twitter/X · Reddit | Social sentiment | `data/scrapers/*` (Playwright / PRAW) | 🚧 planned — not created |
 | Polygon.io | Historical minute bars (supplemental) | — | ❌ legacy (no loader; superseded by Massive) |
 

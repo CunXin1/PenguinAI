@@ -5,149 +5,145 @@
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Data Sources                             │
-│  Massive API (primary)  Google News RSS (secondary)  Finnhub    │
-│  - sentiment included   - free, no key               - backup   │
-│  - ticker filtering     - no sentiment               - 60/min   │
-│  - publisher details    - no ticker filter            - no sent. │
-└──────┬──────────────────────┬─────────────────────────┬─────────┘
-       │                      │                         │
-       ▼                      ▼                         ▼
-┌──────────────────────────────────────────────────────────────────┐
-│                     Backend (/api/news)                          │
-│  3-tier fallback: Massive → Google RSS → Finnhub                │
-│                                                                  │
-│  /market  → general feed (cached 5 min)                         │
-│  /hot     → DB-stored Nasdaq-100/ETF news (for ML)              │
-│  /{ticker}→ hot=DB, cold=on-demand Massive→Finnhub (cached 10m) │
-└──────────────────────┬───────────────────────────────────────────┘
-                       │
-       ┌───────────────┼───────────────┐
-       ▼               ▼               ▼
-  News Feed       Signal Detail    Dashboard
-  /news           /signals/[t]     NewsPreview
-  (full page)     (5 articles)     (5 articles)
+┌───────────────────────────────────────────────────────────────────────┐
+│                          Data Sources                                 │
+│  Massive API (PRIMARY)   Google News RSS (2nd)     Finnhub (BACKUP)  │
+│  - paid, no rate limit   - free, no key            - FREE tier       │
+│  - sentiment via insights- no sentiment            - 60 req/min      │
+│  - ticker.any_of batch   - no ticker filter        - save quota!     │
+└──────┬───────────────────────────┬──────────────────────────┬────────┘
+       │                          │                          │
+       ▼                          ▼                          ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│                     FinBERT Scorer (local, GPU)                       │
+│  Prepends ticker to headline: "NVDA: Intel surges..." → per-ticker   │
+│  sentiment. Batch=32 on 4090 → ~50ms/batch. Falls back to Massive    │
+│  insights if torch unavailable.                                      │
+└──────────────────────────┬────────────────────────────────────────────┘
+                           │
+                           ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│              news_articles (TimescaleDB hypertable)                   │
+│  One row per (article, ticker) — same URL can have different          │
+│  finbert_score for NVDA vs INTC. Auto-pruned at 90 days.            │
+└──────────────────────────┬────────────────────────────────────────────┘
+                           │
+       ┌───────────────────┼──────────────────┐
+       ▼                   ▼                  ▼
+  /api/news/hot      /api/news/{ticker}   /api/news/market
+  (DB → fallback)    (DB → fallback)      (Massive → Google → Finnhub)
 ```
 
-## Hot vs Cold Tickers
+## Source Priority
 
-| Tier | Tickers | Source | Storage | TTL | Use Case |
-|------|---------|--------|---------|-----|----------|
-| **Hot** | ~84 (Nasdaq-100 + key ETFs) | Massive API | `news_articles` table | Celery every 30 min | ML pipeline, dashboard, `/hot` endpoint |
-| **Cold** | Everything else | Massive → Finnhub | In-memory cache only | 10 min | On-demand `/news/{ticker}` requests |
+**Massive API** is the primary source (paid plan, stress-tested at 54+ req/min with zero throttling). **Google News RSS** is the free secondary (no API key, no sentiment, general headlines). **Finnhub REST** is last resort only — its free tier (60 req/min) is shared with earnings calendar, realtime WebSocket auth, and symbol validation.
 
-Hot ticker list is defined once in `data/news/constants.py` and imported by both the ingestion task and the API route.
+| Source | Cost | Rate Limit | Sentiment | Ticker Filter | When Used |
+|--------|------|-----------|-----------|---------------|-----------|
+| Massive | Paid | ~54+/min (tested) | insights[] | `ticker.any_of` batch | Always first |
+| Google RSS | Free | None | No | Query-based only | Massive down |
+| Finnhub | Free tier | 60/min (shared!) | No | Per-ticker only | Both above fail |
+
+## Fetch Tiers
+
+| Tier | Tickers | Count | Interval | Use Case |
+|------|---------|-------|----------|----------|
+| **Tier-1** | MAG7 + SPY/QQQ/DIA/IWM/SOXX | 12 | Every 15 min | Most-viewed stocks, need freshest data |
+| **Tier-2** | Rest of Nasdaq-100 + key ETFs | ~81 | Every 60 min | Broad coverage, less time-sensitive |
+| **Cold** | Everything else | ∞ | On-demand | User clicks → API fetch → cache 10 min, no DB |
+
+Tier definitions: `data/news/constants.py`
 
 ## Database Schema
 
 ```sql
--- db/schema/03_relational.sql
+-- db/schema/02_timeseries.sql (actual running schema)
 CREATE TABLE news_articles (
-    id              TEXT        PRIMARY KEY,   -- "massive:12345" or "finnhub:67890"
-    source_provider TEXT        NOT NULL,      -- massive | finnhub | google
-    source_id       TEXT        NOT NULL,      -- original ID from provider
-    headline        TEXT        NOT NULL,
-    summary         TEXT,
-    article_url     TEXT,
-    image_url       TEXT,
-    author          TEXT,
-    publisher_name  TEXT,
-    published_at    TIMESTAMPTZ NOT NULL,
-    tickers         TEXT[]      DEFAULT '{}',  -- related tickers
-    category        TEXT        DEFAULT 'general',
-    sentiment       TEXT,                      -- positive | negative | neutral
-    sentiment_score NUMERIC(5,4),              -- -1.0 to 1.0 (for ML features)
-    sentiment_reasoning TEXT,                  -- Massive insight text
-    is_hot          BOOLEAN     NOT NULL DEFAULT FALSE,
-    fetched_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id            UUID            NOT NULL DEFAULT uuid_generate_v4(),
+    time          TIMESTAMPTZ     NOT NULL,
+    ticker        TEXT,                        -- one row per (article, ticker) pair
+    headline      TEXT            NOT NULL,
+    source        TEXT,
+    url           TEXT,
+    finbert_score NUMERIC(5, 4),              -- -1.0 to 1.0 (ticker-specific)
+    finbert_label TEXT,                        -- positive | negative | neutral
+    embedding     VECTOR(384),
+    raw_metadata  JSONB,                       -- summary, image_url, insights, etc.
+    PRIMARY KEY (time, id)
 );
+-- Hypertable, auto-partitioned by time
+-- Retention policy: 90 days (auto drop_chunks)
 ```
 
 **Indexes:**
-- `published_at DESC` — time-range queries
-- GIN on `tickers` — array-contains filtering
-- Partial on `is_hot = TRUE, published_at DESC` — hot news dashboard
-- Partial on `sentiment IS NOT NULL` — ML feature queries
-- Unique on `(source_provider, source_id)` — deduplication
+- `(ticker, time DESC)` — per-ticker time-range queries
+- `(url)` — dedup lookups
+- `(url, ticker)` — per-ticker dedup
+- `(ticker, finbert_label)` partial — sentiment aggregation
+
+## Ingestion Pipeline
+
+### Scheduler (`data/news/scheduler.py`)
+
+Runs as a backend lifespan thread (same pattern as earnings, celebrity holdings):
+1. **Startup**: full ingest of all ~93 hot tickers
+2. **Every 15 min**: tier-1 (12 tickers)
+3. **Every 60 min**: tier-1 + tier-2 (all 93)
+
+### Ingest Flow (`data/news/ingest.py`)
+
+```
+For each batch of 10 tickers:
+  1. fetch_massive(batch, limit=50)          # ticker.any_of=NVDA,AAPL,...
+     └─ if empty → fetch_google_rss(batch)   # free fallback
+        └─ if empty → fetch_finnhub(each)    # last resort, rate-limited 25/min
+  2. Distribute articles to tickers they mention
+  3. FinBERT score each headline per ticker:
+     "NVDA: Intel Surges on Google Foundry Order" → negative for NVDA
+     "INTC: Intel Surges on Google Foundry Order" → positive for INTC
+  4. Upsert into news_articles (dedup by url+ticker)
+```
+
+### CLI
+
+```bash
+python -m data.news.ingest                  # all hot tickers
+python -m data.news.ingest --tier 1         # tier-1 only (MAG7 + top ETFs)
+python -m data.news.ingest --tier 2         # tier-2 only
+python -m data.news.ingest --ticker NVDA    # single ticker
+python -m data.news.ingest --dry-run        # fetch + score, no DB write
+```
 
 ## API Endpoints
 
 ### `GET /api/news/market`
 
-General market news for the news feed page.
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `limit` | int | 30 | Max articles (1-100) |
-
-**Fallback chain:** Massive → Google News RSS → Finnhub → empty list.
-Cached in-memory for 5 minutes (always fetches 100 internally, slices on return).
+General market news. Fallback: Massive → Google RSS → Finnhub. Cached 5 min.
 
 ### `GET /api/news/hot`
 
-Pre-stored hot news from the DB. Used by dashboard and ML pipeline.
-
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `limit` | int | 50 | Max articles (1-200) |
-| `ticker` | str | null | Filter by ticker (uses `@>` array-contains) |
-
-Returns `is_hot = TRUE` articles from the last 7 days.
+DB-stored hot-ticker news. Falls back to API chain if DB empty. Cached 5 min.
 
 ### `GET /api/news/{ticker}`
 
-News for a specific ticker. Branches on hot vs cold:
+Per-ticker news. Hot tickers → DB first → API fallback. Cold → API only. Cached 10 min.
 
-| Param | Type | Default | Description |
-|-------|------|---------|-------------|
-| `days` | int | 7 | Lookback window (1-30) |
-| `limit` | int | 20 | Max articles (1-50) |
-
-- **Hot ticker** → queries `news_articles` table directly
-- **Cold ticker** → fetches on-demand (Massive → Finnhub), cached 10 min
-
-### Unified Response Shape
-
-All endpoints return the same article format:
+### Unified Response
 
 ```json
 {
-  "id": "massive:abc123",
+  "id": "c4902c3d-...",
   "headline": "Apple Beats Q2 Estimates",
-  "summary": "Apple reported...",
+  "summary": "...",
   "source": "CNBC",
-  "url": "https://cnbc.com/...",
-  "image": "https://image.cnbc.com/...",
+  "url": "https://...",
+  "image": "https://...",
   "datetime": 1717848000,
   "tickers": ["AAPL"],
   "category": "general",
   "sentiment": "positive",
-  "sentiment_score": 0.5
+  "sentiment_score": 0.93
 }
-```
-
-## Ingestion Pipeline
-
-### Celery Task: `refresh_hot_news`
-
-- **Schedule:** Every 30 minutes (`:15` and `:45`)
-- **Queue:** `default`
-- **Source:** Massive API (`/v2/reference/news?ticker=AAPL,MSFT,...&limit=50`)
-- **Process:**
-  1. Batch HOT_TICKERS in groups of 10
-  2. Fetch news from Massive with rate limiting (5 req/sec)
-  3. Extract sentiment from `insights[]` (prefer ticker-matched insight)
-  4. Map sentiment to score: positive=0.5, negative=-0.5, neutral=0.0
-  5. Deduplicate by article ID across batches
-  6. Upsert into `news_articles` (`ON CONFLICT` updates sentiment + `fetched_at`)
-
-### Manual Run
-
-```bash
-python -m data.news.ingest              # full run
-python -m data.news.ingest --dry-run    # print tickers only
-python -m data.news.ingest --google-rss # test Google RSS fallback
 ```
 
 ## File Structure
@@ -155,57 +151,24 @@ python -m data.news.ingest --google-rss # test Google RSS fallback
 ```
 data/news/
 ├── __init__.py
-├── constants.py          # HOT_TICKERS_LIST, HOT_TICKERS_SET (single source of truth)
-└── ingest.py             # fetch_hot_news(), fetch_google_news_rss(), CLI
+├── constants.py      # TIER1/TIER2 tickers, intervals (single source of truth)
+├── ingest.py         # fetch + FinBERT score + store (Massive → Google → Finnhub)
+└── scheduler.py      # lifespan thread: startup + tiered periodic
 
-backend/app/
-├── api/routes/news.py    # /market, /hot, /{ticker} endpoints
-└── models/news_article.py # SQLAlchemy model
+backend/app/api/routes/
+└── news.py           # /market, /hot, /{ticker} (DB → API fallback chain)
 
-ml/tasks/
-├── celery_app.py          # beat_schedule includes refresh-hot-news
-└── realtime_ingest.py     # refresh_hot_news Celery task wrapper
+ml/inference/
+└── finbert_scorer.py # FinBERTScorer singleton (ProsusAI/finbert, GPU)
 ```
-
-## Frontend Integration
-
-### News Feed Page (`/news`)
-
-- Fetches `GET /api/news/market` via React Query (5-min stale time)
-- Falls back to `MOCK_NEWS` if API unavailable
-- Real articles link externally (`target="_blank"` + ExternalLink icon)
-- Sentiment filter tabs (all/bullish/bearish/neutral)
-- Featured card with thumbnail image
-
-### Signal Detail Page (`/signals/[ticker]`)
-
-- Fetches `GET /api/news/{ticker}?days=7` via React Query
-- Shows up to 5 articles below the SignalCard
-- Only renders when view is "live" or "demo" and articles exist
-- Graceful — section hidden if no news
-
-### Dashboard Widget (NewsPreview)
-
-- Fetches `GET /api/news/market` via React Query (5-min stale time)
-- Shows 5 compact article rows with sentiment dots
-- Falls back to `MOCK_NEWS`
-
-## Fallback Behavior
-
-| Scenario | /market | /{hot_ticker} | /{cold_ticker} |
-|----------|---------|---------------|----------------|
-| Massive up | Massive articles + sentiment | DB (pre-fetched) | Massive on-demand |
-| Massive down | Google RSS (no sentiment) | DB (stale OK) | Finnhub on-demand |
-| All APIs down | Empty list | DB (stale OK) | Empty list |
-| Frontend: API fails | MOCK_NEWS fallback | Section hidden | Section hidden |
 
 ## Env Vars
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `MASSIVE_API_KEY` | For primary source | Massive API key (also used for minute data) |
+| `MASSIVE_API_KEY` | Yes (primary) | Massive paid plan — news, reference, market cap |
 | `MASSIVE_BASE_URL` | No | Default `https://api.massive.com` |
-| `FINNHUB_API_KEY` | For backup source | Finnhub API key (also used for earnings) |
+| `FINNHUB_API_KEY` | Recommended | Free tier — shared with earnings, realtime WS |
 | `FINNHUB_BASE_URL` | No | Default `https://finnhub.io/api/v1` |
 
-Neither key is strictly required — the system degrades gracefully. Google News RSS needs no key.
+Google News RSS needs no key. The system degrades gracefully if any source is unavailable.

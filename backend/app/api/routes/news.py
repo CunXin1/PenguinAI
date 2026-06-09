@@ -525,10 +525,14 @@ async def get_company_news(
     if cached is not None:
         return cached[:limit]
 
-    # Tier 1: Massive
+    # Tier 1: Massive (paid — primary)
     articles = await _fetch_massive_news(ticker=t, limit=limit)
 
-    # Tier 2: Finnhub
+    # Tier 2: Google News RSS (free — no sentiment but zero cost)
+    if articles is None:
+        articles = await _fetch_google_rss(query=f"{t} stock", limit=limit)
+
+    # Tier 3: Finnhub (free tier — last resort, save quota for earnings/realtime)
     if articles is None:
         articles = await _fetch_finnhub_news(ticker=t, limit=limit)
 

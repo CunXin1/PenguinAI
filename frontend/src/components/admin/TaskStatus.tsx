@@ -9,9 +9,9 @@ import { cn, timeAgo } from "@/lib/utils";
 import type { AdminTaskStatus } from "@/lib/types";
 
 const STATUS_BADGE: Record<string, string> = {
-  SUCCESS: "text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
-  FAILURE: "text-red-400 bg-red-500/10 border-red-500/30",
-  RUNNING: "text-sky-400 bg-sky-500/10 border-sky-500/30",
+  SUCCESS: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
+  FAILURE: "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30",
+  RUNNING: "text-sky-600 dark:text-sky-400 bg-sky-500/10 border-sky-500/30",
 };
 
 export function TaskStatus() {
@@ -24,10 +24,10 @@ export function TaskStatus() {
   if (isLoading || !data) {
     return (
       <Card className="p-5">
-        <div className="h-6 w-40 bg-zinc-800 rounded animate-pulse" />
+        <div className="h-6 w-40 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse" />
         <div className="mt-4 space-y-2">
           {Array.from({ length: 5 }).map((_, i) => (
-            <div key={i} className="h-8 bg-zinc-800 rounded animate-pulse" />
+            <div key={i} className="h-8 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse" />
           ))}
         </div>
       </Card>
@@ -37,8 +37,8 @@ export function TaskStatus() {
   return (
     <Card className="p-5 space-y-4">
       <div className="flex items-center gap-2">
-        <ListChecks size={16} className="text-sky-400" />
-        <h2 className="text-sm font-semibold text-zinc-200">Tasks & Workers</h2>
+        <ListChecks size={16} className="text-sky-500 dark:text-sky-400" />
+        <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">Tasks & Workers</h2>
       </div>
 
       {/* Queue depths */}
@@ -46,9 +46,9 @@ export function TaskStatus() {
         {data.queues.map((q) => (
           <div
             key={q.name}
-            className="flex-1 rounded-lg border border-zinc-800 bg-zinc-900/40 p-2.5 text-center"
+            className="flex-1 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-2.5 text-center"
           >
-            <p className="text-lg font-bold font-mono text-zinc-200">{q.pending}</p>
+            <p className="text-lg font-bold font-mono text-zinc-800 dark:text-zinc-200">{q.pending}</p>
             <p className="text-[10px] text-zinc-500 uppercase tracking-wider">{q.name} queue</p>
           </div>
         ))}
@@ -60,11 +60,11 @@ export function TaskStatus() {
           {data.workers.map((w) => (
             <div
               key={w.name}
-              className="flex items-center gap-1.5 rounded-lg border border-zinc-800 bg-zinc-900/40 px-2.5 py-1.5 text-[11px]"
+              className="flex items-center gap-1.5 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 px-2.5 py-1.5 text-[11px]"
             >
               <StatusDot status={w.status} />
-              <span className="text-zinc-300 font-mono">{w.name.split("@").pop()}</span>
-              <span className="text-zinc-600">·</span>
+              <span className="text-zinc-700 dark:text-zinc-300 font-mono">{w.name.split("@").pop()}</span>
+              <span className="text-zinc-300 dark:text-zinc-600">·</span>
               <span className="text-zinc-500">{w.active_tasks} active</span>
             </div>
           ))}
@@ -75,7 +75,7 @@ export function TaskStatus() {
       <div className="overflow-x-auto">
         <table className="w-full text-[11px]">
           <thead>
-            <tr className="text-zinc-500 border-b border-zinc-800">
+            <tr className="text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
               <th className="text-left py-1.5 font-medium">Task</th>
               <th className="text-left py-1.5 font-medium">Schedule</th>
               <th className="text-right py-1.5 font-medium">Last Run</th>
@@ -84,10 +84,10 @@ export function TaskStatus() {
           </thead>
           <tbody>
             {data.scheduled_tasks.map((t) => (
-              <tr key={t.name} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
-                <td className="py-1.5 text-zinc-300 font-mono">{t.name}</td>
+              <tr key={t.name} className="border-b border-zinc-100 dark:border-zinc-800/50 hover:bg-zinc-50 dark:hover:bg-zinc-800/30">
+                <td className="py-1.5 text-zinc-700 dark:text-zinc-300 font-mono">{t.name}</td>
                 <td className="py-1.5 text-zinc-500">{t.schedule}</td>
-                <td className="py-1.5 text-right text-zinc-400">
+                <td className="py-1.5 text-right text-zinc-500 dark:text-zinc-400">
                   {t.last_run ? timeAgo(t.last_run) : "—"}
                 </td>
                 <td className="py-1.5 text-right">
@@ -95,13 +95,13 @@ export function TaskStatus() {
                     <span
                       className={cn(
                         "px-1.5 py-0.5 rounded text-[10px] font-semibold border",
-                        STATUS_BADGE[t.last_status] ?? "text-zinc-400 bg-zinc-800 border-zinc-700"
+                        STATUS_BADGE[t.last_status] ?? "text-zinc-500 dark:text-zinc-400 bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700"
                       )}
                     >
                       {t.last_status}
                     </span>
                   ) : (
-                    <span className="text-zinc-600">—</span>
+                    <span className="text-zinc-300 dark:text-zinc-600">—</span>
                   )}
                 </td>
               </tr>

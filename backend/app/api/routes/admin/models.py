@@ -9,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_tier
+from app.core.utils import human_size
 
 router = APIRouter()
 AdminUser = Depends(require_tier("ADMIN"))
@@ -18,14 +19,6 @@ _MODEL_FILES = [
     ("xgboost", "xgboost_prod.pkl"),
     ("random_forest", "rf_prod.pkl"),
 ]
-
-
-def _human_size(nbytes: int) -> str:
-    for unit in ("B", "KB", "MB", "GB"):
-        if abs(nbytes) < 1024:
-            return f"{nbytes:.1f} {unit}"
-        nbytes /= 1024  # type: ignore[assignment]
-    return f"{nbytes:.1f} TB"
 
 
 @router.get("/performance")
@@ -49,7 +42,7 @@ async def model_performance(
         if path.exists():
             stat = path.stat()
             entry["size_bytes"] = stat.st_size
-            entry["size_human"] = _human_size(stat.st_size)
+            entry["size_human"] = human_size(stat.st_size)
             entry["last_modified"] = datetime.fromtimestamp(
                 stat.st_mtime, tz=UTC
             ).isoformat()
