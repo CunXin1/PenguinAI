@@ -7,16 +7,16 @@ export interface CelebrityMeta {
 }
 
 export const CELEBRITIES: Record<string, CelebrityMeta> = {
-  buffett: { slug: "buffett", name: "Warren Buffett", title: "Berkshire Hathaway", avatar: "WB", image: "/avatars/buffett.webp" },
-  soros: { slug: "soros", name: "George Soros", title: "Soros Fund Management", avatar: "GS", image: "/avatars/soros.webp" },
-  dalio: { slug: "dalio", name: "Ray Dalio", title: "Bridgewater Associates", avatar: "RD", image: "/avatars/dalio.webp" },
-  ackman: { slug: "ackman", name: "Bill Ackman", title: "Pershing Square", avatar: "BA", image: "/avatars/ackman.webp" },
-  cathie_wood: { slug: "cathie_wood", name: "Cathie Wood", title: "ARK Invest", avatar: "CW", image: "/avatars/cathie_wood.webp" },
-  pelosi: { slug: "pelosi", name: "Nancy Pelosi", title: "U.S. House Speaker", avatar: "NP", image: "/avatars/pelosi.webp" },
-  tuberville: { slug: "tuberville", name: "Tommy Tuberville", title: "U.S. Senate", avatar: "TT", image: "/avatars/tuberville.webp" },
-  mtg: { slug: "mtg", name: "Marjorie Taylor Greene", title: "U.S. House", avatar: "MG", image: "/avatars/mtg.webp" },
-  crenshaw: { slug: "crenshaw", name: "Dan Crenshaw", title: "U.S. House", avatar: "DC", image: "/avatars/crenshaw.webp" },
-  trump: { slug: "trump", name: "Donald Trump", title: "U.S. President", avatar: "DT", image: "/avatars/trump.webp" },
+  buffett: { slug: "buffett", name: "Warren Buffett", title: "Berkshire Hathaway", avatar: "WB", image: "/avatars/buffett.webp?v=2" },
+  soros: { slug: "soros", name: "George Soros", title: "Soros Fund Management", avatar: "GS", image: "/avatars/soros.webp?v=2" },
+  dalio: { slug: "dalio", name: "Ray Dalio", title: "Bridgewater Associates", avatar: "RD", image: "/avatars/dalio.webp?v=2" },
+  ackman: { slug: "ackman", name: "Bill Ackman", title: "Pershing Square", avatar: "BA", image: "/avatars/ackman.webp?v=2" },
+  cathie_wood: { slug: "cathie_wood", name: "Cathie Wood", title: "ARK Invest", avatar: "CW", image: "/avatars/cathie_wood.webp?v=2" },
+  pelosi: { slug: "pelosi", name: "Nancy Pelosi", title: "U.S. House Speaker", avatar: "NP", image: "/avatars/pelosi.webp?v=2" },
+  tuberville: { slug: "tuberville", name: "Tommy Tuberville", title: "U.S. Senate", avatar: "TT", image: "/avatars/tuberville.webp?v=2" },
+  mtg: { slug: "mtg", name: "Marjorie Taylor Greene", title: "U.S. House", avatar: "MG", image: "/avatars/mtg.webp?v=2" },
+  crenshaw: { slug: "crenshaw", name: "Dan Crenshaw", title: "U.S. House", avatar: "DC", image: "/avatars/crenshaw.webp?v=2" },
+  trump: { slug: "trump", name: "Donald Trump", title: "U.S. President", avatar: "DT", image: "/avatars/trump.webp?v=2" },
 };
 
 const AVATAR_COLORS = [

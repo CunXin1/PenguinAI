@@ -208,7 +208,7 @@ export const marketData = {
 
   /** Range-bucketed OHLC series (server-aggregated from 1-min bars). Powers PriceChart. */
   series: (ticker: string, range: ChartRange = "1W") =>
-    apiFetch<{ ticker: string; range: ChartRange; bars: CandleBar[] }>(
+    apiFetch<{ ticker: string; range: ChartRange; bars: CandleBar[]; prev_close: number | null }>(
       `/market-data/${ticker.toUpperCase()}/series?range=${range}`
     ),
 

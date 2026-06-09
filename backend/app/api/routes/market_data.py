@@ -393,7 +393,25 @@ async def get_series(
             logging.getLogger(__name__).warning("series fallback failed for %s/%s: %s", tkr, rng, exc)
             bars = []
 
-    return {"ticker": tkr, "range": rng, "bars": bars}
+    prev_close: float | None = None
+    try:
+        row = (await db.execute(
+            text("""
+                SELECT adj_close FROM bars_1d
+                WHERE instrument_id = (
+                    SELECT instrument_id FROM instruments
+                    WHERE symbol = :ticker ORDER BY instrument_id LIMIT 1
+                )
+                ORDER BY ts DESC LIMIT 1
+            """),
+            {"ticker": tkr},
+        )).mappings().first()
+        if row:
+            prev_close = float(row["adj_close"])
+    except Exception:
+        pass
+
+    return {"ticker": tkr, "range": rng, "bars": bars, "prev_close": prev_close}
 
 
 # period → return-horizon column in bars_1d (1D handled live; rest are stored returns)

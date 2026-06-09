@@ -47,15 +47,23 @@ const REFRESH_MS = 15_000;
 // and they don't refetch on every visit.
 const DAILY_STALE_MS = 5 * 60_000;
 
+interface SeriesData {
+  bars: CandleBar[];
+  prev_close: number | null;
+}
+
 /** Shared query config for one range — used by both useQuery and the prefetch warm-up. */
 function seriesQuery(ticker: string, range: ChartRange) {
   return {
     queryKey: ["series", ticker, range] as const,
-    queryFn: async () => {
+    queryFn: async (): Promise<SeriesData> => {
       const res = await marketData.series(ticker, range);
-      return (res?.bars ?? []).filter(
-        (b) => Number.isFinite(b.time) && Number.isFinite(b.close)
-      );
+      return {
+        bars: (res?.bars ?? []).filter(
+          (b) => Number.isFinite(b.time) && Number.isFinite(b.close)
+        ),
+        prev_close: res?.prev_close ?? null,
+      };
     },
   };
 }
@@ -83,7 +91,7 @@ export function PriceChart({
 
   // Real data only — server-aggregated OHLC from the 1-min store. No mock fallback:
   // an empty result renders an explicit empty state instead of fake bars.
-  const { data, isLoading, isError } = useQuery<CandleBar[]>({
+  const { data, isLoading, isError } = useQuery<SeriesData>({
     ...seriesQuery(T, range),
     // Poll the live minute store only while the market is open AND the range is
     // intraday; otherwise the bars are frozen at the last close, so don't refetch.
@@ -106,11 +114,12 @@ export function PriceChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [T]);
 
-  const bars = data ?? [];
+  const bars = data?.bars ?? [];
+  const prevClose = data?.prev_close ?? null;
   const hasData = bars.length > 0;
   const last = bars[bars.length - 1]?.close ?? 0;
-  const first = bars[0]?.open ?? last;
-  const chg = first ? ((last - first) / first) * 100 : 0;
+  const base = prevClose ?? bars[0]?.open ?? last;
+  const chg = base ? ((last - base) / base) * 100 : 0;
   const up = chg >= 0;
   // Live only when the market is actually open and we're on an intraday range;
   // daily ranges are historical, and a closed market shows the last close frozen.
