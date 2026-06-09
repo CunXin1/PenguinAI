@@ -34,6 +34,54 @@ def fetch_earnings(days_back: int = 7, days_ahead: int = 30):
         logger.warning("earnings fetch skipped: %s", exc)
 
 
+@celery_app.task(name="ml.tasks.realtime_ingest.refresh_hot_news", queue="default")
+def refresh_hot_news():
+    """Fetch news for Nasdaq-100 + key ETFs from Massive and store in DB."""
+    from data.news.ingest import fetch_hot_news
+
+    try:
+        count = asyncio.run(fetch_hot_news())
+        logger.info("Hot news refresh: %d new articles", count)
+    except Exception as exc:
+        logger.warning("Hot news refresh failed: %s", exc)
+
+
+@celery_app.task(name="ml.tasks.realtime_ingest.fetch_congress_trades", queue="default")
+def fetch_congress_trades():
+    """Pull congressional stock transactions (House + Senate Stock Watcher)."""
+    from data.celebrity.congress import run_default
+
+    logger.info("Fetching congressional trades")
+    try:
+        asyncio.run(run_default())
+    except RuntimeError as exc:
+        logger.warning("congress trades fetch skipped: %s", exc)
+
+
+@celery_app.task(name="ml.tasks.realtime_ingest.fetch_13f_filings", queue="default")
+def fetch_13f_filings():
+    """Pull latest 13F filings from SEC EDGAR for tracked institutional investors."""
+    from data.celebrity.sec_13f import run_default
+
+    logger.info("Fetching 13F filings")
+    try:
+        asyncio.run(run_default())
+    except RuntimeError as exc:
+        logger.warning("13F fetch skipped: %s", exc)
+
+
+@celery_app.task(name="ml.tasks.realtime_ingest.fetch_ark_trades", queue="default")
+def fetch_ark_trades():
+    """Pull ARK Invest daily trade disclosures."""
+    from data.celebrity.ark import run_default
+
+    logger.info("Fetching ARK daily trades")
+    try:
+        asyncio.run(run_default())
+    except RuntimeError as exc:
+        logger.warning("ARK trades fetch skipped: %s", exc)
+
+
 async def _async_scrape():
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine

@@ -2,14 +2,16 @@
 
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Star, Loader2 } from "lucide-react";
-import { signals as signalApi } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowLeft, ArrowRight, Star, Loader2, Newspaper, ExternalLink } from "lucide-react";
+import { signals as signalApi, news } from "@/lib/api";
 import { PriceChart } from "@/components/charts/PriceChart";
 import { SignalCard } from "@/components/signals/SignalCard";
 import { UnknownSymbol } from "@/components/signals/UnknownSymbol";
 import { Card } from "@/components/ui/Card";
 import { mockSignalDetail } from "@/lib/mock";
-import type { ApiError, Signal } from "@/lib/types";
+import { timeAgoUnix } from "@/lib/utils";
+import type { ApiError, NewsApiArticle, Signal } from "@/lib/types";
 
 interface Props {
   params: Promise<{ ticker: string }>;
@@ -29,6 +31,13 @@ export default function SignalDetailPage({ params }: Props) {
   const [view, setView] = useState<View>("loading");
   const [reason, setReason] = useState<"not_in_universe" | "delisted">("not_in_universe");
   const [watched, setWatched] = useState(false);
+
+  const { data: tickerNews } = useQuery({
+    queryKey: ["tickerNews", T],
+    queryFn: () => news.byTicker(T, 7),
+    staleTime: 5 * 60 * 1000,
+    enabled: view !== "unknown",
+  });
 
   useEffect(() => {
     let active = true;
@@ -133,6 +142,50 @@ export default function SignalDetailPage({ params }: Props) {
         <div className="h-56 rounded-xl bg-zinc-100 dark:bg-zinc-900/60 animate-pulse" />
       ) : (
         <SignalCard signal={signal} />
+      )}
+
+      {(view === "live" || view === "demo") && tickerNews && tickerNews.length > 0 && (
+        <Card className="p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-2">
+              <Newspaper size={15} className="text-sky-500" />
+              Latest News for {T}
+            </h3>
+            <Link
+              href="/news"
+              className="text-xs text-zinc-500 hover:text-sky-500 flex items-center gap-1 transition-colors"
+            >
+              View all <ArrowRight size={12} />
+            </Link>
+          </div>
+          <div className="space-y-3">
+            {tickerNews.slice(0, 5).map((article: NewsApiArticle) => (
+              <div key={article.id} className="flex items-start gap-2.5">
+                <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-zinc-500" />
+                <div className="min-w-0">
+                  {article.url ? (
+                    <a
+                      href={article.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm font-medium text-zinc-800 dark:text-zinc-200 hover:text-sky-500 dark:hover:text-sky-400 transition-colors inline-flex items-center gap-1"
+                    >
+                      <span className="line-clamp-1">{article.headline}</span>
+                      <ExternalLink size={11} className="shrink-0 text-zinc-400 dark:text-zinc-600" />
+                    </a>
+                  ) : (
+                    <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200 line-clamp-1">
+                      {article.headline}
+                    </p>
+                  )}
+                  <p className="text-xs text-zinc-400 dark:text-zinc-600 mt-0.5">
+                    {article.source} · {timeAgoUnix(article.datetime)}
+                  </p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
       )}
 
       <p className="text-xs text-zinc-400 dark:text-zinc-600 text-center">

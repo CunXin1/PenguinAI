@@ -97,6 +97,32 @@ CREATE TABLE IF NOT EXISTS earnings (
     PRIMARY KEY (ticker, report_date)
 );
 
+-- News articles (hot tickers stored for ML; cold tickers fetched on-demand)
+CREATE TABLE IF NOT EXISTS news_articles (
+    id              TEXT        PRIMARY KEY,  -- source_provider:source_id (e.g. "massive:12345")
+    source_provider TEXT        NOT NULL,     -- 'massive' | 'finnhub' | 'google'
+    source_id       TEXT        NOT NULL,     -- original ID from provider
+    headline        TEXT        NOT NULL,
+    summary         TEXT,
+    article_url     TEXT,
+    image_url       TEXT,
+    author          TEXT,
+    publisher_name  TEXT,
+    published_at    TIMESTAMPTZ NOT NULL,
+    tickers         TEXT[]      DEFAULT '{}', -- related tickers from the source
+    category        TEXT        DEFAULT 'general',  -- general | forex | crypto | merger | breaking
+    sentiment       TEXT,                     -- 'positive' | 'negative' | 'neutral' (from Massive/FinBERT)
+    sentiment_score NUMERIC(5, 4),            -- -1.0 to 1.0 for ML features
+    sentiment_reasoning TEXT,                 -- Massive insight reasoning text
+    is_hot          BOOLEAN     NOT NULL DEFAULT FALSE, -- TRUE = Nasdaq-100/key ETF, stored for ML
+    fetched_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_news_published ON news_articles (published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_news_tickers ON news_articles USING GIN (tickers);
+CREATE INDEX IF NOT EXISTS idx_news_hot ON news_articles (is_hot, published_at DESC) WHERE is_hot = TRUE;
+CREATE INDEX IF NOT EXISTS idx_news_sentiment ON news_articles (sentiment) WHERE sentiment IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_news_source ON news_articles (source_provider, source_id);
+
 -- Fundamentals snapshot (daily)
 CREATE TABLE IF NOT EXISTS fundamentals (
     ticker          TEXT        NOT NULL REFERENCES tickers(ticker),

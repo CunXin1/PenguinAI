@@ -17,6 +17,7 @@ import uuid as _uuid_mod
 # ── 1. Override DATABASE_URL *before* any app import ────────────────────────
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite://"
 os.environ["SECRET_KEY"] = "test-secret-key-for-pytest"
+os.environ["ALLOWED_ORIGINS"] = '["http://localhost:3000"]'
 
 # Register SQLite adapters for types that PostgreSQL handles natively.
 sqlite3.register_adapter(_uuid_mod.UUID, lambda u: str(u))

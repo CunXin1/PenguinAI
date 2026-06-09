@@ -15,8 +15,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import (
     admin,
     auth,
+    celebrity_holdings,
     earnings,
     market_data,
+    news,
     signals,
     symbols,
     tickers,
@@ -181,6 +183,8 @@ app.include_router(tickers.router, prefix="/api/tickers", tags=["tickers"])
 app.include_router(watchlist.router, prefix="/api/watchlist", tags=["watchlist"])
 app.include_router(market_data.router, prefix="/api/market-data", tags=["market-data"])
 app.include_router(earnings.router, prefix="/api/earnings", tags=["earnings"])
+app.include_router(celebrity_holdings.router, prefix="/api/celebrity-holdings", tags=["celebrity-holdings"])
+app.include_router(news.router, prefix="/api/news", tags=["news"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 
 

@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7  # 7 days
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
 
+    @field_validator("ALLOWED_ORIGINS", mode="before")
+    @classmethod
+    def _parse_origins(cls, v: object) -> object:
+        if isinstance(v, str) and not v.startswith("["):
+            return [s.strip() for s in v.split(",") if s.strip()]
+        return v
+
     @model_validator(mode="after")
     def _check_secret_key(self) -> "Settings":
         if self.SECRET_KEY not in _INSECURE_KEYS:

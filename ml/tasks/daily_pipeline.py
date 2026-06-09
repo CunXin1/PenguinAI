@@ -13,7 +13,7 @@ from ml.core.config import ml_settings
 from ml.tasks.celery_app import celery_app
 
 logger = logging.getLogger(__name__)
-MODEL_DIR = Path("/models/penguinai")
+MODEL_DIR = Path(ml_settings.MODEL_DIR)
 
 
 @celery_app.task(name="ml.tasks.daily_pipeline.run_daily_pipeline", queue="ml_inference")

@@ -12,8 +12,9 @@ from threading import Lock
 
 import numpy as np
 
+from ml.core.config import ml_settings
+
 logger = logging.getLogger(__name__)
-MODEL_DIR = Path("/models/penguinai")
 
 
 class ModelRegistry:
@@ -21,9 +22,16 @@ class ModelRegistry:
         self._xgb = None
         self._rf = None
         self._lock = Lock()
+        self._loaded = False
 
-    def load(self, model_dir: Path = MODEL_DIR) -> None:
+    def _ensure_loaded(self) -> None:
+        if not self._loaded:
+            self.load()
+
+    def load(self, model_dir: Path | None = None) -> None:
         """Load latest production models from disk."""
+        if model_dir is None:
+            model_dir = Path(ml_settings.MODEL_DIR)
         with self._lock:
             xgb_path = model_dir / "xgboost_prod.pkl"
             rf_path = model_dir / "rf_prod.pkl"
@@ -41,8 +49,10 @@ class ModelRegistry:
                 logger.info("Random Forest model loaded from %s", rf_path)
             else:
                 logger.warning("Random Forest model not found at %s", rf_path)
+            self._loaded = True
 
     def predict_xgb(self, ticker: str, features: dict[str, float]) -> float | None:
+        self._ensure_loaded()
         if self._xgb is None:
             return None
         try:
@@ -54,10 +64,12 @@ class ModelRegistry:
             return None
 
     def predict_rf(self, ticker: str, features: dict[str, float]) -> float | None:
+        self._ensure_loaded()
         if self._rf is None:
             return None
         try:
             x = np.array([[features.get(k, np.nan) for k in self._feature_names()]])
+            x = np.nan_to_num(x, nan=0.0)
             prob = self._rf.predict_proba(x)[0][1]
             return round(float(prob), 4)
         except Exception as e:
@@ -70,7 +82,7 @@ class ModelRegistry:
 
         return FEATURE_COLS
 
-    def reload(self, model_dir: Path = MODEL_DIR) -> None:
+    def reload(self, model_dir: Path | None = None) -> None:
         logger.info("Hot-reloading models from %s", model_dir)
         self.load(model_dir)
 

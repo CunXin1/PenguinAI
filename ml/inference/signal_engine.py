@@ -61,18 +61,22 @@ class SignalEngine:
         hawk_dove_score = await self._get_latest_fomc(db_session)
 
         # ── 8. Gemma 4 two-step agentic reasoning ────────────────────────────
-        gemma_output: GemmaSignalOutput = await gemma_agent.generate_signal(
-            ticker=ticker,
-            xgb_prob_up=xgb_prob_up,
-            rf_prob_up=rf_prob_up,
-            finbert_score=finbert_score,
-            post_count=post_count,
-            hawk_dove_score=hawk_dove_score,
-            top_posts=top_posts,
-            celebrity_actions=celebrity_actions,
-            earnings_surprise_pct=earnings_surprise,
-            pe_ratio=pe_ratio,
-        )
+        try:
+            gemma_output: GemmaSignalOutput = await gemma_agent.generate_signal(
+                ticker=ticker,
+                xgb_prob_up=xgb_prob_up,
+                rf_prob_up=rf_prob_up,
+                finbert_score=finbert_score,
+                post_count=post_count,
+                hawk_dove_score=hawk_dove_score,
+                top_posts=top_posts,
+                celebrity_actions=celebrity_actions,
+                earnings_surprise_pct=earnings_surprise,
+                pe_ratio=pe_ratio,
+            )
+        except Exception as e:
+            logger.warning("Gemma unavailable for %s: %s — using ML-only signal", ticker, e)
+            gemma_output = self._fallback_gemma_output(xgb_prob_up, rf_prob_up, finbert_score)
 
         # ── 9. Apply global FOMC override ────────────────────────────────────
         direction, confidence = self._apply_macro_filter(
@@ -89,7 +93,11 @@ class SignalEngine:
             "holding_period": gemma_output.holding_period,
             "xgb_prob_up": xgb_prob_up,
             "rf_prob_up": rf_prob_up,
-            "ensemble_prob": round(((xgb_prob_up or 0) * 0.6 + (rf_prob_up or 0) * 0.4), 4),
+            "ensemble_prob": (
+                round(((xgb_prob_up or 0) * 0.6 + (rf_prob_up or 0) * 0.4), 4)
+                if xgb_prob_up is not None or rf_prob_up is not None
+                else None
+            ),
             "finbert_score": finbert_score,
             "post_count": post_count,
             "hawk_dove_ref": hawk_dove_score,
@@ -99,6 +107,46 @@ class SignalEngine:
             "computed_at": now,
             "expires_at": now + timedelta(seconds=ml_settings.CACHE_TTL_COLD),
         }
+
+    def _fallback_gemma_output(
+        self,
+        xgb_prob: float | None,
+        rf_prob: float | None,
+        finbert_score: float | None,
+    ) -> GemmaSignalOutput:
+        """ML-only signal when Gemma is unavailable."""
+        ensemble = None
+        if xgb_prob is not None and rf_prob is not None:
+            ensemble = xgb_prob * 0.6 + rf_prob * 0.4
+        elif xgb_prob is not None:
+            ensemble = xgb_prob
+
+        if ensemble is None:
+            return GemmaSignalOutput(
+                direction="NEUTRAL",
+                confidence=0.5,
+                holding_period="SHORT_TERM",
+                ai_attribution="insufficient_model_data",
+                ai_analysis="Models not available; no signal generated.",
+            )
+
+        if ensemble > 0.55:
+            direction = "LONG"
+        elif ensemble < 0.45:
+            direction = "SHORT"
+        else:
+            direction = "NEUTRAL"
+
+        confidence = round(min(1.0, max(0.5, abs(ensemble - 0.5) * 2 + 0.5)), 4)
+
+        sentiment_note = f", FinBERT={finbert_score:.2f}" if finbert_score is not None else ""
+        return GemmaSignalOutput(
+            direction=direction,
+            confidence=confidence,
+            holding_period="SHORT_TERM",
+            ai_attribution="ML ensemble (Gemma unavailable)",
+            ai_analysis=f"XGB={xgb_prob}, RF={rf_prob}{sentiment_note}. LLM reasoning unavailable.",
+        )
 
     def _apply_macro_filter(
         self,

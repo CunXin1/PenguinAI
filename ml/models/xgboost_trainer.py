@@ -105,13 +105,23 @@ def load_training_data(
 
 def train(
     parquet_root: str | Path = DEFAULT_PARQUET_ROOT,
-    output_path: Path = Path("/models/penguinai/xgboost_prod.pkl"),
+    output_path: Path | None = None,
     tickers: list[str] | None = None,
     horizon_bars: int = 16,
 ) -> dict:
+    if output_path is None:
+        from ml.core.config import ml_settings
+        output_path = Path(ml_settings.MODEL_DIR) / "xgboost_prod.pkl"
+
     logger.info("Loading training data...")
     X, y = load_training_data(parquet_root, tickers=tickers, horizon_bars=horizon_bars)
     logger.info("Dataset: %d samples, %.1f%% positive", len(X), y.mean() * 100)
+
+    try:
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        device = "cpu"
 
     model = XGBClassifier(
         n_estimators=500,
@@ -119,10 +129,9 @@ def train(
         learning_rate=0.05,
         subsample=0.8,
         colsample_bytree=0.8,
-        use_label_encoder=False,
         eval_metric="auc",
         tree_method="hist",
-        device="cuda",  # uses 4090
+        device=device,
         n_jobs=-1,
         random_state=42,
         early_stopping_rounds=50,
@@ -150,7 +159,8 @@ def train(
     mean_auc = float(np.mean(auc_scores))
     logger.info("Mean CV AUC: %.4f", mean_auc)
 
-    # Final fit on full data
+    # Final fit on full data (disable early stopping — no eval_set)
+    model.set_params(early_stopping_rounds=None)
     model.fit(X, y, verbose=False)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

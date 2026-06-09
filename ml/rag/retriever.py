@@ -6,12 +6,13 @@ No cross-ticker contamination — ticker + timestamp filter is hardcoded.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ml.rag.embedder import embedder
+logger = logging.getLogger(__name__)
 
 
 class RAGRetriever:
@@ -35,9 +36,13 @@ class RAGRetriever:
 
         since = datetime.now(UTC) - timedelta(hours=hours)
 
-        # If no query text, use ticker as the query
         query = query_text or f"{ticker} stock investment analysis"
-        query_embedding = embedder.encode(query)
+        try:
+            from ml.rag.embedder import embedder
+            query_embedding = embedder.encode(query)
+        except Exception as e:
+            logger.warning("Embedding failed for RAG: %s — returning empty results", e)
+            return []
 
         rows = await db.execute(
             text("""

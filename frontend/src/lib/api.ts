@@ -1,11 +1,14 @@
 import type {
   Candle,
   CandleBar,
+  CelebrityHolding,
+  CelebritySummary,
   ChartRange,
   EarningsEvent,
   HeatmapResponse,
   MarketStatus,
   MiniQuote,
+  NewsApiArticle,
   Quote,
   Signal,
   SignalListItem,
@@ -200,4 +203,29 @@ export const earnings = {
 
   byTicker: (ticker: string) =>
     apiFetch<EarningsEvent[]>(`/earnings/${ticker.toUpperCase()}`),
+};
+
+// ── Celebrity Holdings API ───────────────────────────────────────────────────
+export const celebrityHoldings = {
+  list: (limit = 100, offset = 0) =>
+    apiFetch<CelebrityHolding[]>(`/celebrity-holdings?limit=${limit}&offset=${offset}`),
+
+  byCelebrity: (celebrity: string, limit = 100) =>
+    apiFetch<CelebrityHolding[]>(`/celebrity-holdings/${celebrity}?limit=${limit}`),
+
+  byTicker: (ticker: string, limit = 50) =>
+    apiFetch<CelebrityHolding[]>(`/celebrity-holdings/ticker/${ticker.toUpperCase()}?limit=${limit}`),
+
+  stats: () => apiFetch<CelebritySummary[]>("/celebrity-holdings/stats/summary"),
+};
+
+// ── News API ─────────────────────────────────────────────────────────────────
+export const news = {
+  /** Market-wide news feed. `category` = general|forex|crypto|merger. */
+  market: (category = "general", minId = 0) =>
+    apiFetch<NewsApiArticle[]>(`/news/market?category=${category}&min_id=${minId}`),
+
+  /** Company news for a single ticker. */
+  byTicker: (ticker: string, days = 7) =>
+    apiFetch<NewsApiArticle[]>(`/news/${ticker.toUpperCase()}?days=${days}`),
 };

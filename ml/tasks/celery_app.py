@@ -57,9 +57,29 @@ celery_app.conf.beat_schedule = {
         "task": "ml.tasks.realtime_ingest.fetch_earnings",
         "schedule": crontab(minute=0, hour="8,14,21", day_of_week="1-5"),
     },
+    # Hot ticker news every 30 minutes (:15 and :45 to avoid collision with other tasks)
+    "refresh-hot-news": {
+        "task": "ml.tasks.realtime_ingest.refresh_hot_news",
+        "schedule": crontab(minute="15,45"),
+    },
     # Classify user-requested (uncovered) symbols via Massive every 6 hours.
     "validate-symbol-requests": {
         "task": "ml.tasks.symbol_validation.validate_symbol_requests",
         "schedule": crontab(minute=30, hour="*/6"),
+    },
+    # Congressional trades: 2x/day on weekdays (transactions trickle in).
+    "fetch-congress-trades": {
+        "task": "ml.tasks.realtime_ingest.fetch_congress_trades",
+        "schedule": crontab(minute=0, hour="9,18", day_of_week="1-5"),
+    },
+    # 13F filings: daily check (quarterly data; daily catch catches new filings).
+    "fetch-13f-filings": {
+        "task": "ml.tasks.realtime_ingest.fetch_13f_filings",
+        "schedule": crontab(minute=30, hour=7, day_of_week="1-5"),
+    },
+    # ARK daily trades: once per evening on weekdays (ARK publishes after close).
+    "fetch-ark-trades": {
+        "task": "ml.tasks.realtime_ingest.fetch_ark_trades",
+        "schedule": crontab(minute=0, hour=19, day_of_week="1-5"),
     },
 }

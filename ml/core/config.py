@@ -1,6 +1,9 @@
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class MLSettings(BaseSettings):
@@ -8,6 +11,8 @@ class MLSettings(BaseSettings):
 
     DATABASE_URL: str = "postgresql+asyncpg://penguinai:penguinai_dev@localhost:5432/penguinai"
     REDIS_URL: str = "redis://localhost:6379/0"
+
+    MODEL_DIR: str = str(_PROJECT_ROOT / "models" / "penguinai")
 
     # Gemma 4
     GEMMA_MODEL_PATH: str = "/models/gemma4"

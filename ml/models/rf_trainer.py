@@ -20,10 +20,14 @@ logger = logging.getLogger(__name__)
 
 def train(
     parquet_root: str | Path = DEFAULT_PARQUET_ROOT,
-    output_path: Path = Path("/models/penguinai/rf_prod.pkl"),
+    output_path: Path | None = None,
     tickers: list[str] | None = None,
     horizon_bars: int = 16,
 ) -> dict:
+    if output_path is None:
+        from ml.core.config import ml_settings
+        output_path = Path(ml_settings.MODEL_DIR) / "rf_prod.pkl"
+
     logger.info("Loading training data for Random Forest...")
     X, y = load_training_data(parquet_root, tickers=tickers, horizon_bars=horizon_bars)
 

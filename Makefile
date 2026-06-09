@@ -1,4 +1,4 @@
-.PHONY: up down logs backend frontend ml-worker ibkr-stream minute-parquet fetch-earnings lint type-check test test-backend test-frontend db-init bootstrap
+.PHONY: up down logs backend frontend ml-worker ibkr-stream minute-parquet fetch-earnings fetch-congress fetch-13f fetch-ark fetch-celebrities lint type-check test test-backend test-frontend db-init bootstrap
 
 # ── Docker Compose ────────────────────────────────────────────────────────────
 up:
@@ -39,6 +39,18 @@ minute-parquet:
 fetch-earnings:
 	python -m data.ingestion.finnhub_earnings
 
+# Celebrity holdings ingestion (all free, no API keys needed).
+fetch-congress:
+	python -m data.celebrity.congress
+
+fetch-13f:
+	python -m data.celebrity.sec_13f
+
+fetch-ark:
+	python -m data.celebrity.ark
+
+fetch-celebrities: fetch-congress fetch-13f fetch-ark
+
 celery-beat:
 	cd . && celery -A ml.tasks.celery_app beat --loglevel=info
 
@@ -74,6 +86,7 @@ db-init:
 	docker-compose exec timescaledb psql -U penguinai -d penguinai -f /docker-entrypoint-initdb.d/03_relational.sql
 	docker-compose exec timescaledb psql -U penguinai -d penguinai -f /docker-entrypoint-initdb.d/04_compat_views.sql
 	docker-compose exec timescaledb psql -U penguinai -d penguinai -f /docker-entrypoint-initdb.d/05_continuous_aggregates.sql
+	docker-compose exec timescaledb psql -U penguinai -d penguinai -f /docker-entrypoint-initdb.d/07_celebrity_unique.sql
 
 # Load the 30-min + daily parquet (data/30min_data, data/daily_data) → bars_30m /
 # bars_1d in penguinai. Run after `make db-init`. Needs a Python with pyarrow +

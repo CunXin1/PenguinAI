@@ -123,15 +123,32 @@ export interface SignalView extends SignalListItem {
   spark?: number[];
 }
 
+/** Raw shape returned by GET /api/news/market and /api/news/{ticker}. */
+export interface NewsApiArticle {
+  id: string;
+  headline: string;
+  summary: string;
+  source: string;
+  url?: string;
+  image?: string;
+  datetime: number; // unix timestamp (seconds)
+  tickers?: string[];
+  category?: string;
+}
+
 export interface NewsArticle {
   id: string;
   headline: string;
   summary: string;
   body?: string; // full article text, paragraphs separated by "\n\n"
   source: string;
-  time: string; // display string, e.g. "2h ago"
+  url?: string; // link to original article (from Finnhub)
+  image?: string; // thumbnail URL (from Finnhub)
+  datetime?: number; // unix timestamp from API
+  time: string; // display string, e.g. "2h ago" — computed from datetime or mock
   sentiment: "positive" | "negative" | "neutral";
   tickers?: string[];
+  category?: string; // general/forex/crypto/merger
 }
 
 export interface TrendingTicker {
@@ -243,6 +260,31 @@ export interface MarketStatus {
   source: "session" | "ticks" | "closed"; // which path decided market_open
   as_of: string; // ISO timestamp
   latest_tick: string | null; // newest market_data_1min bar (ISO), or null
+}
+
+// ── Celebrity Holdings ───────────────────────────────────────────────────────
+export type CelebAction = "BUY" | "SELL" | "HOLD";
+export type CelebSourceType = "13F" | "daily_disclosure";
+
+export interface CelebrityHolding {
+  id: string;
+  reported_at: string;
+  celebrity: string;
+  ticker: string;
+  ticker_name: string;
+  action: CelebAction;
+  shares: number | null;
+  value_usd: number | null;
+  source_type: CelebSourceType;
+  filing_url: string | null;
+}
+
+export interface CelebritySummary {
+  celebrity: string;
+  total_trades: number;
+  buys: number;
+  sells: number;
+  latest_trade: string;
 }
 
 // ── Earnings ──────────────────────────────────────────────────────────────────

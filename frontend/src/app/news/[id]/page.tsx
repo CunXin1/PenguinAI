@@ -70,8 +70,9 @@ export default async function NewsArticlePage({ params }: { params: Promise<{ id
       )}
 
       <p className="text-xs text-zinc-400 dark:text-zinc-600 pt-3 border-t border-zinc-200 dark:border-zinc-800/60">
-        Demo article · in production this renders from the <span className="font-mono">news_articles</span> table with FinBERT
-        scoring and pgvector retrieval.
+        In production, news cards link directly to the original source URL. This detail page serves
+        demo articles only. Live articles are rendered from the <span className="font-mono">news</span> API
+        with FinBERT scoring applied when available.
       </p>
     </div>
   );
