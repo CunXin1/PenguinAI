@@ -273,3 +273,7 @@ Environment variable: `NEXT_PUBLIC_API_URL` -- backend API base (default `http:/
 4. Reuse `ui/` primitives; derive all colors from `direction` -- never hardcode signal colors.
 5. Use `cn()` (clsx + tailwind-merge) for conditional classes.
 6. Add tests in a `__tests__/` directory alongside the source file.
+
+## Further reading
+
+- **[Frontend Pages Reference](../docs/frontend-pages.md)** — detailed per-page documentation (data sources, view states, API endpoints, what's complete vs placeholder)

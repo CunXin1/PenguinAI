@@ -27,7 +27,7 @@ db/schema/  → TimescaleDB + pgvector SQL
 | `market_data_30min` *(view)* | adj OHLCV over `bars_30m` — compat name for app/ML |
 | `market_data_daily` *(view)* | adj OHLCV over `bars_1d` — compat name for macro context |
 | `indicators_30min` *(view)* | model-ready features over `bars_30m` (matches `FEATURE_COLS`) |
-| `market_data_1min`  | Real-time IBKR + Massive minute stream, accumulates forward from today (real table) |
+| `market_data_1min`  | Real-time dual-source (IBKR + Finnhub) + Massive minute stream, accumulates forward from today (real table) |
 | `social_posts`      | Twitter VIPs + Reddit WSB, FinBERT-scored, pgvector-embedded |
 | `signal_cache`      | Computed signals with TTL (Top-100: 1h, cold: 4h) |
 | `users`             | Auth + tier (FREE/PRO/PREMIUM/ADMIN) |
@@ -213,12 +213,42 @@ frontend/src/lib/api.ts            — auth API client methods
 | Source | What | How | Status |
 |--------|------|-----|--------|
 | User's own data | 30-min + daily bars 2000–present (6,300 symbols) | `db/market_data/import_features_to_timescale.py` (`make import-30min`) → `bars_30m`/`bars_1d` | ✅ loaded (~236M rows) |
-| IBKR WebSocket | Real-time 1-min bars during market hours | `data/ingestion/ibkr_stream.py` | ✅ live |
-| Massive (massive.com) | Minute history + reference + market cap + symbol validation | `data/ingestion/massive_*.py`, `ml/tasks/symbol_validation.py` | ✅ live |
-| Finnhub | Earnings calendar (EPS actual/estimate/surprise) | `data/ingestion/finnhub_earnings.py` (`make fetch-earnings`) | ✅ live |
+| IBKR WebSocket | Real-time 1-min bars during market hours (50 core symbols) | `data/ingestion/realtime/ibkr_service.py` | ✅ live |
+| Finnhub WebSocket | Real-time trade ticks → 1-min bars (same 50 symbols, hot standby) | `data/ingestion/realtime/finnhub_ws.py` | ✅ live |
+| Massive (massive.com) | Minute history + reference + market cap + symbol validation (~15 min delay) | `data/ingestion/massive_*.py`, `ml/tasks/symbol_validation.py` | ✅ live |
+| Finnhub REST | Earnings calendar (EPS actual/estimate/surprise) | `data/ingestion/finnhub_earnings.py` (`make fetch-earnings`) | ✅ live |
 | Twitter/X · Reddit | Social sentiment | `data/scrapers/*` (Playwright / PRAW) | 🚧 planned — not created |
 | SEC EDGAR | 13F filings + FOMC statements | `data/scrapers/sec_scraper.py` | 🚧 planned — not created |
 | Polygon.io | Historical minute bars (supplemental) | — | ❌ legacy (no loader; superseded by Massive) |
+
+## Realtime Dual-Source Architecture
+
+IBKR and Finnhub run in parallel for the 50 core symbols. Both write to `market_data_1min`
+concurrently; the upsert's `ON CONFLICT` keeps data consistent. Neither is "primary" or
+"fallback" — whichever source writes first for a given (ticker, time) wins; the other's
+upsert becomes a no-op (IBKR rows are preserved over Finnhub if both arrive).
+
+```
+IBKR stream (亚秒延迟)  ──┐
+                          ├──→ market_data_1min (ON CONFLICT upsert)
+Finnhub WS (~150ms 延迟) ──┘
+                          │
+                    CrossValidator
+                    (每 30s 比较两边价格)
+                          │
+              ┌───────────┴───────────┐
+              ▼                       ▼
+    IBKR stale? → log warning   Finnhub stale? → log warning
+    Price divergence >2%? → log error (possible zombie)
+```
+
+**Key files:**
+- `data/ingestion/realtime/finnhub_ws.py` — Finnhub WS client + tick→bar aggregation + CrossValidator
+- `data/ingestion/realtime/ibkr_service.py` — IBKR stream + 3-layer zombie detection + feeds CrossValidator
+- `data/ingestion/realtime/supervisor.py` — starts both + shared CrossValidator instance
+
+**Config:** `FINNHUB_API_KEY` (in `.env`), `FINNHUB_WS_ENABLED=true` (default).
+Finnhub free tier: 50 symbols, real-time US SIP trades, ~150ms latency.
 
 ## Frontend Rules
 

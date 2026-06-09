@@ -1,0 +1,273 @@
+# Frontend Pages Reference
+
+> Last updated: 2026-06-09. Next.js 15 App Router, all pages client-rendered (`"use client"`).
+
+## Page Index
+
+| Route | Page | Data Source | Auth | Status |
+|-------|------|-------------|------|--------|
+| `/` | Dashboard | Real API + mock fallback | — | Complete |
+| `/signals/[ticker]` | Signal Detail | Real API (202 polling) | — | Complete |
+| `/screener` | Stock Screener | Real API | — | Complete |
+| `/earnings` | Earnings Calendar | Real API + mock fallback | — | Complete |
+| `/heatmap` | Market Heatmap | Real API | — | Complete |
+| `/watchlist` | Watchlist | API (logged in) / localStorage (guest) | Optional | Complete |
+| `/news` | News Feed | Mock only | — | UI complete, backend pending |
+| `/news/[id]` | Article Detail | Mock only | — | UI complete, backend pending |
+| `/profile` | User Profile | Real API | Required | Complete |
+| `/auth/login` | Login / Register | Real API | — | Complete |
+| `/auth/forgot-password` | Forgot Password | Real API | — | Complete |
+| `/auth/reset-password` | Reset Password | Real API (token param) | — | Complete |
+
+---
+
+## Page Details
+
+### Dashboard (`/`)
+
+Market overview with 7 widget components in a responsive grid layout.
+
+**Widgets:**
+- **MarketIndices** — SPY/QQQ/DIA/IWM strip via `/market-data/mini`
+- **MarketPulse** — Sentiment summary, FOMC score, advancers/decliners
+- **MarketChart** — Intraday/multi-timeframe candlestick chart
+- **TopSignals** — Top signals enriched with live prices + sparklines (`useTopSignals`)
+- **TrendingTickers** — Top movers by change_pct from Nasdaq-100 subset (`useTrending`)
+- **NewsPreview** — Recent articles (currently mock)
+- **WatchlistWidget** — User's tracked tickers with live quotes
+
+**API endpoints:** `/market-data/mini`, `/market-data/quotes`, `/market-data/heatmap`, `/signals/top`, `/market-data/{ticker}/series`
+
+---
+
+### Signal Detail (`/signals/[ticker]`)
+
+Full signal analysis for a single ticker with price chart and AI-generated analysis.
+
+**View states:**
+1. `loading` — Skeleton while fetching
+2. `computing` — 202 response received; polls `?poll=1` up to 10 times (50s max)
+3. `live` — Cache hit, full signal displayed
+4. `demo` — API failed or timeout, falls back to mock signal
+5. `unknown` — 404 with `reason: "not_in_universe"` or `"delisted"`
+
+**Components:** `PriceChart` (TradingView Lightweight Charts), `SignalCard` (direction/confidence/ML scores/sentiment/AI analysis), `UnknownSymbol` (404 view with coverage request button)
+
+**API endpoints:** `/signals/{ticker}`, `/market-data/{ticker}/series`
+
+---
+
+### Stock Screener (`/screener`)
+
+Searchable, sortable table of the full stock universe with live quotes overlay.
+
+**Features:**
+- Search by ticker prefix or company name (calls `/tickers/search?q=`)
+- Default view: top 500 by market cap from `/tickers/universe`
+- Sector filter derived from universe data
+- Sortable columns: ticker, market_cap, change_pct (toggle asc/desc)
+- Live quotes overlay for top 60 tickers via `useLiveQuotes`
+- Each row links to `/signals/{ticker}`
+
+**API endpoints:** `/tickers/universe`, `/tickers/search`, `/market-data/quotes`
+
+---
+
+### Earnings Calendar (`/earnings`)
+
+Earnings events grouped by date with EPS tracking and sentiment.
+
+**Features:**
+- Tabs: Upcoming / Reported / All
+- Search by ticker or company name
+- Stats bar: upcoming count, beats, misses
+- Session badges: BMO (pre-market), AMC (after-hours), TBD
+- EPS surprise % with color coding (green = beat, red = miss)
+- Date grouping with "Today" indicator
+
+**API endpoints:** `/earnings/calendar?from={date}&to={date}`
+
+**Note:** Falls back to `MOCK_EARNINGS` if API unavailable. Backend Finnhub integration populates the earnings table.
+
+---
+
+### Market Heatmap (`/heatmap`)
+
+Market-cap weighted treemap with color-coded tiles by period performance.
+
+**Features:**
+- Period selector: 1D / 1W / 1M / 3M / 1Y
+- Size selector: 30 / 50 / 100 / 200 stocks
+- Index tiles: SPY, QQQ, DIA, IWM
+- Breadth stats: stocks up / down / avg change
+- Live/Closed market status badge
+- Auto-refresh: polls every 15s for 1D when market is open; static for historical periods
+- Color gradient: deep red (-3%) → neutral → deep green (+3%), scaled by period
+
+**API endpoints:** `/market-data/heatmap?limit={n}&period={period}`
+
+---
+
+### Watchlist (`/watchlist`)
+
+Personal list of tracked tickers with live prices and signal badges.
+
+**Dual storage mode:**
+- **Guest:** localStorage key `penguinai_watchlist`, defaults to `["NVDA","TSLA","AAPL","PLTR"]`
+- **Logged in:** syncs to backend via `/watchlist` API (GET/POST/DELETE)
+
+**Features:**
+- Add ticker form with universe validation
+- Live quotes via `useLiveQuotes`
+- Signal direction badges (LONG/SHORT/NEUTRAL) when available
+- Remove button per ticker
+- Empty state with link to screener
+
+**API endpoints:** `/watchlist`, `/market-data/quotes`, `/tickers/{ticker}` (validation)
+
+---
+
+### News Feed (`/news`)
+
+Filterable news feed with FinBERT sentiment analysis.
+
+**Features:**
+- Featured article card
+- Sentiment overview (bullish/bearish/neutral bar)
+- Sentiment filter tabs
+- Ticker mention tags linking to signal pages
+- Source attribution and timestamps
+
+**Status:** UI fully built. Data is 100% mock (`MOCK_NEWS`). Requires:
+- Backend `/api/news` endpoint (not yet built)
+- `news_articles` table populated by a scraper (not yet built)
+
+---
+
+### Article Detail (`/news/[id]`)
+
+Full article view with related signal links.
+
+**Features:**
+- Article body text (paragraph rendering)
+- Sentiment badge and source/timestamp
+- Related signals section (tickers mentioned in article)
+- `notFound()` if article ID doesn't exist
+
+**Status:** Same as News Feed — mock data only.
+
+---
+
+### User Profile (`/profile`)
+
+Account information, plan details, and watchlist preview.
+
+**Features:**
+- Avatar with user initial, display name, email, tier badge
+- Tier styling: FREE=zinc, PRO=sky, PREMIUM=purple, ADMIN=amber
+- Plan card with current tier and upgrade prompt
+- Watchlist preview (first 8 items)
+- Settings section (Notifications, Preferences — both "coming soon")
+- Sign out button
+
+**Auth gate:** Shows a "Sign in to view profile" prompt if not authenticated.
+
+**API endpoints:** `/auth/me`, `/watchlist`
+
+---
+
+### Login / Register (`/auth/login`)
+
+Dual-mode authentication form.
+
+**Login mode:** Email + password → POST `/auth/login` → store token → redirect home
+**Register mode:** Email + password + confirm + display name → POST `/auth/register` → store token → redirect home
+
+**Password strength meter** (register only): 8+ chars, uppercase, lowercase, digit, special character. All 5 required.
+
+**API endpoints:** `/auth/login`, `/auth/register`
+
+---
+
+### Forgot Password (`/auth/forgot-password`)
+
+Email-only form for requesting a password reset.
+
+Always shows "Check your email" success regardless of whether the email exists (prevents enumeration). Links back to login.
+
+**API endpoints:** `/auth/forgot-password`
+
+---
+
+### Reset Password (`/auth/reset-password?token=xxx`)
+
+New password form with strength validation, accessed via email link.
+
+**States:**
+- Form: enter new password + confirm
+- Success: "Password has been reset" with 3s auto-redirect to login
+- Error: invalid/expired token message
+
+**API endpoints:** `/auth/reset-password`
+
+---
+
+## Error Boundaries
+
+| File | Scope | Behavior |
+|------|-------|----------|
+| `loading.tsx` | Per-route | Spinner + "Loading..." during route transitions |
+| `not-found.tsx` | Global 404 | "404 / Page not found" with Go Home + Search Stocks links |
+| `error.tsx` | Per-route errors | Error message (dev only), digest (prod), Try Again + Go Home |
+| `global-error.tsx` | Root crash | Self-contained `<html>` with digest, Try Again + Go Home |
+
+---
+
+## Shared Infrastructure
+
+### Navbar Search Autocomplete
+
+- Debounced 250ms API call to `/tickers/search?q=`
+- Dropdown: up to 8 results showing ticker (bold), name, sector
+- Keyboard navigation: ↑↓ to highlight, Enter to select, Escape to close
+- Click-outside closes dropdown
+- Fallback: Enter with no highlight navigates to `/signals/{TYPED_TICKER}`
+
+### Hooks
+
+| Hook | Purpose | Data Source | Polling |
+|------|---------|-------------|---------|
+| `useAuth` | User + login state | `/auth/me` | On mount + route change |
+| `useWatchlist` | Ticker list + signals | API or localStorage | — |
+| `useTopSignals` | Top signals + prices + sparklines | `/signals/top` + quotes + series | 60s (market open only) |
+| `useTrending` | Top movers by change_pct | `/market-data/quotes` | 60s (market open only) |
+| `useLiveQuotes` | Ticker → Quote map | `/market-data/quotes` | 60s (market open only) |
+| `useMarketStatus` | Market open/closed | `/market-data/status` | 15s always |
+
+### Market-Aware Polling
+
+`useTopSignals`, `useTrending`, and `useLiveQuotes` all read `useMarketStatus()` to gate `refetchInterval`:
+- Market open → poll every 60s
+- Market closed → no polling (`refetchInterval: false`)
+
+This prevents unnecessary API load outside trading hours.
+
+### Data Fallback Strategy
+
+All signal/market hooks follow the same pattern:
+1. Attempt real API call
+2. On success → use live data
+3. On failure → fall back to `MOCK_*` constants from `src/lib/mock.ts`
+4. UI never goes blank — always shows something
+
+---
+
+## What's Not Built
+
+| Feature | What Exists | What's Missing |
+|---------|-------------|----------------|
+| News backend | `news_articles` DB table, mock UI | `/api/news` endpoint, scraper, frontend API call |
+| Email verification page | Backend endpoints, API methods | `/auth/verify-email` and `/auth/verify-pending` pages |
+| Profile settings | "Coming soon" UI | Notifications/preferences implementation |
+| Payment/upgrade | Upgrade button in profile | Stripe integration, tier change flow |
+| OAuth | Backend returns 501 | Google/Apple login buttons |

@@ -15,7 +15,8 @@ ingestion code lands).
 | Source | Category | Tables Fed | Status | How |
 |--------|----------|-----------|--------|-----|
 | User's historical 30-min/daily dataset | Historical bars + indicators | `bars_30m`, `bars_1d` (+ `instruments`) | ✅ Live (236M+19.5M rows loaded) | `db/market_data/import_features_to_timescale.py` (`make import-30min`) |
-| IBKR WebSocket | Real-time 1-min bars | `market_data_1min` | ✅ Live (market hours) | `data/ingestion/ibkr_stream.py` (`make ibkr-stream`) |
+| IBKR WebSocket | Real-time 1-min bars (50 core symbols) | `market_data_1min` | ✅ Live (market hours) | `data/ingestion/realtime/ibkr_service.py` |
+| Finnhub WebSocket | Real-time trade ticks → 1-min bars (same 50 symbols, dual-source) | `market_data_1min` | ✅ Live (market hours) | `data/ingestion/realtime/finnhub_ws.py` |
 | Massive (massive.com) — minute history | Supplemental minute bars | `data/minute_data/` parquet → `market_data_1min` | ✅ Delivered (NDX-100 + Top-20 ETF, ~2yr parquet) | `data/ingestion/massive_minute_parquet.py` (`make minute-parquet`) |
 | Massive — reference + market cap | Universe metadata | `data/reference/tickers_reference.parquet`, `tickers.market_cap` | ✅ Live | `data/ingestion/massive_reference.py`, `massive_marketcap.py` |
 | Massive — symbol validation | On-demand universe expansion | `symbol_requests` → `tickers` | ✅ Live (Celery, every 6h) | `ml/tasks/symbol_validation.py` |
@@ -71,22 +72,69 @@ SQL, so there is no train/serve skew.
 
 ### 2. IBKR Real-Time Stream
 
-**File**: `data/ingestion/ibkr_stream.py` · **run**: `make ibkr-stream`
+**File**: `data/ingestion/realtime/ibkr_service.py` (managed by supervisor)
 
-**What it provides**: Real-time 1-minute bars during market hours
-(9:30am–4:00pm ET), written to `market_data_1min` with `source='ibkr'`. IBKR's
-TWS API streams 5-second bars which the `MinuteBarAggregator` combines into
-1-minute bars. Idempotent upsert on `(ticker, time)`.
+**What it provides**: Real-time 1-minute bars during market hours via
+`reqHistoricalDataAsync(keepUpToDate=True)`, written to `market_data_1min` with
+`source='ibkr'`. 50 symbols (10 ETFs + 40 stocks by 60-day ADDV). Idempotent
+upsert on `(ticker, time)`.
 
-**Subscribed tickers**: from the `IBKR_TICKERS` env var (default: Top-30, ETFs
-first). These power the homepage live board / index strip
-(`/api/market-data/quotes`, `/mini`, `/heatmap`).
+**Zombie prevention** (3-layer):
+1. **Error codes** (instant): `errorEvent` handler catches 1100 (connectivity
+   lost), 1101 (restored, data lost → resubscribe all), 1102 (restored, data
+   maintained), 2108 (data farm inactive → force reconnect).
+2. **Heartbeat** (every 30s): `reqCurrentTime()` with 10s timeout. 3 consecutive
+   failures → force reconnect. Detects silent TCP death.
+3. **Data freshness** (every 1s): if no bar from any symbol for 120s → force
+   reconnect. Catch-all for edge cases layers 1-2 miss.
+
+**Reconnection**: exponential backoff 10s → 20s → ... → 300s max. Backoff only
+resets after 5 minutes of sustained data flow (prevents thrashing on flaky
+connections). `ib.RequestTimeout = 30` prevents blocking calls from hanging
+indefinitely.
 
 **Setup requirements**:
 - IBKR TWS or IB Gateway running locally
 - `IBKR_HOST` / `IBKR_PORT` / `IBKR_CLIENT_ID` in `.env`
   (7497/7496 TWS paper/live · 4002/4001 IB Gateway paper/live)
 - Market-data subscription for US equities
+
+### 2b. Finnhub WebSocket (Dual-Source Hot Standby)
+
+**File**: `data/ingestion/realtime/finnhub_ws.py` (managed by supervisor)
+
+**What it provides**: Real-time trade ticks from Finnhub's US SIP feed
+(~150ms latency), aggregated into 1-minute OHLCV bars in memory, then flushed
+to `market_data_1min` with `source='finnhub'` every 5 seconds.
+
+**Why both IBKR and Finnhub?** Neither source is a "fallback" — both run
+concurrently and write to the same table. The `ON CONFLICT` upsert preserves
+IBKR rows (higher fidelity: direct exchange data, accurate volume) over Finnhub
+rows. If IBKR goes zombie, Finnhub bars fill the gap automatically with no
+switching logic needed.
+
+**CrossValidator** (shared between IBKR and Finnhub):
+- Every 30s, compares latest prices from both feeds per symbol.
+- If one source's price stops advancing for >120s while the other is live →
+  WARNING log (potential zombie on the stale side).
+- If both sources have fresh prices but they diverge >2% → ERROR log (data
+  integrity issue, possible bad feed or corporate action mid-stream).
+
+**Tick → Bar aggregation** (`_BarAccumulator`):
+- Each trade tick updates the in-progress bar for the current minute: open (first
+  tick), high/low (running max/min), close (latest tick), volume (cumulative).
+- Completed bars (whose minute is strictly in the past) are flushed to DB.
+- Finnhub tick data may be sparser than IBKR (not every trade is captured), so
+  volume from Finnhub is typically lower — the upsert uses
+  `GREATEST(market_data_1min.volume, EXCLUDED.volume)` to preserve the higher
+  volume.
+
+**Finnhub free tier limits**: 50 WebSocket symbols (matches our IBKR set), 1
+connection per API key, 60 REST calls/min, real-time US SIP data only (non-US is
+delayed/EOD).
+
+**Config**: `FINNHUB_API_KEY` in `.env`, `FINNHUB_WS_ENABLED=true` (default).
+Requires `websockets>=13.0` package.
 
 ### 3. Massive (massive.com)
 
@@ -195,7 +243,8 @@ ORDER BY bars;
 | 数据源 | 类型 | 写入表 | 状态 | 入口 |
 |--------|------|--------|------|------|
 | 用户历史 30 分钟 / 日线数据 | 历史 K 线 + 指标 | `bars_30m`、`bars_1d`（+ `instruments`） | ✅ 已导入（2.36亿 + 1955万行） | `make import-30min` |
-| IBKR WebSocket | 实时 1 分钟 K 线 | `market_data_1min` | ✅ 盘中实时 | `make ibkr-stream` |
+| IBKR WebSocket | 实时 1 分钟 K 线（50 核心标的） | `market_data_1min` | ✅ 盘中实时 | `data/ingestion/realtime/ibkr_service.py` |
+| Finnhub WebSocket | 实时 trade tick → 1 分钟 bar（同 50 标的，双源互备） | `market_data_1min` | ✅ 盘中实时 | `data/ingestion/realtime/finnhub_ws.py` |
 | Massive — 分钟历史 | 补充分钟 K 线 | `data/minute_data/` parquet | ✅ 已交付（NDX-100 + Top-20 ETF，~2 年） | `make minute-parquet` |
 | Massive — 参考 + 市值 | 宇宙元数据 | `tickers_reference.parquet`、`tickers.market_cap` | ✅ 已接入 | `massive_reference.py` / `massive_marketcap.py` |
 | Massive — 符号校验 | 按需扩展宇宙 | `symbol_requests` → `tickers` | ✅ Celery 每 6 小时 | `ml/tasks/symbol_validation.py` |

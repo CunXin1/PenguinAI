@@ -7,12 +7,14 @@ How to **bring data up to date**, the quirks of each source, symbol-format diffe
 
 ## 中文
 
-### 1. 三个数据源对比
+### 1. 数据源对比（含实时双源）
 | 源 | 用途 | 复权 | 历史深度 | 限制 / 坑 |
 |---|---|---|---|---|
 | **供应商 zip/目录** | 初始全量(2000–2026) | raw + adj 分两套文件 | 全 | 一次性快照;股票 adj 比 raw 早结束(导出版本差异),见下 |
 | **Yahoo(yfinance)** | 增量补到最新(已采用) | `auto_adjust=False` 给 raw + `Adj Close` | **30 分钟只回溯 60 天** | 无需登录;盘前盘后量=0;优先股代码不全;见下 |
-| **IBKR(ib_async)** | 备选(更全、可 1 分钟) | `TRADES`=raw / `ADJUSTED_LAST`=adj | 深 | 需 TWS/Gateway 登录;**60 请求/10 分钟**硬限流(全宇宙 ~39h);本会话登录失败,脚本未在真账号验证 |
+| **IBKR(ib_async)** | 实时主源(50 核心标的) | `TRADES`=raw | 1h 回填 | 需 TWS/Gateway;三层僵尸检测;50 keepUpToDate 上限 |
+| **Finnhub WS** | 实时双源互备(同 50 标的) | 无(raw tick) | 无历史 | 免费 50 symbols;tick 稀疏(volume 偏低);需自聚合 1min bar |
+| **Massive** | 剩余标的 + 收盘 30min 刷新 | raw(可选 adj) | ~15min 延迟 | $29/月 Starter;非实时;Polygon 兼容 API |
 
 ### 2. 原始供应商数据的"版本差异"坑(重要)
 - 股票:**raw 到 2026-05-19**,但 **adj 只到 2026-04-13**(`YYYY(1).zip` 是更早导出)。
@@ -63,12 +65,14 @@ How to **bring data up to date**, the quirks of each source, symbol-format diffe
 
 ## English
 
-### 1. Three sources
+### 1. Data sources (including realtime dual-source)
 | Source | Use | Adjustment | Depth | Limits / gotchas |
 |---|---|---|---|---|
 | **Vendor zips/dirs** | initial full load (2000–2026) | raw + adj in separate files | full | one-shot; stock adj ends earlier than raw (export vintage) |
 | **Yahoo (yfinance)** | incremental to latest (in use) | `auto_adjust=False` → raw + `Adj Close` | **30-min only last 60 days** | no login; pre/post volume=0; preferred tickers spotty |
-| **IBKR (ib_async)** | alternative (fuller, 1-min) | `TRADES`=raw / `ADJUSTED_LAST`=adj | deep | needs TWS/Gateway; **60 req/10min** cap (~39h full); login failed this session, untested live |
+| **IBKR (ib_async)** | primary realtime (50 core symbols) | `TRADES`=raw | 1h backfill on connect | needs TWS/Gateway; 3-layer zombie detection; 50 keepUpToDate limit |
+| **Finnhub WS** | dual-source realtime (same 50 symbols) | raw ticks | no history | free 50 symbols; sparse ticks (low volume); self-aggregated 1min bars |
+| **Massive** | remaining symbols + post-close 30min | raw (optional adj) | ~15min delayed | $29/mo Starter; not realtime; Polygon-compatible API |
 
 ### 2. Vendor "export-vintage" gap (important)
 Stock **raw → 2026-05-19** but **adj → 2026-04-13**; ETFs both → 04-14. So stocks have raw-but-no-adj for

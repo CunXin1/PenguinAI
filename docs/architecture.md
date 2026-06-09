@@ -130,6 +130,53 @@ FastAPI: SELECT * FROM signal_cache WHERE ticker='NVDA' AND expires_at > now()
        Frontend polls → cache hit → 200 + Signal JSON
 ```
 
+### Data Flow: Realtime Market Data (During Market Hours)
+
+```
+FastAPI lifespan (startup)
+    └─ _SupervisorWatchdog (daemon thread)
+           └─ subprocess: supervisor.py
+                  │
+                  ├─ IBKR service (ibkr_service.py)
+                  │    • 50 core ETFs/stocks via keepUpToDate 1-min bars
+                  │    • 3-layer zombie detection:
+                  │      Layer 0: error codes 1100/1101/1102/2108 (instant)
+                  │      Layer 1: reqCurrentTime() heartbeat every 30s (3 strikes → reconnect)
+                  │      Layer 2: global last_bar_at timeout 120s (catch-all)
+                  │    • On 1101 (data lost): resubscribe all streams without full reconnect
+                  │    • Exponential backoff: 10s → 20s → 300s max (resets after 5min stable)
+                  │    • Feeds CrossValidator with every bar's close price
+                  │
+                  ├─ Finnhub WS service (finnhub_ws.py)
+                  │    • Same 50 symbols via wss://ws.finnhub.io (real-time trade ticks)
+                  │    • _BarAccumulator: ticks → 1-min OHLCV bars in memory
+                  │    • Flush completed bars to market_data_1min every 5s (source='finnhub')
+                  │    • ON CONFLICT: IBKR rows preserved over Finnhub (IBKR is higher fidelity)
+                  │    • Feeds CrossValidator with every tick's price
+                  │
+                  ├─ CrossValidator (shared instance)
+                  │    • Every 30s: compare IBKR vs Finnhub prices per symbol
+                  │    • IBKR stale >120s but Finnhub live → WARNING (IBKR may be zombie)
+                  │    • Finnhub stale >120s but IBKR live → WARNING (Finnhub may be zombie)
+                  │    • Price divergence >2% → ERROR (data integrity issue)
+                  │
+                  ├─ Massive poller (massive_poller.py)
+                  │    • Remaining ~3000 symbols not covered by IBKR/Finnhub
+                  │    • Every 60s with random jitter (0-18s per symbol)
+                  │    • ~15 min delayed (Massive Starter plan)
+                  │    • Error classification: 429/5xx → retryable, consecutive failure tracking
+                  │
+                  └─ Close 30m refresher (close_30min.py)
+                       • 16:05 + 20:05 ET: refresh bars_30m from Massive (Yahoo fallback)
+
+Supervisor watchdog:
+    • Monitors all child tasks via asyncio.wait(FIRST_COMPLETED)
+    • Crashed task → exponential backoff restart (2s → 4s → ... → 300s)
+    • Health reporter prints HEALTH:{json} to stdout every 30s
+    • FastAPI _SupervisorWatchdog thread reads stdout, auto-restarts subprocess
+    • /health endpoint reports "degraded" if supervisor is dead
+```
+
 ### Data Flow: Top-100 Pre-computation (Hourly)
 
 ```
@@ -172,6 +219,32 @@ PenguinAI 遵循三个不可违反的架构原则：
 | FastAPI | Celery | `send_task(任务名字符串)` | 不在 API 进程导入 torch |
 | ML Worker | vLLM | httpx 本地 HTTP | Gemma 4 推理 |
 | Celery 任务 | TimescaleDB | SQLAlchemy async | 读写数据 |
+
+### 实时数据流（开盘时间）
+
+```
+FastAPI 启动
+    └─ _SupervisorWatchdog（守护线程）
+           └─ 子进程: supervisor.py
+                  │
+                  ├─ IBKR 服务：50 个核心标的，亚秒级 1 分钟 K 线
+                  │    三层僵尸检测：
+                  │    ① 错误码 1100/1101/1102/2108（即时）
+                  │    ② reqCurrentTime() 心跳 30s（连续 3 次失败 → 重连）
+                  │    ③ 全局数据新鲜度 120s（兜底）
+                  │
+                  ├─ Finnhub WS 服务：同 50 标的，实时 trade tick → 1 分钟 bar
+                  │    ON CONFLICT: IBKR 行优先保留
+                  │
+                  ├─ CrossValidator（共享实例）
+                  │    每 30s 比较两边价格：
+                  │    一方停滞 >120s → 警告（可能 zombie）
+                  │    价格偏差 >2% → 错误（数据完整性问题）
+                  │
+                  ├─ Massive 轮询：剩余 ~3000 标的，60s 间隔，~15 分延迟
+                  │
+                  └─ 收盘 30 分钟刷新：16:05 + 20:05 ET
+```
 
 ### 信号请求数据流（中文版）
 
