@@ -82,10 +82,13 @@ _UPSERT_SQL = text(
 
 
 # ── Config ───────────────────────────────────────────────────────────────────
-class LoaderSettings(BaseSettings):
-    """Env-backed defaults (reads the repo-root .env, like the rest of the app)."""
+_ENV_FILE = str(Path(__file__).resolve().parents[2] / ".env")
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+class LoaderSettings(BaseSettings):
+    """Env-backed defaults (reads the repo-root .env regardless of cwd)."""
+
+    model_config = SettingsConfigDict(env_file=_ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
     DATABASE_URL: str = "postgresql+asyncpg://penguinai:penguinai_dev@localhost:5432/penguinai"
     FINNHUB_API_KEY: str = ""
