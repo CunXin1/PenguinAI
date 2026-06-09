@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import type { SessionPhase } from "@/lib/types";
 
 /** Merge Tailwind class names with conflict resolution. */
 export function cn(...inputs: ClassValue[]): string {
@@ -35,12 +36,8 @@ export function compact(n: number | null | undefined): string {
   return Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(n);
 }
 
-/** Client-side US market-active approximation (ET weekday 04:00–20:00,
- *  covering pre-market, regular, and after-hours).
- *  Lightweight fallback when /market-data/status is unreachable — does NOT
- *  account for holidays or early closes; the backend (exchange_calendars) is
- *  authoritative. */
-export function isUsMarketActiveNow(now: Date = new Date()): boolean {
+/** Parse ET time parts from a Date (shared by the helpers below). */
+function etTimeParts(now: Date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
     weekday: "short",
@@ -50,11 +47,32 @@ export function isUsMarketActiveNow(now: Date = new Date()): boolean {
   }).formatToParts(now);
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
   const wd = get("weekday");
-  if (wd === "Sat" || wd === "Sun") return false;
   let hh = parseInt(get("hour"), 10);
   if (hh === 24) hh = 0;
-  const mins = hh * 60 + parseInt(get("minute"), 10);
-  return mins >= 4 * 60 && mins < 20 * 60;
+  return { wd, mins: hh * 60 + parseInt(get("minute"), 10) };
+}
+
+/** Client-side session phase approximation (ET-based, no holiday awareness).
+ *  Lightweight fallback when /market-data/status is unreachable. */
+export function getClientSessionPhase(now: Date = new Date()): SessionPhase {
+  const { wd, mins } = etTimeParts(now);
+  if (wd === "Sat" || wd === "Sun") return "CLOSED";
+  if (mins < 4 * 60) return "OVERNIGHT";
+  if (mins < 9 * 60 + 30) return "PRE_MARKET";
+  if (mins < 16 * 60) return "REGULAR";
+  if (mins < 20 * 60) return "AFTER_HOURS";
+  return "OVERNIGHT";
+}
+
+/** Client-side US market-active approximation (ET weekday 04:00–20:00,
+ *  covering pre-market, regular, and after-hours).
+ *  Lightweight fallback when /market-data/status is unreachable — does NOT
+ *  account for holidays or early closes; the backend (exchange_calendars) is
+ *  authoritative. */
+const _ACTIVE_PHASES: ReadonlySet<SessionPhase> = new Set(["PRE_MARKET", "REGULAR", "AFTER_HOURS"]);
+
+export function isUsMarketActiveNow(now: Date = new Date()): boolean {
+  return _ACTIVE_PHASES.has(getClientSessionPhase(now));
 }
 
 /** @deprecated Use isUsMarketActiveNow — kept for backward compat. */

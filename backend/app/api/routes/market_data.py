@@ -435,7 +435,7 @@ def _period_change(
         if is_open and live_price is not None:
             price, baseline = live_price, last_close  # intraday move vs prior close
         else:
-            price, baseline = last_close, (prev or last_close)
+            price, baseline = last_close, (prev if prev is not None else last_close)
         chg = ((price - baseline) / baseline * 100.0) if baseline else 0.0
     else:
         ret = m.get(_PERIOD_RET[period])  # stored as a fraction
@@ -466,7 +466,7 @@ async def get_heatmap(
         )
     now = datetime.now(UTC)
     phase = get_session_phase(now)
-    is_open = phase != "CLOSED"
+    is_open = phase == "REGULAR"
     if not is_open:
         mx = (await db.execute(text("SELECT max(time) FROM market_data_1min"))).scalar()
         is_open = ticks_advancing(mx)

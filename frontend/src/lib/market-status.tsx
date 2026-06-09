@@ -3,7 +3,7 @@
 import { createContext, useContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { marketData } from "@/lib/api";
-import { isUsMarketActiveNow } from "@/lib/utils";
+import { getClientSessionPhase, isUsMarketActiveNow } from "@/lib/utils";
 import type { MarketStatus, SessionPhase } from "@/lib/types";
 
 /**
@@ -26,8 +26,6 @@ interface MarketStatusValue {
 
 const MarketStatusContext = createContext<MarketStatusValue | null>(null);
 
-const PHASE_WHEN_UNKNOWN: SessionPhase = "CLOSED";
-
 export function MarketStatusProvider({ children }: { children: React.ReactNode }) {
   const { data, isLoading } = useQuery<MarketStatus>({
     queryKey: ["marketStatus"],
@@ -36,8 +34,9 @@ export function MarketStatusProvider({ children }: { children: React.ReactNode }
     staleTime: 10_000,
   });
 
-  const isOpen = data?.market_active ?? isUsMarketActiveNow();
-  const sessionPhase: SessionPhase = data?.session_phase ?? PHASE_WHEN_UNKNOWN;
+  const fallbackPhase = getClientSessionPhase();
+  const isOpen = data?.market_active ?? (fallbackPhase !== "CLOSED");
+  const sessionPhase: SessionPhase = data?.session_phase ?? fallbackPhase;
 
   return (
     <MarketStatusContext.Provider value={{ status: data, isOpen, sessionPhase, isLoading }}>
@@ -49,10 +48,11 @@ export function MarketStatusProvider({ children }: { children: React.ReactNode }
 export function useMarketStatus(): MarketStatusValue {
   const ctx = useContext(MarketStatusContext);
   if (ctx === null) {
+    const phase = getClientSessionPhase();
     return {
       status: undefined,
-      isOpen: isUsMarketActiveNow(),
-      sessionPhase: PHASE_WHEN_UNKNOWN,
+      isOpen: phase !== "CLOSED",
+      sessionPhase: phase,
       isLoading: false,
     };
   }

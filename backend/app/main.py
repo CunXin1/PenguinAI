@@ -244,22 +244,27 @@ async def lifespan(app: FastAPI):
     celeb_thread.start()
 
     # Earnings: startup fetch + 2× daily (08:00 / 18:00 ET weekdays)
-    from data.earnings.scheduler import run_scheduler as _run_earnings
+    earnings_thread = None
+    try:
+        from data.earnings.scheduler import run_scheduler as _run_earnings
 
-    _earnings_stop.clear()
-    earnings_thread = threading.Thread(
-        target=_run_earnings,
-        args=(_earnings_stop, settings.DATABASE_URL),
-        daemon=True,
-        name="earnings-sched",
-    )
-    earnings_thread.start()
+        _earnings_stop.clear()
+        earnings_thread = threading.Thread(
+            target=_run_earnings,
+            args=(_earnings_stop, settings.DATABASE_URL),
+            daemon=True,
+            name="earnings-sched",
+        )
+        earnings_thread.start()
+    except ImportError:
+        logger.warning("data.earnings not available — earnings scheduler disabled")
 
     try:
         yield
     finally:
         _earnings_stop.set()
-        earnings_thread.join(timeout=5)
+        if earnings_thread is not None:
+            earnings_thread.join(timeout=5)
         _celeb_stop.set()
         celeb_thread.join(timeout=5)
         _watchdog.stop()

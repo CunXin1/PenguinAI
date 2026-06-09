@@ -137,10 +137,10 @@ async def get_market_status(db: AsyncSession) -> dict:
     """
     now = datetime.now(UTC)
     phase = get_session_phase(now)
-    session_open = is_regular_session(now)
+    session_open = phase == "REGULAR"
     latest = (await db.execute(text("SELECT max(time) FROM market_data_1min"))).scalar()
     advancing = ticks_advancing(latest)
-    is_active = phase != "CLOSED" or advancing
+    is_active = phase in ("PRE_MARKET", "REGULAR", "AFTER_HOURS") or advancing
     return {
         "market_open": session_open or advancing,
         "market_active": is_active,

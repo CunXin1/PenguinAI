@@ -98,12 +98,6 @@ async def main() -> None:
                 loop.add_signal_handler(sig_, stop.set)
 
     ibkr_set = {x.upper() for x in IBKR_SYMBOLS} if s.IBKR_ENABLED else set()
-
-    try:
-        await warmup_core(engine, s, IBKR_SYMBOLS)
-    except Exception as exc:  # noqa: BLE001
-        logger.error("startup warmup failed: %r (continuing)", exc)
-
     poll_symbols = sorted(await _distinct_1min_tickers(engine) - ibkr_set)
     xv = CrossValidator()
 
@@ -133,6 +127,14 @@ async def main() -> None:
         s.IBKR_ENABLED, len(IBKR_SYMBOLS),
         s.FINNHUB_WS_ENABLED and bool(s.FINNHUB_API_KEY), len(poll_symbols),
     )
+
+    async def _warmup_background():
+        try:
+            await warmup_core(engine, s, IBKR_SYMBOLS)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("startup warmup failed: %r", exc)
+
+    warmup_task = asyncio.create_task(_warmup_background(), name="warmup")
 
     # Periodically print health to stdout so the FastAPI watchdog can read it.
     async def _health_reporter():
@@ -186,10 +188,11 @@ async def main() -> None:
         logger.info("supervisor stopping ...")
         stop_task.cancel()
         health_task.cancel()
+        warmup_task.cancel()
         for st in services.values():
             st.task.cancel()
         await asyncio.gather(
-            stop_task, health_task, *(st.task for st in services.values()), return_exceptions=True
+            stop_task, health_task, warmup_task, *(st.task for st in services.values()), return_exceptions=True
         )
         await engine.dispose()
 

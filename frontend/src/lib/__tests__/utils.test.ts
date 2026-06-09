@@ -161,7 +161,7 @@ describe("timeAgo", () => {
   });
 });
 
-describe("isUsMarketSessionNow", () => {
+describe("isUsMarketActiveNow (aliased as isUsMarketSessionNow)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -170,38 +170,47 @@ describe("isUsMarketSessionNow", () => {
     vi.useRealTimers();
   });
 
-  it("returns true during weekday session (Tue 11:00 ET)", () => {
-    // 2026-06-09 is a Tuesday. 11:00 ET = 15:00 UTC (EDT offset -4)
+  it("returns true during regular session (Tue 11:00 ET)", () => {
     vi.setSystemTime(new Date("2026-06-09T15:00:00Z"));
     expect(isUsMarketSessionNow()).toBe(true);
   });
 
-  it("returns true at market open (Mon 09:30 ET)", () => {
-    // 2026-06-08 is a Monday. 09:30 ET = 13:30 UTC
-    vi.setSystemTime(new Date("2026-06-08T13:30:00Z"));
+  it("returns true during pre-market (Mon 06:00 ET)", () => {
+    // 06:00 ET = 10:00 UTC — within extended window [04:00, 20:00)
+    vi.setSystemTime(new Date("2026-06-08T10:00:00Z"));
     expect(isUsMarketSessionNow()).toBe(true);
   });
 
-  it("returns false at market close (Mon 16:00 ET)", () => {
-    // 16:00 ET = 20:00 UTC -> should be false (< 16*60 means 16:00 is excluded)
-    vi.setSystemTime(new Date("2026-06-08T20:00:00Z"));
+  it("returns true during after-hours (Mon 18:00 ET)", () => {
+    // 18:00 ET = 22:00 UTC — within extended window [04:00, 20:00)
+    vi.setSystemTime(new Date("2026-06-08T22:00:00Z"));
+    expect(isUsMarketSessionNow()).toBe(true);
+  });
+
+  it("returns false at extended close (Mon 20:00 ET)", () => {
+    // 20:00 ET = 00:00 UTC next day — at the boundary, excluded
+    vi.setSystemTime(new Date("2026-06-09T00:00:00Z"));
     expect(isUsMarketSessionNow()).toBe(false);
   });
 
-  it("returns false before market open (Mon 09:29 ET)", () => {
-    // 09:29 ET = 13:29 UTC
-    vi.setSystemTime(new Date("2026-06-08T13:29:00Z"));
+  it("returns false before extended open (Mon 03:59 ET)", () => {
+    // 03:59 ET = 07:59 UTC
+    vi.setSystemTime(new Date("2026-06-08T07:59:00Z"));
     expect(isUsMarketSessionNow()).toBe(false);
+  });
+
+  it("returns true at extended open boundary (Mon 04:00 ET)", () => {
+    // 04:00 ET = 08:00 UTC
+    vi.setSystemTime(new Date("2026-06-08T08:00:00Z"));
+    expect(isUsMarketSessionNow()).toBe(true);
   });
 
   it("returns false on Saturday", () => {
-    // 2026-06-13 is a Saturday
     vi.setSystemTime(new Date("2026-06-13T15:00:00Z"));
     expect(isUsMarketSessionNow()).toBe(false);
   });
 
   it("returns false on Sunday", () => {
-    // 2026-06-14 is a Sunday
     vi.setSystemTime(new Date("2026-06-14T15:00:00Z"));
     expect(isUsMarketSessionNow()).toBe(false);
   });

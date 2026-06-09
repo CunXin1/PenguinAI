@@ -8,9 +8,17 @@ import { marketData } from "@/lib/api";
 import { Card } from "@/components/ui/Card";
 import { useMarketStatus } from "@/lib/market-status";
 import { cn, money, signedPct } from "@/lib/utils";
-import type { CandleBar, ChartRange } from "@/lib/types";
+import type { CandleBar, ChartRange, SessionPhase } from "@/lib/types";
 
 type SeriesType = "area" | "candles";
+
+const PHASE_LABELS: Record<SessionPhase, string> = {
+  PRE_MARKET: "Pre-Mkt",
+  REGULAR: "Live",
+  AFTER_HOURS: "After-Hrs",
+  OVERNIGHT: "Overnight",
+  CLOSED: "Closed",
+};
 
 interface RangeCfg {
   key: ChartRange;
@@ -107,14 +115,7 @@ export function PriceChart({
   // Live only when the market is actually open and we're on an intraday range;
   // daily ranges are historical, and a closed market shows the last close frozen.
   const intradayLive = cfg.intraday && isOpen;
-  const phaseLabels: Record<string, string> = {
-    PRE_MARKET: "Pre-Mkt",
-    REGULAR: "Live",
-    AFTER_HOURS: "After-Hrs",
-    OVERNIGHT: "Overnight",
-    CLOSED: "Closed",
-  };
-  const statusLabel = cfg.intraday ? (phaseLabels[sessionPhase] ?? "Closed") : "Daily";
+  const statusLabel = cfg.intraday ? PHASE_LABELS[sessionPhase] : "Daily";
 
   return (
     <Card className="p-4 sm:p-5">

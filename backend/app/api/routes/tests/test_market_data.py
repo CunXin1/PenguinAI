@@ -270,7 +270,7 @@ async def test_heatmap_returns_tiles_and_indices(client):
     app.dependency_overrides[get_db] = _mock_db_override(_fake_execute)
 
     with (
-        patch("app.api.routes.market_data.is_regular_session", return_value=False),
+        patch("app.api.routes.market_data.get_session_phase", return_value="CLOSED"),
         patch("app.api.routes.market_data.ticks_advancing", return_value=False),
     ):
         resp = await client.get("/api/market-data/heatmap?limit=10&period=1D")
