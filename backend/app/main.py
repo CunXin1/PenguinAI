@@ -227,6 +227,50 @@ def _run_celebrity_scheduler(stop_event: threading.Event):
 
 _celeb_stop = threading.Event()
 _earnings_stop = threading.Event()
+_mcap_stop = threading.Event()
+
+
+def _run_marketcap_scheduler(stop_event: threading.Event):
+    """Background thread: refresh market_cap on startup, then daily at 06:00 ET."""
+    import zoneinfo
+
+    et = zoneinfo.ZoneInfo("America/New_York")
+
+    logger.info("market_cap: initial fetch on startup")
+    try:
+        from data.ingestion.massive_marketcap import run as _mcap_run
+
+        asyncio.run(_mcap_run())
+    except Exception:
+        logger.warning("market_cap: startup fetch failed", exc_info=True)
+
+    while not stop_event.is_set():
+        from datetime import datetime, timedelta
+
+        now_et = datetime.now(et)
+        target = now_et.replace(hour=6, minute=0, second=0, microsecond=0)
+        if target <= now_et:
+            target += timedelta(days=1)
+        while target.weekday() >= 5:
+            target += timedelta(days=1)
+
+        wait_secs = (target - now_et).total_seconds()
+        logger.info(
+            "market_cap: next fetch at %s ET (%.0fh)",
+            target.strftime("%Y-%m-%d %H:%M"),
+            wait_secs / 3600,
+        )
+
+        if stop_event.wait(timeout=wait_secs):
+            break
+
+        logger.info("market_cap: daily fetch starting")
+        try:
+            from data.ingestion.massive_marketcap import run as _mcap_run
+
+            asyncio.run(_mcap_run())
+        except Exception:
+            logger.warning("market_cap: daily fetch failed", exc_info=True)
 
 
 @asynccontextmanager
@@ -242,6 +286,15 @@ async def lifespan(app: FastAPI):
         name="celeb-fetch",
     )
     celeb_thread.start()
+
+    _mcap_stop.clear()
+    mcap_thread = threading.Thread(
+        target=_run_marketcap_scheduler,
+        args=(_mcap_stop,),
+        daemon=True,
+        name="mcap-fetch",
+    )
+    mcap_thread.start()
 
     # Earnings: startup fetch + 2× daily (08:00 / 18:00 ET weekdays)
     earnings_thread = None
@@ -265,6 +318,8 @@ async def lifespan(app: FastAPI):
         _earnings_stop.set()
         if earnings_thread is not None:
             earnings_thread.join(timeout=5)
+        _mcap_stop.set()
+        mcap_thread.join(timeout=5)
         _celeb_stop.set()
         celeb_thread.join(timeout=5)
         _watchdog.stop()

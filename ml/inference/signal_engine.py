@@ -130,21 +130,35 @@ class SignalEngine:
                 ai_analysis="Models not available; no signal generated.",
             )
 
-        if ensemble > 0.55:
+        # Sentiment nudge: FinBERT shifts the decision score ±0.02
+        sent_nudge = 0.0
+        if finbert_score is not None and abs(finbert_score) > 0.2:
+            sent_nudge = finbert_score * 0.02
+
+        score = ensemble + sent_nudge
+
+        if score > 0.52:
             direction = "LONG"
-        elif ensemble < 0.45:
+        elif score < 0.48:
             direction = "SHORT"
         else:
             direction = "NEUTRAL"
 
-        confidence = round(min(1.0, max(0.5, abs(ensemble - 0.5) * 2 + 0.5)), 4)
+        confidence = round(min(1.0, max(0.5, abs(score - 0.5) * 4 + 0.5)), 4)
+
+        drivers = []
+        if ensemble is not None:
+            drivers.append(f"ML ensemble {'bullish' if ensemble > 0.5 else 'bearish'}")
+        if finbert_score is not None and abs(finbert_score) > 0.2:
+            drivers.append(f"sentiment {'positive' if finbert_score > 0 else 'negative'}")
+        attribution = " + ".join(drivers) if drivers else "ML ensemble"
 
         sentiment_note = f", FinBERT={finbert_score:.2f}" if finbert_score is not None else ""
         return GemmaSignalOutput(
             direction=direction,
             confidence=confidence,
             holding_period="SHORT_TERM",
-            ai_attribution="ML ensemble (Gemma unavailable)",
+            ai_attribution=attribution,
             ai_analysis=f"XGB={xgb_prob}, RF={rf_prob}{sentiment_note}. LLM reasoning unavailable.",
         )
 
