@@ -3,33 +3,69 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
-import { Crown, Search, TrendingUp, TrendingDown, Users } from "lucide-react";
+import { Crown, Search, TrendingUp, TrendingDown, Users, X } from "lucide-react";
 import { celebrityHoldings as api } from "@/lib/api";
 import { getCelebrityMeta, getCelebrityColor } from "@/lib/celebrities";
+import { CelebrityRing } from "@/components/celebrity/CelebrityRing";
 import { Card } from "@/components/ui/Card";
 import { StatTile } from "@/components/ui/StatTile";
 import { cn, compact, timeAgo } from "@/lib/utils";
-import type { CelebrityHolding, CelebritySummary, CelebAction } from "@/lib/types";
+import type {
+  CelebrityHolding,
+  CelebritySummary,
+  CelebAction,
+} from "@/lib/types";
 
-type ActionFilter = "ALL" | CelebAction;
+type ActionFilter = "ALL" | "BUY" | "SELL";
 
 const ACTION_FILTERS: { key: ActionFilter; label: string }[] = [
   { key: "ALL", label: "All" },
-  { key: "BUY", label: "Buy" },
-  { key: "SELL", label: "Sell" },
-  { key: "HOLD", label: "Hold" },
+  { key: "BUY", label: "Buys" },
+  { key: "SELL", label: "Sells" },
 ];
 
-const ACTION_STYLE: Record<CelebAction, string> = {
-  BUY: "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30",
-  SELL: "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30",
-  HOLD: "text-zinc-600 dark:text-zinc-400 bg-zinc-200 dark:bg-zinc-700/40 border-zinc-300 dark:border-zinc-600/50",
-};
+interface TickerGroup {
+  ticker: string;
+  ticker_name: string;
+  buyers: { celebrity: string; value_usd: number | null }[];
+  sellers: { celebrity: string; value_usd: number | null }[];
+  latest_date: string;
+}
+
+function groupByTicker(holdings: CelebrityHolding[]): TickerGroup[] {
+  const map = new Map<string, TickerGroup>();
+  for (const h of holdings) {
+    if (h.action === "HOLD") continue;
+    let g = map.get(h.ticker);
+    if (!g) {
+      g = {
+        ticker: h.ticker,
+        ticker_name: h.ticker_name,
+        buyers: [],
+        sellers: [],
+        latest_date: h.reported_at,
+      };
+      map.set(h.ticker, g);
+    }
+    if (h.reported_at > g.latest_date) g.latest_date = h.reported_at;
+    const list = h.action === "BUY" ? g.buyers : g.sellers;
+    if (!list.some((x) => x.celebrity === h.celebrity)) {
+      list.push({ celebrity: h.celebrity, value_usd: h.value_usd });
+    }
+  }
+  return Array.from(map.values()).sort((a, b) =>
+    b.latest_date.localeCompare(a.latest_date)
+  );
+}
 
 export default function CelebrityHoldingsPage() {
   const [selectedCeleb, setSelectedCeleb] = useState<string | null>(null);
   const [actionFilter, setActionFilter] = useState<ActionFilter>("ALL");
   const [q, setQ] = useState("");
+  const [popover, setPopover] = useState<{
+    celebrity: string;
+    action: "BUY" | "SELL" | "HOLD";
+  } | null>(null);
 
   const { data: stats } = useQuery<CelebritySummary[]>({
     queryKey: ["celebStats"],
@@ -38,7 +74,7 @@ export default function CelebrityHoldingsPage() {
 
   const { data: holdings } = useQuery<CelebrityHolding[]>({
     queryKey: ["celebHoldings"],
-    queryFn: () => api.list(300),
+    queryFn: () => api.list(500),
   });
 
   const allStats = useMemo(() => stats ?? [], [stats]);
@@ -50,16 +86,22 @@ export default function CelebrityHoldingsPage() {
     return { tracked: allStats.length, buys, sells };
   }, [allStats, allHoldings]);
 
-  const filtered = useMemo(() => {
+  const tickerGroups = useMemo(() => {
+    const groups = groupByTicker(allHoldings);
     const needle = q.trim().toUpperCase();
-    return allHoldings.filter((h) => {
-      if (selectedCeleb && h.celebrity !== selectedCeleb) return false;
-      if (actionFilter !== "ALL" && h.action !== actionFilter) return false;
+    return groups.filter((g) => {
+      if (selectedCeleb) {
+        const hasCeleb =
+          g.buyers.some((b) => b.celebrity === selectedCeleb) ||
+          g.sellers.some((s) => s.celebrity === selectedCeleb);
+        if (!hasCeleb) return false;
+      }
+      if (actionFilter === "BUY" && g.buyers.length === 0) return false;
+      if (actionFilter === "SELL" && g.sellers.length === 0) return false;
       if (
         needle &&
-        !h.ticker.includes(needle) &&
-        !h.ticker_name.toUpperCase().includes(needle) &&
-        !getCelebrityMeta(h.celebrity).name.toUpperCase().includes(needle)
+        !g.ticker.includes(needle) &&
+        !g.ticker_name.toUpperCase().includes(needle)
       )
         return false;
       return true;
@@ -71,11 +113,12 @@ export default function CelebrityHoldingsPage() {
       {/* Header */}
       <div>
         <h1 className="text-xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-          <Crown size={20} className="text-amber-500 dark:text-amber-400" /> Smart Money
+          <Crown size={20} className="text-amber-500 dark:text-amber-400" />{" "}
+          Smart Money
         </h1>
         <p className="text-sm text-zinc-500 mt-0.5">
-          Track what Buffett, Pelosi, Cathie Wood and other institutional investors are buying and
-          selling
+          Track what Buffett, Pelosi, Cathie Wood and other institutional
+          investors are buying and selling
         </p>
       </div>
 
@@ -104,57 +147,62 @@ export default function CelebrityHoldingsPage() {
         />
       </div>
 
-      {/* Celebrity cards */}
-      <div className="flex gap-3 overflow-x-auto pb-1 -mx-4 px-4 scrollbar-none">
-        {allStats.slice(0, 8).map((s) => {
+      {/* Celebrity ring avatars */}
+      <div className="flex gap-6 overflow-x-auto pb-2 -mx-4 px-4 scrollbar-none">
+        {allStats.map((s) => {
           const meta = getCelebrityMeta(s.celebrity);
           const color = getCelebrityColor(s.celebrity);
           const isSelected = selectedCeleb === s.celebrity;
           return (
-            <button
+            <div
               key={s.celebrity}
-              type="button"
-              onClick={() => setSelectedCeleb(isSelected ? null : s.celebrity)}
-              className={cn(
-                "shrink-0 rounded-xl border p-3 min-w-[160px] text-left transition-all",
-                isSelected
-                  ? "border-sky-500 bg-sky-500/5 dark:bg-sky-500/10 ring-1 ring-sky-500/40"
-                  : "border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 hover:border-zinc-300 dark:hover:border-zinc-700"
-              )}
+              className="shrink-0 flex flex-col items-center gap-2"
             >
-              <div className="flex items-center gap-2 mb-2">
-                <div
-                  className={cn(
-                    "w-8 h-8 rounded-full bg-gradient-to-br grid place-items-center text-xs font-bold text-white shrink-0",
-                    color
-                  )}
-                >
-                  {meta.avatar}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-zinc-900 dark:text-white truncate">
-                    {meta.name}
-                  </p>
-                  <p className="text-[10px] text-zinc-500 truncate">{meta.title}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 text-xs">
-                <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                  {s.buys} buys
-                </span>
-                <span className="text-red-500 dark:text-red-400 font-medium">{s.sells} sells</span>
-              </div>
-              <p className="text-[10px] text-zinc-400 dark:text-zinc-600 mt-1">
-                Latest: {timeAgo(s.latest_trade)}
-              </p>
-            </button>
+              <CelebrityRing
+                buys={s.buys}
+                sells={s.sells}
+                holds={s.total_trades - s.buys - s.sells}
+                size={120}
+                initials={meta.avatar}
+                gradientClass={color}
+                image={meta.image}
+                selected={isSelected}
+                onCenterClick={() =>
+                  setSelectedCeleb(isSelected ? null : s.celebrity)
+                }
+                onSegmentClick={(action) =>
+                  setPopover(
+                    popover?.celebrity === s.celebrity &&
+                      popover.action === action
+                      ? null
+                      : { celebrity: s.celebrity, action }
+                  )
+                }
+              />
+              <Link
+                href={`/celebrity-holdings/${s.celebrity}`}
+                className="text-xs text-zinc-400 hover:text-white transition-colors text-center leading-tight max-w-[120px] truncate"
+              >
+                {meta.name.split(" ").pop()}
+              </Link>
+            </div>
           );
         })}
       </div>
 
+      {/* Segment detail panel */}
+      {popover && (
+        <SegmentDetail
+          celebrity={popover.celebrity}
+          action={popover.action}
+          holdings={allHoldings}
+          onClose={() => setPopover(null)}
+        />
+      )}
+
       {/* Filters */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-1">
+        <div className="flex gap-1 items-center">
           {ACTION_FILTERS.map((f) => (
             <button
               key={f.key}
@@ -189,99 +237,192 @@ export default function CelebrityHoldingsPage() {
         </div>
       </div>
 
-      {/* Transaction table */}
+      {/* Ticker tracker */}
       <Card className="overflow-hidden divide-y divide-zinc-200 dark:divide-zinc-800/70">
-        {/* Header row */}
         <div className="grid grid-cols-12 gap-2 items-center px-4 py-2 text-[10px] text-zinc-400 dark:text-zinc-600 uppercase tracking-wider font-medium">
-          <div className="col-span-3 sm:col-span-3">Ticker</div>
-          <div className="col-span-3 sm:col-span-2">Celebrity</div>
-          <div className="col-span-2 sm:col-span-1 text-center">Action</div>
-          <div className="hidden sm:block col-span-2 text-right">Shares</div>
-          <div className="hidden sm:block col-span-2 text-right">Value</div>
-          <div className="col-span-4 sm:col-span-2 text-right">Date</div>
+          <div className="col-span-3">Ticker</div>
+          <div className="col-span-4">Buyers</div>
+          <div className="col-span-3">Sellers</div>
+          <div className="col-span-2 text-right">Date</div>
         </div>
-        {filtered.map((h) => (
-          <HoldingRow key={h.id} h={h} />
+        {tickerGroups.map((g) => (
+          <TickerRow key={g.ticker} group={g} />
         ))}
       </Card>
 
-      {filtered.length === 0 && (
+      {tickerGroups.length === 0 && (
         <p className="text-center text-sm text-zinc-400 dark:text-zinc-600 py-12">
-          No transactions match your filters{q ? ` for "${q}"` : ""}.
+          No tickers match your filters{q ? ` for "${q}"` : ""}.
         </p>
       )}
 
       <p className="text-xs text-zinc-400 dark:text-zinc-600 text-center pt-2">
-        Data from SEC EDGAR 13F/13D filings, Quiver Quant congressional trades, and ARK Invest
-        daily disclosures.
+        Data from SEC EDGAR 13F/13D filings, Quiver Quant congressional trades,
+        and ARK Invest daily disclosures.
       </p>
     </div>
   );
 }
 
-function HoldingRow({ h }: { h: CelebrityHolding }) {
-  const meta = getCelebrityMeta(h.celebrity);
-  const color = getCelebrityColor(h.celebrity);
+/* ── Segment detail panel (shown below avatars on ring click) ─────────────── */
+
+function SegmentDetail({
+  celebrity,
+  action,
+  holdings,
+  onClose,
+}: {
+  celebrity: string;
+  action: "BUY" | "SELL" | "HOLD";
+  holdings: CelebrityHolding[];
+  onClose: () => void;
+}) {
+  const meta = getCelebrityMeta(celebrity);
+  const tickers = useMemo(() => {
+    const seen = new Set<string>();
+    return holdings
+      .filter((h) => h.celebrity === celebrity && h.action === action)
+      .filter((h) => {
+        if (seen.has(h.ticker)) return false;
+        seen.add(h.ticker);
+        return true;
+      });
+  }, [celebrity, action, holdings]);
+
+  const label =
+    action === "BUY" ? "Buying" : action === "SELL" ? "Selling" : "Holding";
 
   return (
+    <Card className="p-4">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-sm font-semibold text-zinc-900 dark:text-zinc-200">
+          {meta.name} —{" "}
+          <span
+            className={
+              action === "BUY"
+                ? "text-emerald-400"
+                : action === "SELL"
+                  ? "text-red-400"
+                  : "text-zinc-400"
+            }
+          >
+            {label}
+          </span>
+          <span className="text-zinc-500 font-normal ml-2">
+            {tickers.length} tickers
+          </span>
+        </p>
+        <button
+          onClick={onClose}
+          className="text-zinc-500 hover:text-white transition-colors"
+        >
+          <X size={16} />
+        </button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {tickers.map((t) => (
+          <Link
+            key={t.ticker}
+            href={`/signals/${t.ticker}`}
+            className={cn(
+              "px-3 py-1.5 rounded-lg text-xs font-mono font-semibold transition-colors",
+              action === "BUY"
+                ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
+                : action === "SELL"
+                  ? "bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                  : "bg-zinc-500/10 text-zinc-400 hover:bg-zinc-500/20"
+            )}
+          >
+            {t.ticker}
+            <span className="text-[10px] text-zinc-500 ml-1.5 font-sans font-normal">
+              {t.ticker_name}
+            </span>
+          </Link>
+        ))}
+        {tickers.length === 0 && (
+          <p className="text-xs text-zinc-500">No tickers</p>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+/* ── Celebrity pill shown in tracker rows ─────────────────────────────────── */
+
+function CelebPill({
+  celebrity,
+  action,
+}: {
+  celebrity: string;
+  action: "BUY" | "SELL";
+}) {
+  const meta = getCelebrityMeta(celebrity);
+  const color = getCelebrityColor(celebrity);
+  const isBuy = action === "BUY";
+  return (
     <Link
-      href={`/signals/${h.ticker}`}
-      className="grid grid-cols-12 gap-2 items-center px-4 py-3 hover:bg-zinc-100 dark:hover:bg-zinc-800/30 transition-colors"
+      href={`/celebrity-holdings/${celebrity}`}
+      className={cn(
+        "inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium transition-colors",
+        isBuy
+          ? "bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20"
+          : "bg-red-500/10 text-red-400 hover:bg-red-500/20"
+      )}
     >
-      {/* Ticker + name */}
-      <div className="col-span-3 sm:col-span-3 min-w-0">
-        <span className="font-mono font-semibold text-sm text-zinc-900 dark:text-zinc-100">
-          {h.ticker}
-        </span>
-        <p className="text-xs text-zinc-500 truncate mt-0.5">{h.ticker_name}</p>
+      <span
+        className={cn(
+          "w-4 h-4 rounded-full bg-gradient-to-br grid place-items-center text-[7px] font-bold text-white shrink-0",
+          color
+        )}
+      >
+        {meta.avatar.charAt(0)}
+      </span>
+      {meta.name.split(" ").pop()}
+    </Link>
+  );
+}
+
+/* ── One row in the ticker tracker table ──────────────────────────────────── */
+
+function TickerRow({ group: g }: { group: TickerGroup }) {
+  return (
+    <div className="grid grid-cols-12 gap-2 items-center px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/20 transition-colors">
+      {/* Ticker */}
+      <div className="col-span-3 min-w-0">
+        <Link href={`/signals/${g.ticker}`} className="group">
+          <span className="font-mono font-semibold text-sm text-zinc-900 dark:text-zinc-100 group-hover:text-sky-400 transition-colors">
+            {g.ticker}
+          </span>
+          <p className="text-xs text-zinc-500 truncate mt-0.5">
+            {g.ticker_name}
+          </p>
+        </Link>
       </div>
 
-      {/* Celebrity */}
-      <div className="col-span-3 sm:col-span-2 flex items-center gap-1.5 min-w-0">
-        <div
-          className={cn(
-            "w-5 h-5 rounded-full bg-gradient-to-br grid place-items-center text-[8px] font-bold text-white shrink-0",
-            color
-          )}
-        >
-          {meta.avatar}
-        </div>
-        <span className="text-xs text-zinc-700 dark:text-zinc-300 truncate">{meta.name}</span>
+      {/* Buyers */}
+      <div className="col-span-4 flex flex-wrap gap-1">
+        {g.buyers.map((b) => (
+          <CelebPill key={b.celebrity} celebrity={b.celebrity} action="BUY" />
+        ))}
+        {g.buyers.length === 0 && (
+          <span className="text-xs text-zinc-600">—</span>
+        )}
       </div>
 
-      {/* Action badge */}
-      <div className="col-span-2 sm:col-span-1 flex justify-center">
-        <span
-          className={cn(
-            "px-2 py-0.5 rounded-md text-[10px] font-semibold border leading-none",
-            ACTION_STYLE[h.action]
-          )}
-        >
-          {h.action}
-        </span>
-      </div>
-
-      {/* Shares */}
-      <div className="hidden sm:block col-span-2 text-right">
-        <p className="font-mono text-sm text-zinc-700 dark:text-zinc-300">
-          {h.shares != null ? compact(h.shares) : "—"}
-        </p>
-      </div>
-
-      {/* Value */}
-      <div className="hidden sm:block col-span-2 text-right">
-        <p className="font-mono text-sm text-zinc-700 dark:text-zinc-300">
-          {h.value_usd != null ? `$${compact(h.value_usd)}` : "—"}
-        </p>
+      {/* Sellers */}
+      <div className="col-span-3 flex flex-wrap gap-1">
+        {g.sellers.map((s) => (
+          <CelebPill key={s.celebrity} celebrity={s.celebrity} action="SELL" />
+        ))}
+        {g.sellers.length === 0 && (
+          <span className="text-xs text-zinc-600">—</span>
+        )}
       </div>
 
       {/* Date */}
-      <div className="col-span-4 sm:col-span-2 text-right">
-        <p className="text-xs text-zinc-500">{timeAgo(h.reported_at)}</p>
-        <p className="text-[10px] text-zinc-400 dark:text-zinc-600">
-          {h.source_type === "13F" ? "13F Filing" : "Disclosure"}
-        </p>
+      <div className="col-span-2 text-right">
+        <p className="text-xs text-zinc-500">{timeAgo(g.latest_date)}</p>
       </div>
-    </Link>
+    </div>
   );
 }

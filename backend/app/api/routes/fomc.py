@@ -202,11 +202,10 @@ async def get_rate_history(
     db: Annotated[AsyncSession, Depends(get_db)],
     years: int = Query(default=None, ge=1, le=30),
 ):
-    """Federal funds rate over time — one point per FOMC statement date.
+    """Federal funds rate over time — from fomc_fed_funds_rate table.
 
-    Uses the authoritative hardcoded rate table (cross-verified against
-    FRED, Fed press releases, and Bankrate). Each point shows the
-    effective rate on that meeting date, NOT extracted from statement text.
+    Data is populated by the FOMC scheduler (FRED API or hardcoded seed).
+    Falls back to the hardcoded table if the DB table is empty.
     """
     if years is None:
         years = settings.FOMC_DEFAULT_RATE_HISTORY_YEARS
@@ -215,31 +214,41 @@ async def get_rate_history(
     if cached is not None:
         return cached
 
-    from data.fomc.fed_funds_rate import get_rate_on_date
+    now = datetime.now(UTC)
+    cutoff_year = now.year - years
+    cutoff_str = f"{cutoff_year}-{now.month:02d}-{now.day:02d}"
 
-    cutoff = datetime.now(UTC).replace(year=datetime.now(UTC).year - years)
-    cutoff_str = cutoff.strftime("%Y-%m-%d")
+    points: list[dict] = []
+    try:
+        rows = await db.execute(
+            text(
+                "SELECT date, rate_low, rate_high "
+                "FROM fomc_fed_funds_rate "
+                "WHERE date >= :cutoff "
+                "ORDER BY date"
+            ),
+            {"cutoff": cutoff_str},
+        )
+        points = [
+            {
+                "date": str(r["date"]),
+                "rate_low": float(r["rate_low"]),
+                "rate_high": float(r["rate_high"]),
+            }
+            for r in rows.mappings()
+        ]
+    except Exception:
+        logger.debug("fomc_fed_funds_rate table not available, using hardcoded fallback")
 
-    rows = await db.execute(
-        text(
-            "SELECT DISTINCT time::date AS d FROM fomc_statements "
-            "WHERE time::date >= :cutoff "
-            "ORDER BY d"
-        ),
-        {"cutoff": cutoff_str},
-    )
-    points = []
-    for row in rows:
-        date_str = str(row[0])
-        try:
-            low, high = get_rate_on_date(date_str)
-            points.append({
-                "date": date_str,
-                "rate_low": low,
-                "rate_high": high,
-            })
-        except ValueError:
-            continue
+    # Fallback to hardcoded if DB table is empty or missing
+    if not points:
+        from data.fomc.fed_funds_rate import FED_FUNDS_RATE_HISTORY
+
+        for date_str in sorted(FED_FUNDS_RATE_HISTORY.keys()):
+            if date_str < cutoff_str:
+                continue
+            low, high = FED_FUNDS_RATE_HISTORY[date_str]
+            points.append({"date": date_str, "rate_low": low, "rate_high": high})
 
     _set_cache(cache_key, points)
     return points
@@ -394,46 +403,104 @@ async def get_statement_diff(
 
 @router.get("/news")
 async def get_fomc_news(
+    db: Annotated[AsyncSession, Depends(get_db)],
     limit: int = Query(default=10, ge=1, le=50),
 ):
-    """Fed/FOMC-related news headlines via Google News RSS."""
+    """Fed/FOMC-related news from DB (populated by scheduler), fallback to RSS."""
     cache_key = f"fomc:news:{limit}"
     cached = _get_cached(cache_key, _NEWS_TTL)
     if cached is not None:
         return cached[:limit]
 
-    from app.api.routes.news import _fetch_google_rss
+    # Try DB first (scheduler populates news_articles with ticker='FOMC')
+    articles: list[dict] = []
+    try:
+        rows = await db.execute(
+            text(
+                "SELECT id, time, headline, source, url, raw_metadata "
+                "FROM news_articles "
+                "WHERE ticker = 'FOMC' "
+                "ORDER BY time DESC "
+                "LIMIT :limit"
+            ),
+            {"limit": limit},
+        )
+        for r in rows.mappings():
+            ts = r["time"]
+            unix_ts = int(ts.timestamp()) if isinstance(ts, datetime) else 0
+            articles.append({
+                "id": str(r["id"]),
+                "headline": r["headline"],
+                "summary": "",
+                "source": r["source"] or "Google News",
+                "url": r.get("url"),
+                "datetime": unix_ts,
+                "tickers": [],
+                "sentiment": None,
+            })
+    except Exception:
+        logger.debug("FOMC news DB query failed, using RSS fallback")
 
-    articles = await _fetch_google_rss(
-        query="Federal Reserve FOMC interest rate decision",
-        limit=limit,
-    )
-    if articles is None:
-        articles = []
+    # Fallback to live RSS if DB is empty or query failed
+    if not articles:
+        try:
+            from app.api.routes.news import _fetch_google_rss
+
+            articles = await _fetch_google_rss(
+                query="Federal Reserve FOMC interest rate decision",
+                limit=limit,
+            ) or []
+        except Exception:
+            logger.warning("FOMC news RSS fallback failed", exc_info=True)
+
     _set_cache(cache_key, articles)
     return articles[:limit]
 
 
 @router.get("/rate-probabilities")
-async def get_rate_probabilities():
-    """CME FedWatch implied rate probabilities for the next FOMC meeting."""
+async def get_rate_probabilities(
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """CME FedWatch probabilities from DB (populated by scheduler), fallback to live."""
     cache_key = "fomc:rate-probs"
     cached = _get_cached(cache_key, _FEDWATCH_TTL)
     if cached is not None:
         return cached
 
+    # Try DB first — get latest snapshot for the next meeting
+    result: list[dict] = []
     try:
-        from data.fomc.fedwatch import fetch_fedwatch_probabilities
-
-        result = await fetch_fedwatch_probabilities()
+        rows = await db.execute(
+            text("""
+                SELECT DISTINCT ON (target_rate_low)
+                    meeting_date, target_rate_low, target_rate_high, probability
+                FROM fomc_rate_probabilities
+                ORDER BY target_rate_low, time DESC
+            """)
+        )
+        for r in rows.mappings():
+            result.append({
+                "meeting_date": str(r["meeting_date"]),
+                "target_rate_low": float(r["target_rate_low"]),
+                "target_rate_high": float(r["target_rate_high"]),
+                "probability": float(r["probability"]),
+            })
     except Exception:
-        logger.warning("CME FedWatch fetch failed", exc_info=True)
-        result = None
+        logger.debug("fomc_rate_probabilities table not available, using live fallback")
+
+    # Fallback to live fetch if DB is empty or table missing
+    if not result:
+        try:
+            from data.fomc.fedwatch import fetch_fedwatch_probabilities
+
+            result = await fetch_fedwatch_probabilities() or []
+        except Exception:
+            logger.warning("CME FedWatch fetch failed", exc_info=True)
 
     if result:
+        result.sort(key=lambda x: x["probability"], reverse=True)
         _set_cache(cache_key, result)
-        return result
-    return []
+    return result
 
 
 def _split_sentences(text: str) -> list[str]:

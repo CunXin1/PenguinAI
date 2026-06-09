@@ -10,6 +10,7 @@ import type {
   CandleBar,
   CelebrityHolding,
   CelebritySummary,
+  CelebrityTopHolding,
   ChartRange,
   DatabaseHealth,
   EarningsEvent,
@@ -247,6 +248,11 @@ export const celebrityHoldings = {
     apiFetch<CelebrityHolding[]>(`/celebrity-holdings/ticker/${ticker.toUpperCase()}?limit=${limit}`),
 
   stats: () => apiFetch<CelebritySummary[]>("/celebrity-holdings/stats/summary"),
+
+  topHoldings: (celebrity: string, limit = 30) =>
+    apiFetch<CelebrityTopHolding[]>(
+      `/celebrity-holdings/${celebrity}/top-holdings?limit=${limit}`
+    ),
 };
 
 // ── News API ─────────────────────────────────────────────────────────────────

@@ -88,6 +88,7 @@ class Settings(BaseSettings):
     POLYGON_API_KEY: str = ""
     MASSIVE_API_KEY: str = ""
     MASSIVE_BASE_URL: str = "https://api.massive.com"
+    FRED_API_KEY: str = ""  # free: fed funds rate history (fred.stlouisfed.org)
     FINNHUB_API_KEY: str = ""  # free tier: earnings calendar + estimates (60 req/min)
     FINNHUB_BASE_URL: str = "https://finnhub.io/api/v1"
     IBKR_HOST: str = "127.0.0.1"

@@ -200,3 +200,25 @@ CREATE TABLE IF NOT EXISTS fomc_statements (
 SELECT create_hypertable('fomc_statements', 'time', if_not_exists => TRUE);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_fomc_time ON fomc_statements (time);
 CREATE INDEX IF NOT EXISTS idx_fomc_document_url ON fomc_statements (document_url);
+
+-- ── FOMC federal funds rate (FRED API or hardcoded seed) ────────────────────
+CREATE TABLE IF NOT EXISTS fomc_fed_funds_rate (
+    date          DATE            NOT NULL PRIMARY KEY,
+    rate_low      NUMERIC(5, 4)   NOT NULL,
+    rate_high     NUMERIC(5, 4)   NOT NULL,
+    source        TEXT            DEFAULT 'hardcoded'
+);
+CREATE INDEX IF NOT EXISTS idx_ffr_date ON fomc_fed_funds_rate (date DESC);
+
+-- ── FOMC rate probabilities (CME FedWatch) ──────────────────────────────────
+CREATE TABLE IF NOT EXISTS fomc_rate_probabilities (
+    time              TIMESTAMPTZ     NOT NULL,
+    meeting_date      DATE            NOT NULL,
+    target_rate_low   NUMERIC(5, 4)   NOT NULL,
+    target_rate_high  NUMERIC(5, 4)   NOT NULL,
+    probability       NUMERIC(6, 2)   NOT NULL,   -- 0.00–100.00
+    PRIMARY KEY (time, meeting_date, target_rate_low)
+);
+SELECT create_hypertable('fomc_rate_probabilities', 'time', if_not_exists => TRUE);
+CREATE INDEX IF NOT EXISTS idx_fomc_probs_meeting ON fomc_rate_probabilities (meeting_date, time DESC);
+SELECT add_retention_policy('fomc_rate_probabilities', INTERVAL '180 days', if_not_exists => TRUE);

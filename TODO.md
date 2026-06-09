@@ -18,8 +18,17 @@
 - [ ] Celery worker 启动时自动 load models，失败则 log + 降级运行
 - [ ] 各 API 数据源断线重连 + 重试逻辑
 
-## 3. FOMC 完善
-- [ ] CME FedWatch 市场预期利率概率
+## 3. FOMC 完善 ✅
+- [x] CME FedWatch 市场预期利率概率
+- [x] 利率图表时间跨度选择器（1Y/3Y/5Y/10Y/ALL）
+- [x] Hawk/Dove 趋势可调数量滑块
+- [x] SPY 市场反应合并到 Hawk/Dove 面板（Tabbed）
+- [x] 会议日程默认过去10次 + 未来10次
+- [x] 声明默认显示10条 + Show More
+- [x] 数字参数可通过 config.py / .env 配置
+- [x] Fed/FOMC 新闻模块（Google News RSS）
+- [x] 全屏布局修复（max-w-7xl + lg:grid-cols-3）
+- [x] 组件拆分到 frontend/src/components/fomc/
 
 ## 4. 完善前端 UI/UX
 - [ ] 移动端响应式优化（dashboard 卡片布局、图表触控交互）

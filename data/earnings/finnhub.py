@@ -57,19 +57,27 @@ logger = logging.getLogger("finnhub_earnings")
 # ── SQL ──────────────────────────────────────────────────────────────────────
 # Self-heal the schema for DBs created before report_hour existed (same
 # IF NOT EXISTS idiom the IBKR stream uses for its unique index).
-_ENSURE_COLUMN_SQL = text("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS report_hour TEXT")
+_ENSURE_COLUMNS_SQL = [
+    text("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS report_hour TEXT"),
+    text("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS fiscal_quarter SMALLINT"),
+    text("ALTER TABLE earnings ADD COLUMN IF NOT EXISTS fiscal_year SMALLINT"),
+]
 _UNIVERSE_SQL = text("SELECT ticker FROM tickers")
 _UPSERT_SQL = text(
     """
     INSERT INTO earnings (
-        ticker, report_date, eps_actual, eps_estimate, eps_surprise_pct,
+        ticker, report_date, fiscal_quarter, fiscal_year,
+        eps_actual, eps_estimate, eps_surprise_pct,
         revenue_actual, revenue_estimate, guidance_text, report_hour
     )
     VALUES (
-        :ticker, :report_date, :eps_actual, :eps_estimate, :eps_surprise_pct,
+        :ticker, :report_date, :fiscal_quarter, :fiscal_year,
+        :eps_actual, :eps_estimate, :eps_surprise_pct,
         :revenue_actual, :revenue_estimate, :guidance_text, :report_hour
     )
     ON CONFLICT (ticker, report_date) DO UPDATE SET
+        fiscal_quarter   = COALESCE(EXCLUDED.fiscal_quarter, earnings.fiscal_quarter),
+        fiscal_year      = COALESCE(EXCLUDED.fiscal_year, earnings.fiscal_year),
         eps_actual       = EXCLUDED.eps_actual,
         eps_estimate     = EXCLUDED.eps_estimate,
         eps_surprise_pct = EXCLUDED.eps_surprise_pct,
@@ -140,9 +148,13 @@ def _to_row(item: dict) -> dict | None:
     eps_actual = item.get("epsActual")
     eps_estimate = item.get("epsEstimate")
     hour = (item.get("hour") or "").strip().lower() or None
+    raw_q = item.get("quarter")
+    raw_y = item.get("year")
     return {
         "ticker": symbol,
         "report_date": report_date,
+        "fiscal_quarter": int(raw_q) if raw_q is not None else None,
+        "fiscal_year": int(raw_y) if raw_y is not None else None,
         "eps_actual": eps_actual,
         "eps_estimate": eps_estimate,
         "eps_surprise_pct": _surprise_pct(eps_actual, eps_estimate),
@@ -189,7 +201,8 @@ async def run_loader(cfg: LoaderConfig) -> int:
     engine = create_async_engine(cfg.database_url)
     try:
         async with engine.begin() as conn:
-            await conn.execute(_ENSURE_COLUMN_SQL)
+            for stmt in _ENSURE_COLUMNS_SQL:
+                await conn.execute(stmt)
 
         universe = await _load_universe(engine)
         if not universe:

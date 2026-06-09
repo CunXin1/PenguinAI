@@ -95,6 +95,8 @@ CREATE INDEX IF NOT EXISTS idx_celeb_ticker ON celebrity_holdings (ticker, repor
 CREATE TABLE IF NOT EXISTS earnings (
     ticker            TEXT        NOT NULL REFERENCES tickers(ticker),
     report_date       DATE        NOT NULL,
+    fiscal_quarter    SMALLINT,   -- 1–4
+    fiscal_year       SMALLINT,   -- e.g. 2026
     eps_actual        NUMERIC(10, 4),
     eps_estimate      NUMERIC(10, 4),
     eps_surprise_pct  NUMERIC(8, 4),

@@ -1,4 +1,4 @@
-.PHONY: up down logs backend frontend ml-worker ibkr-stream minute-parquet fetch-earnings fetch-fomc fetch-congress fetch-13f fetch-ark fetch-celebrities lint type-check test test-backend test-frontend db-init bootstrap status
+.PHONY: up down logs backend frontend ml-worker ibkr-stream minute-parquet fetch-earnings fetch-fomc fetch-congress fetch-13f fetch-ark fetch-celebrities lint type-check test test-backend test-frontend db-init bootstrap status dev
 
 # ── Docker Compose ────────────────────────────────────────────────────────────
 up:
@@ -18,7 +18,11 @@ backend:
 	cd backend && uvicorn app.main:app --reload --port 8000
 
 frontend:
-	cd frontend && npm run dev
+	cd frontend && NODE_OPTIONS="--max-old-space-size=1024" npm run dev
+
+# Start backend + frontend together; frontend auto-restarts on crash
+dev:
+	bash scripts/dev.sh
 
 ml-worker:
 	cd . && celery -A ml.tasks.celery_app worker --queues=ml_inference -c 1 --loglevel=info

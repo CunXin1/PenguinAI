@@ -132,6 +132,21 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
+_NON_EN_RE = re.compile(
+    r"\b(?:según|también|después|años|será|está|están|puede|desde|gobierno"
+    r"|mercado|dijo|empresa|precio|acciones|inversión|más|país|economía"
+    r"|millones|sobre|entre|hasta|tienen|otros|durante|porque|contra"
+    r"|ainda|muito|agora|preço|ações|também)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_english(article: dict) -> bool:
+    text_sample = (article.get("headline") or "") + " " + (article.get("summary") or "")
+    if _NON_EN_RE.search(text_sample):
+        return False
+    ascii_chars = sum(1 for c in text_sample if 32 <= ord(c) <= 126)
+    return ascii_chars / max(len(text_sample), 1) > 0.85
 
 # ── In-memory cache ──────────────────────────────────────────────────
 _cache: dict[str, tuple[float, list]] = {}
@@ -467,6 +482,7 @@ async def get_market_news(
     if articles is None:
         articles = []
 
+    articles = [a for a in articles if _is_english(a)]
     _set_cache(cache_key, articles)
     return articles[:limit]
 
@@ -516,7 +532,7 @@ async def get_hot_news(
             ),
             {"limit": limit},
         )
-    result = [_map_db_row(r) for r in rows.mappings()]
+    result = [a for a in (_map_db_row(r) for r in rows.mappings()) if _is_english(a)]
     if result:
         _set_cache(cache_key, result)
         return result
@@ -533,6 +549,7 @@ async def get_hot_news(
     articles = articles or []
     if t:
         articles = await _score_articles(articles, t)
+    articles = [a for a in articles if _is_english(a)]
     _set_cache(cache_key, articles)
     return articles
 
@@ -570,7 +587,7 @@ async def get_company_news(
                 ),
                 {"ticker": t, "days": days, "limit": limit},
             )
-            result = [_map_db_row(r) for r in rows.mappings()]
+            result = [a for a in (_map_db_row(r) for r in rows.mappings()) if _is_english(a)]
             if result:
                 return result
         except Exception as exc:
@@ -600,6 +617,7 @@ async def get_company_news(
 
     # FinBERT score on-demand for cold tickers (runs in thread pool)
     articles = await _score_articles(articles, t)
+    articles = [a for a in articles if _is_english(a)]
 
     _set_cache(cache_key, articles)
     return articles

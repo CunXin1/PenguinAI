@@ -392,6 +392,7 @@ _earnings_stop = threading.Event()
 _mcap_stop = threading.Event()
 _news_stop = threading.Event()
 _seed_stop = threading.Event()
+_fomc_stop = threading.Event()
 
 
 def _run_marketcap_scheduler(stop_event: threading.Event):
@@ -502,6 +503,22 @@ async def lifespan(app: FastAPI):
     except ImportError:
         logger.warning("data.news not available — news scheduler disabled")
 
+    # FOMC: startup fetch + statements daily + news/FedWatch every 30 min
+    fomc_thread = None
+    try:
+        from data.fomc.scheduler import run_scheduler as _run_fomc
+
+        _fomc_stop.clear()
+        fomc_thread = threading.Thread(
+            target=_run_fomc,
+            args=(_fomc_stop, settings.DATABASE_URL),
+            daemon=True,
+            name="fomc-sched",
+        )
+        fomc_thread.start()
+    except ImportError:
+        logger.warning("data.fomc.scheduler not available — FOMC scheduler disabled")
+
     # Seed critical market data if bars_30m is empty (checks DB → parquets → Massive API)
     seed_thread = None
     try:
@@ -524,6 +541,9 @@ async def lifespan(app: FastAPI):
         _seed_stop.set()
         if seed_thread is not None:
             seed_thread.join(timeout=5)
+        _fomc_stop.set()
+        if fomc_thread is not None:
+            fomc_thread.join(timeout=5)
         _news_stop.set()
         if news_thread is not None:
             news_thread.join(timeout=5)

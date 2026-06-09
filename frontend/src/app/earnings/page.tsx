@@ -9,12 +9,14 @@ import {
   Sunrise,
   Moon,
   ChevronRight,
+  ChevronDown,
   RefreshCw,
   AlertCircle,
   BarChart3,
   ExternalLink,
   TrendingUp,
   TrendingDown,
+  Clock,
 } from "lucide-react";
 import { earnings as earningsApi } from "@/lib/api";
 import { Card } from "@/components/ui/Card";
@@ -28,40 +30,39 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "reported", label: "Reported" },
   { key: "all", label: "All" },
 ];
+const PAGE_SIZE = 30;
 
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-const MO = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
-  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-];
+const MO = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function fmtDate(iso: string) {
   const [y, m, d] = iso.split("-").map(Number);
   const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
   return { weekday: WD[wd], label: `${MO[m - 1]} ${d}`, year: y };
 }
 
-const SESSION: Record<
-  EarningsSession,
-  { label: string; cls: string; Icon: typeof Sunrise }
-> = {
-  BMO: {
-    label: "Pre-market",
-    cls: "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/30",
-    Icon: Sunrise,
-  },
-  AMC: {
-    label: "After-hours",
-    cls: "text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 border-indigo-500/30",
-    Icon: Moon,
-  },
-  TBD: {
-    label: "TBD",
-    cls: "text-zinc-600 dark:text-zinc-400 bg-zinc-200 dark:bg-zinc-700/40 border-zinc-300 dark:border-zinc-600/50",
-    Icon: CalendarDays,
-  },
+const SESSION: Record<EarningsSession, { label: string; cls: string; Icon: typeof Sunrise }> = {
+  BMO: { label: "Pre-market", cls: "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/30", Icon: Sunrise },
+  AMC: { label: "After-hours", cls: "text-indigo-600 dark:text-indigo-400 bg-indigo-500/10 border-indigo-500/30", Icon: Moon },
+  TBD: { label: "TBD", cls: "text-zinc-600 dark:text-zinc-400 bg-zinc-200 dark:bg-zinc-700/40 border-zinc-300 dark:border-zinc-600/50", Icon: CalendarDays },
 };
 
 const isReported = (e: EarningsEvent) => e.eps_actual !== null;
+
+function quarterShort(e: EarningsEvent) {
+  if (e.fiscal_quarter == null || e.fiscal_year == null) return null;
+  return `Q${e.fiscal_quarter}'${String(e.fiscal_year).slice(2)}`;
+}
+
+function daysUntil(today: string | null, reportDate: string) {
+  if (!today) return null;
+  const t = new Date(today + "T00:00:00Z").getTime();
+  const r = new Date(reportDate + "T00:00:00Z").getTime();
+  return Math.ceil((r - t) / 864e5);
+}
+
+function earningsUrl(ticker: string) {
+  return `https://www.nasdaq.com/market-activity/stocks/${ticker.toLowerCase()}/earnings`;
+}
 
 /* ── Loading skeleton ───────────────────────────────────────────── */
 function Skeleton() {
@@ -73,10 +74,7 @@ function Skeleton() {
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[0, 1, 2, 3].map((i) => (
-          <div
-            key={i}
-            className="h-20 rounded-xl bg-zinc-100 dark:bg-zinc-900/60 animate-pulse"
-          />
+          <div key={i} className="h-20 rounded-xl bg-zinc-100 dark:bg-zinc-900/60 animate-pulse" />
         ))}
       </div>
       <div className="space-y-4">
@@ -85,10 +83,7 @@ function Skeleton() {
             <div className="h-4 w-32 rounded bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
             <Card className="divide-y divide-zinc-200 dark:divide-zinc-800/70">
               {[0, 1, 2].map((r) => (
-                <div
-                  key={r}
-                  className="h-14 animate-pulse bg-zinc-50 dark:bg-zinc-800/20"
-                />
+                <div key={r} className="h-14 animate-pulse bg-zinc-50 dark:bg-zinc-800/20" />
               ))}
             </Card>
           </div>
@@ -98,26 +93,16 @@ function Skeleton() {
   );
 }
 
-/* ── Error state ────────────────────────────────────────────────── */
 function ErrorBanner({ onRetry }: { onRetry: () => void }) {
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
       <Card className="py-16 flex flex-col items-center gap-4 text-center">
         <AlertCircle size={32} className="text-red-500" />
         <div>
-          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-            Failed to load earnings data
-          </p>
-          <p className="text-xs text-zinc-500 mt-1">
-            The backend may be offline or the earnings table is empty.
-          </p>
+          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Failed to load earnings data</p>
+          <p className="text-xs text-zinc-500 mt-1">The backend may be offline or the earnings table is empty.</p>
         </div>
-        <button
-          onClick={onRetry}
-          className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium
-                     bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30
-                     hover:bg-sky-500/25 transition-colors"
-        >
+        <button onClick={onRetry} className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30 hover:bg-sky-500/25 transition-colors">
           <RefreshCw size={12} /> Retry
         </button>
       </Card>
@@ -125,28 +110,20 @@ function ErrorBanner({ onRetry }: { onRetry: () => void }) {
   );
 }
 
-/* ── Empty state ────────────────────────────────────────────────── */
 function EmptyBanner() {
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
       <div>
         <h1 className="text-xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-          <CalendarDays size={20} className="text-sky-500 dark:text-sky-400" />
-          Earnings Calendar
+          <CalendarDays size={20} className="text-sky-500 dark:text-sky-400" /> Earnings Calendar
         </h1>
       </div>
       <Card className="py-16 flex flex-col items-center gap-4 text-center">
         <BarChart3 size={32} className="text-zinc-400 dark:text-zinc-600" />
         <div>
-          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-            No earnings data yet
-          </p>
+          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">No earnings data yet</p>
           <p className="text-xs text-zinc-500 mt-1 max-w-sm">
-            Run{" "}
-            <code className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 font-mono text-[11px]">
-              make fetch-earnings
-            </code>{" "}
-            to pull the Finnhub earnings calendar into the database.
+            Run <code className="px-1.5 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 font-mono text-[11px]">make fetch-earnings</code> to pull the Finnhub earnings calendar.
           </p>
         </div>
       </Card>
@@ -158,85 +135,76 @@ function EmptyBanner() {
 function EpsSparkline({ history }: { history: EarningsEvent[] }) {
   const pts = history.filter(isReported).slice(0, 8).reverse();
   if (pts.length < 2) return null;
-
   const vals = pts.map((e) => e.eps_actual!);
-  const lo = Math.min(...vals);
-  const hi = Math.max(...vals);
-  const range = hi - lo || 1;
-  const W = 100;
-  const H = 28;
-  const pad = 3;
-
-  const line = vals
-    .map((v, i) => {
-      const x = pad + (i / (vals.length - 1)) * (W - 2 * pad);
-      const y = H - pad - ((v - lo) / range) * (H - 2 * pad);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-
+  const lo = Math.min(...vals), hi = Math.max(...vals), range = hi - lo || 1;
+  const W = 100, H = 28, pad = 3;
+  const line = vals.map((v, i) => {
+    const x = pad + (i / (vals.length - 1)) * (W - 2 * pad);
+    const y = H - pad - ((v - lo) / range) * (H - 2 * pad);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
   const lastY = H - pad - ((vals[vals.length - 1] - lo) / range) * (H - 2 * pad);
-
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-[100px] h-7 shrink-0">
-      <polyline
-        points={line}
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        className="text-sky-500"
-      />
-      <circle
-        cx={(W - pad).toFixed(1)}
-        cy={lastY.toFixed(1)}
-        r="2"
-        className="fill-sky-500"
-      />
+      <polyline points={line} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-sky-500" />
+      <circle cx={(W - pad).toFixed(1)} cy={lastY.toFixed(1)} r="2" className="fill-sky-500" />
     </svg>
   );
 }
 
 /* ── Reaction badge ────────────────────────────────────────────── */
-function ReactionBadge({ value, label }: { value: number | null; label: string }) {
-  if (value === null) return null;
+function ReactionBadge({ value, label }: { value: number; label: string }) {
   const up = value >= 0;
   return (
     <div className="flex items-center gap-1">
-      {up ? (
-        <TrendingUp size={11} className="text-emerald-500" />
-      ) : (
-        <TrendingDown size={11} className="text-red-500" />
-      )}
-      <span
-        className={cn(
-          "font-mono text-xs font-semibold",
-          up
-            ? "text-emerald-600 dark:text-emerald-400"
-            : "text-red-600 dark:text-red-400"
-        )}
-        title={label}
-      >
+      {up ? <TrendingUp size={12} className="text-emerald-500" /> : <TrendingDown size={12} className="text-red-500" />}
+      <span className={cn("font-mono text-xs font-semibold", up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")} title={label}>
         {value >= 0 ? "+" : ""}{value.toFixed(2)}%
       </span>
     </div>
   );
 }
 
+/* ── Quarter badge ─────────────────────────────────────────────── */
+function QuarterBadge({ e }: { e: EarningsEvent }) {
+  const q = quarterShort(e);
+  if (!q) return null;
+  return (
+    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 border border-zinc-200 dark:border-zinc-700 leading-none">
+      {q}
+    </span>
+  );
+}
+
+/* ── Ticker cell (shared) ──────────────────────────────────────── */
+function TickerCell({ e, isOpen }: { e: EarningsEvent; isOpen: boolean }) {
+  const sess = SESSION[e.session ?? "TBD"];
+  return (
+    <div className="min-w-0 flex items-center gap-2">
+      <ChevronRight size={14} className={cn("text-zinc-400 dark:text-zinc-600 shrink-0 transition-transform duration-150", isOpen && "rotate-90")} />
+      <div className="min-w-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="font-mono font-semibold text-sm text-zinc-900 dark:text-zinc-100">{e.ticker}</span>
+          <a href={earningsUrl(e.ticker)} target="_blank" rel="noopener noreferrer" onClick={(ev) => ev.stopPropagation()} className="text-sky-500 hover:text-sky-400 transition-colors shrink-0" title="View earnings on Nasdaq">
+            <ExternalLink size={13} />
+          </a>
+          <QuarterBadge e={e} />
+          <span className={cn("hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border leading-none", sess.cls)} title={sess.label}>
+            <sess.Icon size={10} /> {e.session ?? "TBD"}
+          </span>
+        </div>
+        {e.name && <p className="text-xs text-zinc-500 truncate mt-0.5">{e.name}</p>}
+      </div>
+    </div>
+  );
+}
+
 /* ── Per-ticker expanded detail ─────────────────────────────────── */
-function EarningsDetail({
-  ticker,
-  current,
-}: {
-  ticker: string;
-  current: EarningsEvent;
-}) {
+function EarningsDetail({ ticker, current }: { ticker: string; current: EarningsEvent }) {
   const { data, isLoading } = useQuery<EarningsEvent[]>({
     queryKey: ["earnings-history", ticker],
     queryFn: () => earningsApi.byTicker(ticker),
   });
-
   const history = data ?? [];
 
   return (
@@ -245,42 +213,34 @@ function EarningsDetail({
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-1.5">
             <BarChart3 size={13} className="text-sky-500" />
-            <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-              {ticker} Earnings History
-            </span>
+            <span className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">{ticker} Earnings History</span>
           </div>
           {!isLoading && <EpsSparkline history={history} />}
         </div>
-        <Link
-          href={`/signals/${ticker}`}
-          className="flex items-center gap-1 text-[11px] text-sky-600 dark:text-sky-400 hover:underline"
-          onClick={(ev) => ev.stopPropagation()}
-        >
-          Signal <ExternalLink size={10} />
-        </Link>
+        <div className="flex items-center gap-4">
+          <a href={earningsUrl(ticker)} target="_blank" rel="noopener noreferrer" onClick={(ev) => ev.stopPropagation()} className="flex items-center gap-1 text-xs text-sky-500 hover:text-sky-400 transition-colors font-medium">
+            Nasdaq <ExternalLink size={12} />
+          </a>
+          <Link href={`/signals/${ticker}`} className="flex items-center gap-1 text-xs text-sky-500 hover:text-sky-400 transition-colors font-medium" onClick={(ev) => ev.stopPropagation()}>
+            Signal <ExternalLink size={12} />
+          </Link>
+        </div>
       </div>
 
       {isLoading ? (
         <div className="space-y-1.5">
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="h-7 rounded bg-zinc-200 dark:bg-zinc-800 animate-pulse"
-            />
-          ))}
+          {[0, 1, 2].map((i) => <div key={i} className="h-7 rounded bg-zinc-200 dark:bg-zinc-800 animate-pulse" />)}
         </div>
       ) : history.length === 0 ? (
-        <p className="text-xs text-zinc-500 py-4 text-center">
-          No historical data available
-        </p>
+        <p className="text-xs text-zinc-500 py-4 text-center">No historical data available</p>
       ) : (
         <div className="rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800">
-          {/* Header */}
-          <div className="grid grid-cols-[72px_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-1 px-3 py-1.5 bg-zinc-100 dark:bg-zinc-800/60 text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
+          <div className="grid grid-cols-[56px_48px_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-1 px-3 py-1.5 bg-zinc-100 dark:bg-zinc-800/60 text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
             <div>Date</div>
+            <div>Qtr</div>
             <div className="text-right">EPS Est</div>
             <div className="text-right">EPS Act</div>
-            <div className="text-right">EPS Surp</div>
+            <div className="text-right">Surprise</div>
             <div className="text-right">Rev Est</div>
             <div className="text-right">Rev Act</div>
             <div className="text-right">Rev Surp</div>
@@ -290,80 +250,27 @@ function EarningsDetail({
             const r = isReported(h);
             const epsSurp = h.eps_surprise_pct ?? 0;
             const revSurp = h.revenue_surprise_pct;
-            const epsBeat = epsSurp >= 0;
-            const revBeat = revSurp != null && revSurp >= 0;
             const reaction = h.reaction_close_pct;
             return (
-              <div
-                key={h.report_date}
-                className="grid grid-cols-[72px_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-1 px-3 py-1.5 border-t border-zinc-100 dark:border-zinc-800/40 text-xs"
-              >
-                <div className="font-mono text-zinc-500">
-                  {h.report_date.slice(0, 7)}
-                </div>
-                <div className="text-right font-mono text-zinc-600 dark:text-zinc-400">
-                  {h.eps_estimate != null ? `$${h.eps_estimate.toFixed(2)}` : "—"}
-                </div>
-                <div className="text-right font-mono font-semibold text-zinc-900 dark:text-zinc-100">
-                  {r ? `$${h.eps_actual!.toFixed(2)}` : "—"}
-                </div>
+              <div key={h.report_date} className="grid grid-cols-[56px_48px_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-1 px-3 py-1.5 border-t border-zinc-100 dark:border-zinc-800/40 text-xs">
+                <div className="font-mono text-zinc-500">{h.report_date.slice(5)}</div>
+                <div className="text-zinc-500">{quarterShort(h) ?? "—"}</div>
+                <div className="text-right font-mono text-zinc-600 dark:text-zinc-400">{h.eps_estimate != null ? `$${h.eps_estimate.toFixed(2)}` : "—"}</div>
+                <div className="text-right font-mono font-semibold text-zinc-900 dark:text-zinc-100">{r ? `$${h.eps_actual!.toFixed(2)}` : "—"}</div>
                 <div className="text-right">
-                  {r ? (
-                    <span
-                      className={cn(
-                        "font-mono font-semibold",
-                        epsBeat
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-red-600 dark:text-red-400"
-                      )}
-                    >
-                      {signedPct(epsSurp, 1)}
-                    </span>
-                  ) : (
-                    <span className="text-zinc-400">—</span>
-                  )}
+                  {r ? <span className={cn("font-mono font-semibold", epsSurp >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>{signedPct(epsSurp, 1)}</span> : <span className="text-zinc-400">—</span>}
                 </div>
-                <div className="text-right font-mono text-zinc-600 dark:text-zinc-400">
-                  {h.revenue_estimate != null
-                    ? `$${compact(h.revenue_estimate)}`
-                    : "—"}
-                </div>
-                <div className="text-right font-mono font-semibold text-zinc-900 dark:text-zinc-100">
-                  {r && h.revenue_actual != null
-                    ? `$${compact(h.revenue_actual)}`
-                    : "—"}
-                </div>
+                <div className="text-right font-mono text-zinc-600 dark:text-zinc-400">{h.revenue_estimate != null ? `$${compact(h.revenue_estimate)}` : "—"}</div>
+                <div className="text-right font-mono font-semibold text-zinc-900 dark:text-zinc-100">{r && h.revenue_actual != null ? `$${compact(h.revenue_actual)}` : "—"}</div>
                 <div className="text-right">
-                  {r && revSurp != null ? (
-                    <span
-                      className={cn(
-                        "font-mono font-semibold",
-                        revBeat
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-red-600 dark:text-red-400"
-                      )}
-                    >
-                      {signedPct(revSurp, 1)}
-                    </span>
-                  ) : (
-                    <span className="text-zinc-400">—</span>
-                  )}
+                  {r && revSurp != null ? <span className={cn("font-mono font-semibold", revSurp >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>{signedPct(revSurp, 1)}</span> : <span className="text-zinc-400">—</span>}
                 </div>
                 <div className="text-right">
                   {r && reaction != null ? (
-                    <span
-                      className={cn(
-                        "font-mono font-semibold",
-                        reaction >= 0
-                          ? "text-emerald-600 dark:text-emerald-400"
-                          : "text-red-600 dark:text-red-400"
-                      )}
-                    >
-                      {signedPct(reaction, 2)}
-                    </span>
-                  ) : (
-                    <span className="text-zinc-400">—</span>
-                  )}
+                    <span className={cn("font-mono font-semibold", reaction >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>{signedPct(reaction, 2)}</span>
+                  ) : r ? (
+                    <span className="text-zinc-400 italic" title="No price data">N/A</span>
+                  ) : <span className="text-zinc-400">—</span>}
                 </div>
               </div>
             );
@@ -372,134 +279,112 @@ function EarningsDetail({
       )}
 
       {current.guidance_text && (
-        <p className="mt-3 text-xs text-zinc-500 italic leading-relaxed">
-          &ldquo;{current.guidance_text}&rdquo;
-        </p>
+        <p className="mt-3 text-xs text-zinc-500 italic leading-relaxed">&ldquo;{current.guidance_text}&rdquo;</p>
       )}
     </div>
   );
 }
 
-/* ── Single earnings row ────────────────────────────────────────── */
-function EarningsRow({
-  e,
-  isOpen,
-  onToggle,
-}: {
-  e: EarningsEvent;
-  isOpen: boolean;
-  onToggle: () => void;
-}) {
-  const reported = isReported(e);
-  const sess = SESSION[e.session ?? "TBD"];
-  const surprise = e.eps_surprise_pct ?? 0;
-  const beat = surprise >= 0;
-
+/* ── Upcoming row (dedicated layout for "Upcoming" tab) ────────── */
+function UpcomingRow({ e, isOpen, onToggle, today }: { e: EarningsEvent; isOpen: boolean; onToggle: () => void; today: string | null }) {
+  const days = daysUntil(today, e.report_date);
   return (
     <div>
-      <div
-        onClick={onToggle}
-        className="grid grid-cols-12 gap-2 items-center px-4 py-3
-                   hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors cursor-pointer"
-      >
-        {/* ticker + name */}
-        <div className="col-span-4 sm:col-span-3 min-w-0 flex items-center gap-2">
-          <ChevronRight
-            size={14}
-            className={cn(
-              "text-zinc-400 dark:text-zinc-600 shrink-0 transition-transform duration-150",
-              isOpen && "rotate-90"
-            )}
-          />
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="font-mono font-semibold text-sm text-zinc-900 dark:text-zinc-100">
-                {e.ticker}
-              </span>
-              <span
-                className={cn(
-                  "hidden sm:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border leading-none",
-                  sess.cls
-                )}
-                title={sess.label}
-              >
-                <sess.Icon size={10} /> {e.session ?? "TBD"}
-              </span>
-            </div>
-            {e.name && (
-              <p className="text-xs text-zinc-500 truncate mt-0.5">{e.name}</p>
-            )}
-          </div>
-        </div>
-
-        {/* EPS est / actual */}
+      <div onClick={onToggle} className="grid grid-cols-12 gap-2 items-center px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors cursor-pointer">
+        <div className="col-span-5 sm:col-span-4"><TickerCell e={e} isOpen={isOpen} /></div>
         <div className="col-span-3 sm:col-span-2 text-right">
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-600 uppercase tracking-wide">
-            EPS
-          </p>
-          <p className="font-mono text-sm text-zinc-700 dark:text-zinc-300">
-            {reported ? (
-              <>
-                <span className="font-semibold text-zinc-900 dark:text-zinc-100">
-                  ${e.eps_actual!.toFixed(2)}
-                </span>
-                <span className="text-zinc-400 dark:text-zinc-600 text-xs">
-                  {" / "}
-                  {e.eps_estimate != null ? `$${e.eps_estimate.toFixed(2)}` : "—"}
-                </span>
-              </>
-            ) : (
-              <>Est {e.eps_estimate != null ? `$${e.eps_estimate.toFixed(2)}` : "—"}</>
-            )}
-          </p>
+          <p className="text-[10px] text-zinc-400 dark:text-zinc-600 uppercase tracking-wide">EPS Est</p>
+          <p className="font-mono text-sm text-zinc-700 dark:text-zinc-300">{e.eps_estimate != null ? `$${e.eps_estimate.toFixed(2)}` : "—"}</p>
         </div>
-
-        {/* EPS surprise badge */}
-        <div className="hidden sm:flex col-span-2 justify-end">
-          {reported ? (
-            <span
-              className={cn(
-                "px-2 py-0.5 rounded-md text-xs font-mono font-semibold border",
-                beat
-                  ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
-                  : "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30"
-              )}
-            >
-              {signedPct(surprise, 1)}
-            </span>
-          ) : (
-            <span className="text-xs text-zinc-400 dark:text-zinc-600">
-              pending
+        <div className="hidden sm:block col-span-3 text-right">
+          <p className="text-[10px] text-zinc-400 dark:text-zinc-600 uppercase tracking-wide">Rev Est</p>
+          <p className="font-mono text-sm text-zinc-600 dark:text-zinc-400">{e.revenue_estimate != null ? `$${compact(e.revenue_estimate)}` : "—"}</p>
+        </div>
+        <div className="col-span-4 sm:col-span-3 flex items-center justify-end">
+          {days != null && (
+            <span className={cn(
+              "flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold border",
+              days <= 1 ? "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/30"
+                : days <= 7 ? "text-sky-600 dark:text-sky-400 bg-sky-500/10 border-sky-500/30"
+                  : "text-zinc-500 bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700"
+            )}>
+              <Clock size={11} />
+              {days === 0 ? "Today" : days === 1 ? "Tomorrow" : `${days}d`}
             </span>
           )}
         </div>
+      </div>
+      {isOpen && <EarningsDetail ticker={e.ticker} current={e} />}
+    </div>
+  );
+}
 
-        {/* revenue est / actual */}
+/* ── Unified row (for "Reported" and "All" tabs) ───────────────── */
+function UnifiedRow({ e, isOpen, onToggle, today }: { e: EarningsEvent; isOpen: boolean; onToggle: () => void; today: string | null }) {
+  const reported = isReported(e);
+  const surprise = e.eps_surprise_pct ?? 0;
+  const beat = surprise >= 0;
+  const days = !reported ? daysUntil(today, e.report_date) : null;
+
+  return (
+    <div>
+      <div onClick={onToggle} className="grid grid-cols-12 gap-2 items-center px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors cursor-pointer">
+        {/* ticker */}
+        <div className="col-span-4 sm:col-span-3"><TickerCell e={e} isOpen={isOpen} /></div>
+
+        {/* EPS */}
         <div className="col-span-3 sm:col-span-2 text-right">
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-600 uppercase tracking-wide">
-            Revenue
-          </p>
-          <p className="font-mono text-sm text-zinc-600 dark:text-zinc-400">
-            {reported && e.revenue_actual != null ? (
+          <p className="text-[10px] text-zinc-400 dark:text-zinc-600 uppercase tracking-wide">EPS</p>
+          <p className="font-mono text-sm">
+            {reported ? (
               <>
-                <span className="font-semibold text-zinc-900 dark:text-zinc-100">
-                  ${compact(e.revenue_actual)}
-                </span>
-                <span className="text-zinc-400 dark:text-zinc-600 text-xs">
-                  {" / "}
-                  {e.revenue_estimate != null ? `$${compact(e.revenue_estimate)}` : "—"}
-                </span>
+                <span className="font-semibold text-zinc-900 dark:text-zinc-100">${e.eps_actual!.toFixed(2)}</span>
+                <span className="text-zinc-400 dark:text-zinc-600 text-xs"> / {e.eps_estimate != null ? `$${e.eps_estimate.toFixed(2)}` : "—"}</span>
               </>
-            ) : e.revenue_estimate != null ? (
-              <>Est ${compact(e.revenue_estimate)}</>
             ) : (
-              "—"
+              <span className="text-zinc-600 dark:text-zinc-400">
+                {e.eps_estimate != null ? `Est $${e.eps_estimate.toFixed(2)}` : "—"}
+              </span>
             )}
           </p>
         </div>
 
-        {/* price reaction (1-day close-to-close) */}
-        <div className="hidden sm:flex col-span-3 items-center justify-end gap-3">
+        {/* Surprise */}
+        <div className="hidden sm:flex col-span-2 justify-end">
+          {reported ? (
+            <span className={cn("px-2 py-0.5 rounded-md text-xs font-mono font-semibold border", beat ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30" : "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30")}>
+              {signedPct(surprise, 1)}
+            </span>
+          ) : days != null ? (
+            <span className={cn(
+              "flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold border",
+              days <= 1 ? "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/30"
+                : days <= 7 ? "text-sky-600 dark:text-sky-400 bg-sky-500/10 border-sky-500/30"
+                  : "text-zinc-500 bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700"
+            )}>
+              <Clock size={10} />
+              {days === 0 ? "Today" : days === 1 ? "Tomorrow" : `in ${days}d`}
+            </span>
+          ) : null}
+        </div>
+
+        {/* Revenue */}
+        <div className="col-span-3 sm:col-span-2 text-right">
+          <p className="text-[10px] text-zinc-400 dark:text-zinc-600 uppercase tracking-wide">Revenue</p>
+          <p className="font-mono text-sm text-zinc-600 dark:text-zinc-400">
+            {reported && e.revenue_actual != null ? (
+              <>
+                <span className="font-semibold text-zinc-900 dark:text-zinc-100">${compact(e.revenue_actual)}</span>
+                <span className="text-zinc-400 dark:text-zinc-600 text-xs"> / {e.revenue_estimate != null ? `$${compact(e.revenue_estimate)}` : "—"}</span>
+              </>
+            ) : e.revenue_estimate != null ? (
+              <span>Est ${compact(e.revenue_estimate)}</span>
+            ) : "—"}
+          </p>
+        </div>
+
+        {/* Price reaction */}
+        <div className="hidden sm:flex col-span-3 items-center justify-end">
           {reported && e.reaction_close_pct != null ? (
             <div className="flex flex-col items-end gap-0.5">
               <ReactionBadge value={e.reaction_close_pct} label="1-day close-to-close" />
@@ -510,11 +395,10 @@ function EarningsRow({
               )}
             </div>
           ) : reported ? (
-            <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
+            <span className="text-[10px] text-zinc-400 dark:text-zinc-600 italic" title="No daily price data">N/A</span>
           ) : null}
         </div>
       </div>
-
       {isOpen && <EarningsDetail ticker={e.ticker} current={e} />}
     </div>
   );
@@ -526,8 +410,10 @@ export default function EarningsPage() {
   const [q, setQ] = useState("");
   const [today, setToday] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
   useEffect(() => setToday(new Date().toISOString().slice(0, 10)), []);
+  useEffect(() => setVisibleCount(PAGE_SIZE), [tab, q]);
 
   const { data, isLoading, isError, refetch } = useQuery<EarningsEvent[]>({
     queryKey: ["earnings-calendar"],
@@ -546,31 +432,19 @@ export default function EarningsPage() {
     const beats = reported.filter((e) => (e.eps_surprise_pct ?? 0) > 0);
     const misses = reported.filter((e) => (e.eps_surprise_pct ?? 0) < 0);
     const avgSurprise = reported.length
-      ? reported.reduce((s, e) => s + (e.eps_surprise_pct ?? 0), 0) / reported.length
-      : 0;
-    const avgReaction = reported.length
-      ? reported.reduce((s, e) => s + (e.reaction_close_pct ?? 0), 0) / reported.length
-      : 0;
-    return {
-      upcoming: events.length - reported.length,
-      beats: beats.length,
-      misses: misses.length,
-      avgSurprise,
-      avgReaction,
-    };
+      ? reported.reduce((s, e) => s + (e.eps_surprise_pct ?? 0), 0) / reported.length : 0;
+    const withReaction = reported.filter((e) => e.reaction_close_pct != null);
+    const avgReaction = withReaction.length
+      ? withReaction.reduce((s, e) => s + e.reaction_close_pct!, 0) / withReaction.length : 0;
+    return { upcoming: events.length - reported.length, beats: beats.length, misses: misses.length, avgSurprise, avgReaction };
   }, [events]);
 
-  const groups = useMemo(() => {
+  const { groups, totalRows } = useMemo(() => {
     const needle = q.trim().toUpperCase();
     const view = events.filter((e) => {
       if (tab === "upcoming" && isReported(e)) return false;
       if (tab === "reported" && !isReported(e)) return false;
-      if (
-        needle &&
-        !e.ticker.includes(needle) &&
-        !(e.name ?? "").toUpperCase().includes(needle)
-      )
-        return false;
+      if (needle && !e.ticker.includes(needle) && !(e.name ?? "").toUpperCase().includes(needle)) return false;
       return true;
     });
 
@@ -578,21 +452,40 @@ export default function EarningsPage() {
     for (const e of view)
       (byDate.get(e.report_date) ?? byDate.set(e.report_date, []).get(e.report_date)!).push(e);
 
+    // all & reported: reverse chronological (newest first); upcoming: chronological (soonest first)
     const dates = [...byDate.keys()].sort();
-    if (tab === "reported") dates.reverse();
-    return dates.map((d) => ({ date: d, rows: byDate.get(d)! }));
-  }, [events, tab, q]);
+    if (tab !== "upcoming") dates.reverse();
+
+    const totalRows = view.length;
+
+    // Paginate by rows across date groups
+    let remaining = visibleCount;
+    const limited: { date: string; rows: EarningsEvent[] }[] = [];
+    for (const d of dates) {
+      if (remaining <= 0) break;
+      const all = byDate.get(d)!;
+      const take = all.slice(0, remaining);
+      limited.push({ date: d, rows: take });
+      remaining -= take.length;
+    }
+
+    return { groups: limited, totalRows };
+  }, [events, tab, q, visibleCount]);
+
+  const visibleRows = groups.reduce((s, g) => s + g.rows.length, 0);
+  const hasMore = visibleRows < totalRows;
 
   if (isLoading) return <Skeleton />;
   if (isError) return <ErrorBanner onRetry={() => refetch()} />;
   if (events.length === 0) return <EmptyBanner />;
 
+  const useUpcomingLayout = tab === "upcoming";
+
   return (
     <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
       <div>
         <h1 className="text-xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
-          <CalendarDays size={20} className="text-sky-500 dark:text-sky-400" />
-          Earnings Calendar
+          <CalendarDays size={20} className="text-sky-500 dark:text-sky-400" /> Earnings Calendar
         </h1>
         <p className="text-sm text-zinc-500 mt-0.5">
           EPS &amp; revenue estimates vs. actuals with post-earnings price reaction
@@ -604,57 +497,42 @@ export default function EarningsPage() {
         <StatTile label="Upcoming" value={stats.upcoming} accent="brand" sub="next 30 days" />
         <StatTile label="Beats" value={stats.beats} accent="up" sub="EPS > estimate" />
         <StatTile label="Misses" value={stats.misses} accent="down" sub="EPS < estimate" />
-        <StatTile
-          label="Avg Surprise"
-          value={signedPct(stats.avgSurprise, 1)}
-          accent={stats.avgSurprise >= 0 ? "up" : "down"}
-          sub="EPS surprise avg"
-        />
-        <StatTile
-          label="Avg Reaction"
-          value={signedPct(stats.avgReaction, 2)}
-          accent={stats.avgReaction >= 0 ? "up" : "down"}
-          sub="1-day price move"
-        />
+        <StatTile label="Avg Surprise" value={signedPct(stats.avgSurprise, 1)} accent={stats.avgSurprise >= 0 ? "up" : "down"} sub="EPS surprise avg" />
+        <StatTile label="Avg Reaction" value={signedPct(stats.avgReaction, 2)} accent={stats.avgReaction >= 0 ? "up" : "down"} sub="1-day price move" />
       </div>
 
       {/* tabs + search */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-1">
           {TABS.map((t) => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={cn(
-                "px-3 py-1.5 rounded-lg text-xs font-medium transition-colors",
-                tab === t.key
-                  ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white"
-                  : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
-              )}
-            >
+            <button key={t.key} onClick={() => setTab(t.key)} className={cn("px-3 py-1.5 rounded-lg text-xs font-medium transition-colors", tab === t.key ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white" : "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300")}>
               {t.label}
             </button>
           ))}
         </div>
         <div className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-3 py-2 w-56 focus-within:border-sky-500/60 transition-colors">
           <Search size={14} className="text-zinc-500 shrink-0" />
-          <input
-            value={q}
-            onChange={(ev) => setQ(ev.target.value)}
-            placeholder="Filter ticker or name..."
-            className="bg-transparent outline-none text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-600 w-full"
-          />
+          <input value={q} onChange={(ev) => setQ(ev.target.value)} placeholder="Filter ticker or name..." className="bg-transparent outline-none text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-600 w-full" />
         </div>
       </div>
 
       {/* column headers (desktop) */}
-      <div className="hidden sm:grid grid-cols-12 gap-2 px-5 text-[10px] font-medium text-zinc-400 dark:text-zinc-600 uppercase tracking-wider">
-        <div className="col-span-3">Company</div>
-        <div className="col-span-2 text-right">EPS (Act / Est)</div>
-        <div className="col-span-2 text-right">Surprise</div>
-        <div className="col-span-2 text-right">Revenue (Act / Est)</div>
-        <div className="col-span-3 text-right">Price Reaction</div>
-      </div>
+      {useUpcomingLayout ? (
+        <div className="hidden sm:grid grid-cols-12 gap-2 px-5 text-[10px] font-medium text-zinc-400 dark:text-zinc-600 uppercase tracking-wider">
+          <div className="col-span-4">Company</div>
+          <div className="col-span-2 text-right">EPS Estimate</div>
+          <div className="col-span-3 text-right">Revenue Estimate</div>
+          <div className="col-span-3 text-right">Reports In</div>
+        </div>
+      ) : (
+        <div className="hidden sm:grid grid-cols-12 gap-2 px-5 text-[10px] font-medium text-zinc-400 dark:text-zinc-600 uppercase tracking-wider">
+          <div className="col-span-3">Company</div>
+          <div className="col-span-2 text-right">EPS (Act / Est)</div>
+          <div className="col-span-2 text-right">Surprise / Countdown</div>
+          <div className="col-span-2 text-right">Revenue (Act / Est)</div>
+          <div className="col-span-3 text-right">Price Reaction</div>
+        </div>
+      )}
 
       {/* calendar groups */}
       <div className="space-y-4">
@@ -664,32 +542,23 @@ export default function EarningsPage() {
           return (
             <div key={date} className="space-y-1.5">
               <div className="flex items-center gap-2 px-1">
-                <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
-                  {d.weekday}
-                </span>
+                <span className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">{d.weekday}</span>
                 <span className="text-sm text-zinc-500">{d.label}</span>
                 {isToday && (
-                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30">
-                    Today
-                  </span>
+                  <span className="px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-sky-500/15 text-sky-600 dark:text-sky-400 border border-sky-500/30">Today</span>
                 )}
                 <span className="flex-1 h-px bg-zinc-200 dark:bg-zinc-800/70" />
-                <span className="text-[11px] text-zinc-400 dark:text-zinc-600">
-                  {rows.length}
-                </span>
+                <span className="text-[11px] text-zinc-400 dark:text-zinc-600">{rows.length}</span>
               </div>
               <Card className="overflow-hidden divide-y divide-zinc-200 dark:divide-zinc-800/70">
                 {rows.map((e) => {
                   const rowKey = `${e.ticker}:${date}`;
-                  return (
-                    <EarningsRow
-                      key={rowKey}
-                      e={e}
-                      isOpen={expanded === rowKey}
-                      onToggle={() =>
-                        setExpanded(expanded === rowKey ? null : rowKey)
-                      }
-                    />
+                  const open = expanded === rowKey;
+                  const toggle = () => setExpanded(open ? null : rowKey);
+                  return useUpcomingLayout ? (
+                    <UpcomingRow key={rowKey} e={e} isOpen={open} onToggle={toggle} today={today} />
+                  ) : (
+                    <UnifiedRow key={rowKey} e={e} isOpen={open} onToggle={toggle} today={today} />
                   );
                 })}
               </Card>
@@ -699,14 +568,29 @@ export default function EarningsPage() {
 
         {groups.length === 0 && (
           <p className="text-center text-sm text-zinc-400 dark:text-zinc-600 py-12">
-            No {tab === "all" ? "" : tab} earnings match
-            {q ? ` "${q}"` : ""}.
+            No {tab === "all" ? "" : tab} earnings match{q ? ` "${q}"` : ""}.
           </p>
         )}
       </div>
 
+      {/* load more */}
+      {hasMore && (
+        <div className="flex justify-center pt-2">
+          <button
+            onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}
+            className="flex items-center gap-1.5 px-5 py-2.5 rounded-lg text-sm font-medium
+                       bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300
+                       border border-zinc-200 dark:border-zinc-700
+                       hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors"
+          >
+            <ChevronDown size={14} />
+            Load More ({totalRows - visibleRows} remaining)
+          </button>
+        </div>
+      )}
+
       <p className="text-xs text-zinc-400 dark:text-zinc-600 text-center pt-2">
-        {events.length} earnings events &middot; Finnhub data &middot; refreshed 2&times;/day
+        {visibleRows} of {totalRows} earnings events &middot; Finnhub data &middot; refreshed 2&times;/day
       </p>
     </div>
   );

@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
-import { Pencil, Plus, X as XIcon, Check, Loader2 } from "lucide-react";
+import { Pencil, Plus, X as XIcon, Check, Loader2, RefreshCw } from "lucide-react";
 import { useTopSignals } from "@/hooks/useTopSignals";
 import { usePinnedSignals } from "@/hooks/usePinnedSignals";
 import { Card } from "@/components/ui/Card";
@@ -140,36 +140,45 @@ function SignalTile({
         </div>
       </div>
 
-      <div className="flex items-end justify-between mt-3">
-        <div>
-          {s.price != null && (
-            <p className="font-mono text-sm text-zinc-800 dark:text-zinc-200">
-              {money(s.price)}
-            </p>
-          )}
-          {s.change_pct != null && (
-            <p
-              className={`text-xs font-mono ${up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
-            >
-              {signedPct(s.change_pct)}
-            </p>
-          )}
+      {s._computing ? (
+        <div className="flex items-center gap-2 mt-3 text-zinc-500">
+          <RefreshCw size={12} className="animate-spin" />
+          <span className="text-xs">Computing signal…</span>
         </div>
-        <div className="text-right">
-          <p className="text-[10px] text-zinc-500 uppercase tracking-wide">
-            Conf
-          </p>
-          <p className="text-sm font-mono font-bold text-zinc-800 dark:text-zinc-200">
-            {Math.round(s.confidence * 100)}%
-          </p>
-        </div>
-      </div>
+      ) : (
+        <>
+          <div className="flex items-end justify-between mt-3">
+            <div>
+              {s.price != null && (
+                <p className="font-mono text-sm text-zinc-800 dark:text-zinc-200">
+                  {money(s.price)}
+                </p>
+              )}
+              {s.change_pct != null && (
+                <p
+                  className={`text-xs font-mono ${up ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}
+                >
+                  {signedPct(s.change_pct)}
+                </p>
+              )}
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] text-zinc-500 uppercase tracking-wide">
+                Conf
+              </p>
+              <p className="text-sm font-mono font-bold text-zinc-800 dark:text-zinc-200">
+                {Math.round(s.confidence * 100)}%
+              </p>
+            </div>
+          </div>
 
-      <ConfidenceBar
-        value={s.confidence}
-        direction={s.direction}
-        className="mt-2"
-      />
+          <ConfidenceBar
+            value={s.confidence}
+            direction={s.direction}
+            className="mt-2"
+          />
+        </>
+      )}
     </Card>
   );
 

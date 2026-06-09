@@ -5,17 +5,12 @@ import { marketData, signals } from "@/lib/api";
 import { useMarketStatus } from "@/lib/market-status";
 import type { Quote, SignalView } from "@/lib/types";
 
-/** Evenly sample `n` points from `arr` (keeps the sparkline light). */
 function downsample(arr: number[], n: number): number[] {
   if (arr.length <= n) return arr;
   const step = (arr.length - 1) / (n - 1);
   return Array.from({ length: n }, (_, i) => arr[Math.round(i * step)]);
 }
 
-/**
- * Overlay real DB data onto a signal list: latest price + session change from
- * /market-data/quotes, and a real sparkline from the 1-week /series bars.
- */
 async function withRealMarketData(base: SignalView[]): Promise<SignalView[]> {
   const tickers = base.map((s) => s.ticker);
   if (tickers.length === 0) return base;
@@ -37,7 +32,7 @@ async function withRealMarketData(base: SignalView[]): Promise<SignalView[]> {
       } catch {
         return [t, null];
       }
-    })
+    }),
   );
   const sparkMap = Object.fromEntries(sparkPairs);
 
@@ -52,6 +47,44 @@ async function withRealMarketData(base: SignalView[]): Promise<SignalView[]> {
   });
 }
 
+/**
+ * For pinned tickers missing from the pre-computed top cache, fetch each
+ * individually via /signals/{ticker}.  A 202 means "computing, not ready yet"
+ * — we include it as a placeholder so the tile still renders (next refetch
+ * will pick up the result).  A 404 means the ticker isn't in universe — skip.
+ */
+async function fetchMissing(
+  tickers: string[],
+): Promise<SignalView[]> {
+  const results = await Promise.allSettled(
+    tickers.map(async (t) => {
+      try {
+        const s = await signals.getByTicker(t);
+        return { ...s, ticker: t, name: t } as SignalView;
+      } catch (err: unknown) {
+        const status =
+          err && typeof err === "object" && "status" in err
+            ? (err as { status: number }).status
+            : 0;
+        if (status === 202) {
+          return {
+            ticker: t,
+            name: t,
+            direction: "NEUTRAL",
+            confidence: 0,
+            holding_period: "SHORT_TERM",
+            _computing: true,
+          } as SignalView;
+        }
+        return null;
+      }
+    }),
+  );
+  return results
+    .map((r) => (r.status === "fulfilled" ? r.value : null))
+    .filter((v): v is SignalView => v !== null);
+}
+
 export function useTopSignals(pinnedTickers?: string[]) {
   const key = pinnedTickers ? pinnedTickers.join(",") : "__all__";
   const { isOpen } = useMarketStatus();
@@ -59,17 +92,47 @@ export function useTopSignals(pinnedTickers?: string[]) {
     queryKey: ["topSignals", key],
     queryFn: async () => {
       const list = await signals.getTop(60);
-      const all =
-        Array.isArray(list) && list.length > 0
-          ? list.map((s) => ({ ...s, name: s.ticker }))
-          : [];
+      const cachedMap = new Map(
+        (Array.isArray(list) ? list : []).map((s) => [
+          s.ticker,
+          { ...s, name: s.ticker } as SignalView,
+        ]),
+      );
 
-      const pinSet = pinnedTickers ? new Set(pinnedTickers) : null;
-      const base = pinSet ? all.filter((s) => pinSet.has(s.ticker)) : all;
+      if (!pinnedTickers || pinnedTickers.length === 0) {
+        const all = [...cachedMap.values()];
+        return all.length > 0 ? withRealMarketData(all) : [];
+      }
+
+      const fromCache: SignalView[] = [];
+      const missing: string[] = [];
+
+      for (const t of pinnedTickers) {
+        const cached = cachedMap.get(t);
+        if (cached) {
+          fromCache.push(cached);
+        } else {
+          missing.push(t);
+        }
+      }
+
+      const fetched = missing.length > 0 ? await fetchMissing(missing) : [];
+      const base = [...fromCache, ...fetched];
       if (base.length === 0) return [];
-      return withRealMarketData(base);
+
+      const enriched = await withRealMarketData(base);
+
+      // Preserve pinned order
+      const byTicker = new Map(enriched.map((s) => [s.ticker, s]));
+      return pinnedTickers
+        .map((t) => byTicker.get(t))
+        .filter((s): s is SignalView => s !== undefined);
     },
     refetchOnMount: "always",
-    refetchInterval: isOpen ? 60_000 : false,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data?.some((s) => s._computing)) return 5_000;
+      return isOpen ? 60_000 : false;
+    },
   });
 }

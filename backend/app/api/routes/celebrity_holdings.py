@@ -82,6 +82,52 @@ async def get_by_ticker(
     return [_to_holding(r) for r in rows.mappings()]
 
 
+@router.get("/{celebrity}/top-holdings")
+async def get_top_holdings(
+    celebrity: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = Query(default=30, ge=1, le=100),
+):
+    """Distinct tickers held by one celebrity, with latest action per ticker."""
+    c = celebrity.lower()
+    if not _CELEB_RE.match(c):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Invalid celebrity slug"
+        )
+    rows = await db.execute(
+        text("""
+            WITH ranked AS (
+                SELECT ch.ticker, ch.action, ch.reported_at, ch.shares, ch.value_usd,
+                       t.name AS ticker_name,
+                       ROW_NUMBER() OVER (PARTITION BY ch.ticker ORDER BY ch.reported_at DESC) AS rn,
+                       COUNT(*) OVER (PARTITION BY ch.ticker) AS trade_count
+                FROM celebrity_holdings ch
+                JOIN tickers t ON t.ticker = ch.ticker
+                WHERE ch.celebrity = :c
+            )
+            SELECT ticker, ticker_name, action AS latest_action,
+                   reported_at AS last_activity, shares, value_usd, trade_count
+            FROM ranked
+            WHERE rn = 1
+            ORDER BY last_activity DESC
+            LIMIT :limit
+        """),
+        {"c": c, "limit": limit},
+    )
+    return [
+        {
+            "ticker": r["ticker"],
+            "ticker_name": r["ticker_name"],
+            "latest_action": r["latest_action"],
+            "last_activity": r["last_activity"].isoformat(),
+            "shares": r["shares"],
+            "value_usd": r["value_usd"],
+            "trade_count": r["trade_count"],
+        }
+        for r in rows.mappings()
+    ]
+
+
 @router.get("/{celebrity}")
 async def get_celebrity(
     celebrity: str,

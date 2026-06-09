@@ -121,6 +121,7 @@ export interface SignalView extends SignalListItem {
   price?: number;
   change_pct?: number; // raw percent, e.g. 2.4 → +2.4%
   spark?: number[];
+  _computing?: boolean; // true while awaiting on-demand signal computation
 }
 
 /** Raw shape returned by GET /api/news/market and /api/news/{ticker}. */
@@ -289,6 +290,16 @@ export interface CelebritySummary {
   buys: number;
   sells: number;
   latest_trade: string;
+}
+
+export interface CelebrityTopHolding {
+  ticker: string;
+  ticker_name: string;
+  latest_action: CelebAction;
+  last_activity: string;
+  shares: number | null;
+  value_usd: number | null;
+  trade_count: number;
 }
 
 // ── Earnings ──────────────────────────────────────────────────────────────────
@@ -535,6 +546,8 @@ export type EarningsSession = "BMO" | "AMC" | "TBD";
 export interface EarningsEvent {
   ticker: string;
   report_date: string; // ISO date, e.g. "2026-06-08"
+  fiscal_quarter: number | null; // 1–4
+  fiscal_year: number | null;    // e.g. 2026
   eps_actual: number | null;
   eps_estimate: number | null;
   eps_surprise_pct: number | null;

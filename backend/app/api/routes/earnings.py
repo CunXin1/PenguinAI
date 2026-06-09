@@ -14,7 +14,8 @@ _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 _SESSION = {"bmo": "BMO", "amc": "AMC"}
 
 _SELECT = """
-    SELECT e.ticker, e.report_date, e.eps_actual, e.eps_estimate, e.eps_surprise_pct,
+    SELECT e.ticker, e.report_date, e.fiscal_quarter, e.fiscal_year,
+           e.eps_actual, e.eps_estimate, e.eps_surprise_pct,
            e.revenue_actual, e.revenue_estimate, e.guidance_text, e.report_hour, t.name
     FROM earnings e
     JOIN tickers t ON t.ticker = e.ticker
@@ -108,9 +109,13 @@ def _to_event(row, price_map: dict | None = None) -> dict:
             row["report_hour"],
         )
 
+    fq = row["fiscal_quarter"]
+    fy = row["fiscal_year"]
     return {
         "ticker": row["ticker"],
         "report_date": row["report_date"].isoformat(),
+        "fiscal_quarter": int(fq) if fq is not None else None,
+        "fiscal_year": int(fy) if fy is not None else None,
         "eps_actual": num(row["eps_actual"]),
         "eps_estimate": num(row["eps_estimate"]),
         "eps_surprise_pct": num(row["eps_surprise_pct"]),
