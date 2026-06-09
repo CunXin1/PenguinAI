@@ -20,6 +20,7 @@ from app.api.routes import (
     auth,
     celebrity_holdings,
     earnings,
+    fear_greed,
     fomc,
     market_data,
     news,
@@ -393,6 +394,7 @@ _mcap_stop = threading.Event()
 _news_stop = threading.Event()
 _seed_stop = threading.Event()
 _fomc_stop = threading.Event()
+_fng_stop = threading.Event()
 
 
 def _run_marketcap_scheduler(stop_event: threading.Event):
@@ -495,7 +497,7 @@ async def lifespan(app: FastAPI):
         _news_stop.clear()
         news_thread = threading.Thread(
             target=_run_news,
-            args=(_news_stop, settings.DATABASE_URL),
+            args=(_news_stop, settings.DATABASE_URL, news.invalidate_news_cache),
             daemon=True,
             name="news-sched",
         )
@@ -519,6 +521,22 @@ async def lifespan(app: FastAPI):
     except ImportError:
         logger.warning("data.fomc.scheduler not available — FOMC scheduler disabled")
 
+    # Fear & Greed + VIX/VVIX: startup fetch + hourly refresh (CNN + CBOE/Yahoo/FRED)
+    fng_thread = None
+    try:
+        from data.fear_greed.scheduler import run_scheduler as _run_fng
+
+        _fng_stop.clear()
+        fng_thread = threading.Thread(
+            target=_run_fng,
+            args=(_fng_stop, settings.DATABASE_URL),
+            daemon=True,
+            name="fng-sched",
+        )
+        fng_thread.start()
+    except ImportError:
+        logger.warning("data.fear_greed.scheduler not available — Fear&Greed scheduler disabled")
+
     # Seed critical market data if bars_30m is empty (checks DB → parquets → Massive API)
     seed_thread = None
     try:
@@ -541,6 +559,9 @@ async def lifespan(app: FastAPI):
         _seed_stop.set()
         if seed_thread is not None:
             seed_thread.join(timeout=5)
+        _fng_stop.set()
+        if fng_thread is not None:
+            fng_thread.join(timeout=5)
         _fomc_stop.set()
         if fomc_thread is not None:
             fomc_thread.join(timeout=5)
@@ -592,6 +613,7 @@ app.include_router(
     pinned_signals.router, prefix="/api/pinned-signals", tags=["pinned-signals"]
 )
 app.include_router(fomc.router, prefix="/api/fomc", tags=["fomc"])
+app.include_router(fear_greed.router, prefix="/api/fear-greed", tags=["fear-greed"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 
 

@@ -15,6 +15,8 @@ import type {
   DatabaseHealth,
   EarningsEvent,
   EndpointHealth,
+  FearGreedCurrent,
+  FearGreedHistoryPoint,
   FomcDiffResult,
   FomcMarketReaction,
   FomcNextMeeting,
@@ -38,6 +40,7 @@ import type {
   TickerSearchResult,
   TokenResponse,
   User,
+  VolatilitySeries,
   WatchlistItem,
 } from "./types";
 
@@ -301,6 +304,22 @@ export const fomc = {
 
   rateProbabilities: () =>
     apiFetch<FomcRateProbability[]>("/fomc/rate-probabilities"),
+};
+
+// ── Fear & Greed + Volatility API ─────────────────────────────────────────────
+export const fearGreed = {
+  /** Current index reading + 7 components + previous-period comparison. */
+  current: () => apiFetch<FearGreedCurrent>("/fear-greed"),
+
+  /** Daily score history for the line chart. */
+  history: (days = 365) =>
+    apiFetch<FearGreedHistoryPoint[]>(`/fear-greed/history?days=${days}`),
+
+  /** VIX or VVIX daily OHLC series. */
+  volatility: (symbol: "VIX" | "VVIX" = "VIX", days = 365) =>
+    apiFetch<VolatilitySeries>(
+      `/fear-greed/volatility?symbol=${symbol}&days=${days}`
+    ),
 };
 
 // ── Admin API ───────────────────────────────────────────────────────────────

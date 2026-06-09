@@ -309,37 +309,70 @@ async def get_series(
     tkr = ticker.upper()
     params = {"bucket": bucket, "lookback": lookback, "ticker": tkr}
 
-    # ── 1) Primary: live minute store ────────────────────────────────────────
-    if bucket >= timedelta(days=1):
+    # ── 1) Primary: finest-granularity source that actually has data ──────────
+    # Always prefer the finer source when it exists — never chart 30-min bars for a
+    # symbol that has minute data.
+    #   sub-daily (1D/1W/1M): market_data_1min if the ticker has ANY minute bars
+    #       (streamed Top-100 or on-demand warmed); else the imported 30-min bars.
+    #   daily (3M/1Y): the minute-derived daily cagg; else imported daily bars.
+    # Intraday reads anchor their window to the ticker's latest minute bar rather
+    # than now(), so a symbol whose minute data is a day or two stale still renders
+    # at fine granularity instead of silently dropping to the coarser 30-min source.
+    is_daily = bucket >= timedelta(days=1)
+    bars: list[dict] = []
+
+    if is_daily:
         # Daily ranges (3M/1Y) read the pre-materialized daily continuous aggregate
         # instead of rescanning ~350k 1-min rows per request (3s → ~10ms).
-        primary_sql = """
-            SELECT day AS t, open AS o, high AS h, low AS l, close AS c, volume AS v
-            FROM market_data_1d_cagg
-            WHERE ticker = :ticker AND day >= now() - (:lookback)::interval
-            ORDER BY t ASC
-        """
+        try:
+            bars = _bars_from_rows(await db.execute(
+                text("""
+                    SELECT day AS t, open AS o, high AS h, low AS l, close AS c, volume AS v
+                    FROM market_data_1d_cagg
+                    WHERE ticker = :ticker AND day >= now() - (:lookback)::interval
+                    ORDER BY t ASC
+                """),
+                params,
+            ))
+        except Exception:
+            # A failed statement leaves the asyncpg transaction in an aborted state —
+            # every subsequent query on this session would then fail with "current
+            # transaction is aborted". Roll back so the fallback (and prev_close)
+            # below can still run. This is what made 3M/1Y silently render empty when
+            # the daily cagg was missing: the primary query aborted, then the fallback
+            # AND prev_close both failed on the poisoned session.
+            await db.rollback()
+            bars = []
     else:
-        primary_sql = """
-            SELECT time_bucket((:bucket)::interval, time) AS t,
-                   first(open, time)  AS o,
-                   max(high)          AS h,
-                   min(low)           AS l,
-                   last(close, time)  AS c,
-                   sum(volume)        AS v
-            FROM market_data_1min
-            WHERE ticker = :ticker AND time >= now() - (:lookback)::interval
-            GROUP BY t
-            ORDER BY t ASC
-        """
-    try:
-        bars = _bars_from_rows(await db.execute(text(primary_sql), params))
-    except Exception:
-        bars = []
+        # Detect minute coverage for THIS ticker (cheap (ticker, time) index probe).
+        latest_min = (await db.execute(
+            text("SELECT max(time) FROM market_data_1min WHERE ticker = :ticker"),
+            {"ticker": tkr},
+        )).scalar()
+        if latest_min is not None:
+            try:
+                bars = _bars_from_rows(await db.execute(
+                    text("""
+                        SELECT time_bucket((:bucket)::interval, time) AS t,
+                               first(open, time)  AS o,
+                               max(high)          AS h,
+                               min(low)           AS l,
+                               last(close, time)  AS c,
+                               sum(volume)        AS v
+                        FROM market_data_1min
+                        WHERE ticker = :ticker
+                          AND time >= (:anchor)::timestamptz - (:lookback)::interval
+                        GROUP BY t
+                        ORDER BY t ASC
+                    """),
+                    {**params, "anchor": latest_min},
+                ))
+            except Exception:
+                await db.rollback()
+                bars = []
 
     # ── 2) Fallback: imported 30-min / daily bars (covers the whole universe) ──
     if not bars:
-        is_daily = bucket >= timedelta(days=1)
         view, base = (
             ("market_data_daily", "bars_1d") if is_daily
             else ("market_data_30min", "bars_30m")
@@ -389,6 +422,7 @@ async def get_series(
         try:
             bars = _bars_from_rows(await db.execute(text(fallback_sql), params))
         except Exception as exc:
+            await db.rollback()  # keep the session usable for the prev_close query
             import logging
             logging.getLogger(__name__).warning("series fallback failed for %s/%s: %s", tkr, rng, exc)
             bars = []
@@ -409,7 +443,7 @@ async def get_series(
         if row:
             prev_close = float(row["adj_close"])
     except Exception:
-        pass
+        await db.rollback()
 
     return {"ticker": tkr, "range": rng, "bars": bars, "prev_close": prev_close}
 

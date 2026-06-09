@@ -222,3 +222,31 @@ CREATE TABLE IF NOT EXISTS fomc_rate_probabilities (
 SELECT create_hypertable('fomc_rate_probabilities', 'time', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS idx_fomc_probs_meeting ON fomc_rate_probabilities (meeting_date, time DESC);
 SELECT add_retention_policy('fomc_rate_probabilities', INTERVAL '180 days', if_not_exists => TRUE);
+
+-- ── Fear & Greed Index (CNN, free JSON) ─────────────────────────────────────
+-- One row per calendar day. `components` (JSONB) holds the 7-indicator snapshot
+-- and is attached only to the most-recent row; historical rows carry score+rating.
+CREATE TABLE IF NOT EXISTS fear_greed_index (
+    time        TIMESTAMPTZ     NOT NULL,
+    score       NUMERIC(6, 2)   NOT NULL,   -- 0..100
+    rating      TEXT            NOT NULL,    -- extreme fear|fear|neutral|greed|extreme greed
+    components  JSONB,                       -- {market_momentum_sp500:{score,rating,label}, ...}
+    source      TEXT            NOT NULL DEFAULT 'cnn'
+);
+SELECT create_hypertable('fear_greed_index', 'time', if_not_exists => TRUE);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_fng_time ON fear_greed_index (time);
+
+-- ── Volatility indices (CBOE, free daily CSV) ───────────────────────────────
+-- VIX carries full OHLC; VVIX is close-only (open/high/low NULL).
+CREATE TABLE IF NOT EXISTS volatility_index (
+    time    TIMESTAMPTZ     NOT NULL,
+    symbol  TEXT            NOT NULL,        -- 'VIX' | 'VVIX'
+    open    NUMERIC(10, 4),
+    high    NUMERIC(10, 4),
+    low     NUMERIC(10, 4),
+    close   NUMERIC(10, 4)  NOT NULL,
+    source  TEXT            NOT NULL DEFAULT 'cboe',
+    PRIMARY KEY (symbol, time)
+);
+SELECT create_hypertable('volatility_index', 'time', if_not_exists => TRUE);
+CREATE INDEX IF NOT EXISTS idx_volidx_symbol_time ON volatility_index (symbol, time DESC);

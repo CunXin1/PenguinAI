@@ -24,24 +24,25 @@ interface RangeCfg {
   key: ChartRange;
   /** Intraday ranges show HH:MM on the axis + legend; longer ranges show the date. */
   intraday: boolean;
-  /**
-   * Bars shown on first paint. The rest of the range stays off-screen so there's
-   * always history to drag through (and the fewer bars are visible, the wider each
-   * bar → a bigger pixel pan-range even when the range itself is data-sparse).
-   */
-  visible: number;
 }
 
+// The backend returns exactly the requested window per range (1W → 7 days,
+// 1M → 30, 3M → 90, 1Y → 365), so the chart fits the whole payload to the
+// viewport — clicking "1W" shows a full week, not the last few bars of it.
 const RANGES: RangeCfg[] = [
-  { key: "1D", intraday: true, visible: 55 },
-  { key: "1W", intraday: true, visible: 110 },
-  { key: "1M", intraday: true, visible: 120 },
-  { key: "3M", intraday: false, visible: 45 },
-  { key: "1Y", intraday: false, visible: 120 },
+  { key: "1D", intraday: true },
+  { key: "1W", intraday: true },
+  { key: "1M", intraday: true },
+  { key: "3M", intraday: false },
+  { key: "1Y", intraday: false },
 ];
 
 const UP = "#10b981"; // emerald-500
 const DOWN = "#f43f5e"; // rose-500
+// US stock data is stored in UTC, but a US-market chart must read in exchange time
+// (ET) — otherwise the axis/crosshair show e.g. 14:30 for the 09:30 ET open. Both
+// the axis (lightweight-charts defaults to UTC) and our legend format in ET.
+const ET = "America/New_York";
 const REFRESH_MS = 15_000;
 // Daily ranges (3M/1Y) barely change → cache them long so switching back is instant
 // and they don't refetch on every visit.
@@ -118,7 +119,12 @@ export function PriceChart({
   const prevClose = data?.prev_close ?? null;
   const hasData = bars.length > 0;
   const last = bars[bars.length - 1]?.close ?? 0;
-  const base = prevClose ?? bars[0]?.open ?? last;
+  // Baseline is range-aware: 1D shows the intraday move vs the prior session close
+  // (prev_close); every longer range shows the return over the WHOLE window — first
+  // bar → last. Using prev_close for all ranges made 1W/1M/3M/1Y all report the same
+  // ~1-day change (e.g. a flat −0.9%) instead of the period return.
+  const periodBase = bars[0]?.open ?? last;
+  const base = range === "1D" ? (prevClose ?? periodBase) : periodBase;
   const chg = base ? ((last - base) / base) * 100 : 0;
   const up = chg >= 0;
   // Live only when the market is actually open and we're on an intraday range;
@@ -220,7 +226,6 @@ export function PriceChart({
         up={up}
         intraday={cfg.intraday}
         range={range}
-        visible={cfg.visible}
         height={height}
       />
       ) : (
@@ -250,7 +255,6 @@ function Canvas({
   up,
   intraday,
   range,
-  visible,
   height,
 }: {
   bars: CandleBar[];
@@ -258,7 +262,6 @@ function Canvas({
   up: boolean;
   intraday: boolean;
   range: ChartRange;
-  visible: number;
   height: number;
 }) {
   const elRef = useRef<HTMLDivElement>(null);
@@ -285,13 +288,17 @@ function Canvas({
 
   const fmt = (t: number) => {
     const d = new Date(t * 1000);
+    // Intraday bars are precise timestamps → show in exchange time (ET).
+    // Daily bars are bucketed at UTC midnight (the cagg's time_bucket origin), so
+    // the UTC date IS the trading date — formatting those in ET would shift the
+    // label back a day. Keep daily dates in UTC.
     return intraday
       ? d.toLocaleString("en-US", {
           month: "short",
           day: "numeric",
           hour: "2-digit",
           minute: "2-digit",
-          timeZone: "UTC",
+          timeZone: ET,
         })
       : d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
   };
@@ -301,13 +308,10 @@ function Canvas({
     return `${bs.length}:${lb?.time ?? 0}:${lb?.close ?? 0}`;
   };
 
-  // Open zoomed into the most recent `visible` bars, leaving older bars off-screen
-  // to drag into (fixLeftEdge/fixRightEdge stop the pan exactly at the data, no blank).
-  const frameView = (len: number) => {
-    const ts = chartRef.current?.timeScale();
-    if (!ts) return;
-    if (len > visible) ts.setVisibleLogicalRange({ from: len - visible, to: len - 1 });
-    else ts.fitContent(); // fewer bars than the window → just show them all
+  // Show the entire returned range — the payload already IS the requested window
+  // (1W → a week, 1M → a month, …), so fit all of it edge to edge.
+  const frameView = () => {
+    chartRef.current?.timeScale()?.fitContent();
   };
 
   // Create chart + series. Recreated when theme / series-type / range-granularity change.
@@ -330,6 +334,8 @@ function Canvas({
           fontFamily: "ui-monospace, monospace",
           attributionLogo: false,
         },
+        // Crosshair time label → exchange time (ET), matching the legend + axis.
+        localization: { timeFormatter: (t: unknown) => fmt(t as number) },
         grid: { vertLines: { color: theme.grid }, horzLines: { color: theme.grid } },
         rightPriceScale: { borderColor: theme.border, scaleMargins: { top: 0.12, bottom: 0.08 } },
         timeScale: {
@@ -342,6 +348,26 @@ function Canvas({
           fixLeftEdge: true,
           fixRightEdge: true,
           rightOffset: 4,
+          // Axis tick labels in ET too (lightweight-charts formats in UTC by
+          // default). tickMarkType >= 3 is an intraday Time tick → HH:MM; lower
+          // values are Year/Month/Day boundary ticks → a short date. Date labels
+          // on daily ranges stay in UTC (see fmt: daily bars sit at UTC midnight,
+          // so the UTC date is the trading date — ET would shift it back a day).
+          tickMarkFormatter: (time: unknown, tickMarkType: number) => {
+            const d = new Date((time as number) * 1000);
+            return tickMarkType >= 3
+              ? d.toLocaleTimeString("en-US", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  hour12: false,
+                  timeZone: ET,
+                })
+              : d.toLocaleDateString("en-US", {
+                  month: "short",
+                  day: "numeric",
+                  timeZone: intraday ? ET : "UTC",
+                });
+          },
         },
         crosshair: {
           mode: LWC.CrosshairMode.Magnet,
@@ -379,7 +405,7 @@ function Canvas({
       applyData(series, barsRef.current, type, up);
       sigRef.current = sigOf(barsRef.current);
       rangeRef.current = range;
-      frameView(barsRef.current.length);
+      frameView();
 
       // Hover read-out — update the overlay imperatively (no per-move React state).
       chart.subscribeCrosshairMove((param: MouseEventParams) => {
@@ -423,7 +449,7 @@ function Canvas({
       rangeRef.current = range;
       // Range changed (e.g. cached 1Y↔3M with the chart still mounted): re-frame to
       // the new range's default window — never on a same-range poll.
-      frameView(bars.length);
+      frameView();
     }
     const seed = bars[bars.length - 1];
     if (seed && legendRef.current) legendRef.current.innerHTML = legendHTML(seed, type, fmt(seed.time));

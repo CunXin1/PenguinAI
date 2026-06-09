@@ -110,6 +110,18 @@ class Settings(BaseSettings):
     ADMIN_EMAIL: str = "admin@penguinai.com"
     ADMIN_PASSWORD: str = ""  # auto-generated on first startup if empty
 
+    # ── Fear & Greed / Volatility (free sources, no API key) ─────
+    CNN_FEAR_GREED_URL: str = (
+        "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
+    )
+    CBOE_VIX_CSV_URL: str = (
+        "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
+    )
+    CBOE_VVIX_CSV_URL: str = (
+        "https://cdn.cboe.com/api/global/us_indices/daily_prices/VVIX_History.csv"
+    )
+    FEAR_GREED_REFRESH_MIN: int = 60  # how often the scheduler refreshes
+
     # ── FOMC defaults ────────────────────────────────────────────
     FOMC_DEFAULT_TREND_LIMIT: int = 10
     FOMC_DEFAULT_STATEMENTS_LIMIT: int = 10

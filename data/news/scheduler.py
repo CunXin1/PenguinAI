@@ -9,17 +9,34 @@ Schedule:
 import asyncio
 import logging
 import threading
+from collections.abc import Callable
 
 from data.news.constants import TIER1_INTERVAL_SEC, TIER2_INTERVAL_SEC
 
 logger = logging.getLogger("news.scheduler")
 
 
-def run_scheduler(stop_event: threading.Event, db_url: str) -> None:
-    """Entry point for the background thread. Blocks until stop_event is set."""
+def run_scheduler(
+    stop_event: threading.Event,
+    db_url: str,
+    on_new_articles: Callable[[], None] | None = None,
+) -> None:
+    """Entry point for the background thread. Blocks until stop_event is set.
+
+    ``on_new_articles`` is invoked after any ingest that inserted new rows, so the
+    backend can drop its in-memory hot-news cache and serve fresh articles immediately
+    (the scheduler runs in the same process as the API).
+    """
     from data.news.ingest import ingest_all, ingest_tier1, ingest_tier2
 
     tier2_every_n = max(1, round(TIER2_INTERVAL_SEC / TIER1_INTERVAL_SEC))
+
+    def _notify(new_count: int) -> None:
+        if new_count > 0 and on_new_articles is not None:
+            try:
+                on_new_articles()
+            except Exception:
+                logger.warning("news scheduler: cache-invalidation callback failed", exc_info=True)
 
     logger.info(
         "news scheduler: tier-1 every %ds, tier-2 every %d ticks (%ds)",
@@ -31,6 +48,7 @@ def run_scheduler(stop_event: threading.Event, db_url: str) -> None:
     try:
         count = asyncio.run(ingest_all(db_url))
         logger.info("news scheduler: startup ingest done — %d new articles", count)
+        _notify(count)
     except Exception:
         logger.warning("news scheduler: startup ingest failed", exc_info=True)
 
@@ -46,9 +64,11 @@ def run_scheduler(stop_event: threading.Event, db_url: str) -> None:
                 count1 = asyncio.run(ingest_tier1(db_url))
                 count2 = asyncio.run(ingest_tier2(db_url))
                 logger.info("news scheduler: tier-1=%d, tier-2=%d new articles", count1, count2)
+                _notify(count1 + count2)
             else:
                 logger.info("news scheduler: tier-1 cycle (tick %d)", tick)
                 count = asyncio.run(ingest_tier1(db_url))
                 logger.info("news scheduler: tier-1=%d new articles", count)
+                _notify(count)
         except Exception:
             logger.warning("news scheduler: cycle %d failed", tick, exc_info=True)

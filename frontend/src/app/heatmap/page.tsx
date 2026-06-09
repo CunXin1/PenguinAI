@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { LayoutGrid, Loader2 } from "lucide-react";
 import { marketData } from "@/lib/api";
 import { Card } from "@/components/ui/Card";
@@ -26,9 +26,14 @@ export default function HeatmapPage() {
   const [period, setPeriod] = useState<HeatmapPeriod>("1D");
   const { isOpen } = useMarketStatus();
 
-  const { data, isLoading, isError } = useQuery<HeatmapResponse>({
+  const { data, isLoading, isError, isFetching } = useQuery<HeatmapResponse>({
     queryKey: ["heatmap", limit, period],
     queryFn: () => marketData.heatmap(limit, period),
+    // Keep the current tiles on screen while switching period/size — otherwise the
+    // queryKey change drops `data` to undefined, the map unmounts to the spinner,
+    // then remounts: a visible flicker on every 1D/1W/1M/3M/1Y click. With this the
+    // old map stays put and cross-fades to the new data when it arrives.
+    placeholderData: keepPreviousData,
     // Poll 1D prices only while the market is open (the global /market-data/status
     // heartbeat handles the Closed→Live flip). Other periods are historical, so
     // they don't move and never poll.

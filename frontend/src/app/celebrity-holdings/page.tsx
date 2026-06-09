@@ -114,7 +114,7 @@ export default function CelebrityHoldingsPage() {
       <div>
         <h1 className="text-xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
           <Crown size={20} className="text-amber-500 dark:text-amber-400" />{" "}
-          Smart Money
+          Celebrity Holdings
         </h1>
         <p className="text-sm text-zinc-500 mt-0.5">
           Track what Buffett, Pelosi, Cathie Wood and other institutional

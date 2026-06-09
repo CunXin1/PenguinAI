@@ -150,7 +150,8 @@ def _is_english(article: dict) -> bool:
 
 # ── In-memory cache ──────────────────────────────────────────────────
 _cache: dict[str, tuple[float, list]] = {}
-_MARKET_TTL = 300.0  # 5 minutes
+_MARKET_TTL = 300.0  # 5 minutes (market feed — API-sourced, not affected by ingest)
+_HOT_TTL = 120.0  # 2 minutes — DB-backed hot news; short backstop for out-of-process ingest
 _COMPANY_TTL = 600.0  # 10 minutes
 
 
@@ -160,13 +161,35 @@ def _get_cached(key: str, ttl: float) -> list | None:
         return None
     ts, data = entry
     if time.monotonic() - ts > ttl:
-        del _cache[key]
+        _cache.pop(key, None)
         return None
     return data
 
 
 def _set_cache(key: str, data: list) -> None:
     _cache[key] = (time.monotonic(), data)
+
+
+def invalidate_news_cache() -> None:
+    """Drop cached hot-ticker responses so freshly ingested news is served immediately.
+
+    Called by the news scheduler (an in-process daemon thread) after each ingest cycle
+    that produced new articles. Clears ``hot:*`` keys and ``company:*`` keys for hot
+    tickers, while leaving ``market:*`` (API-sourced) and cold-ticker company caches
+    intact to avoid needless re-fetches. Safe to call from another thread: it snapshots
+    the keys and uses ``pop(..., None)`` so it can't race the request handlers.
+    """
+    cleared = 0
+    for key in list(_cache.keys()):
+        if key.startswith("hot:"):
+            if _cache.pop(key, None) is not None:
+                cleared += 1
+        elif key.startswith("company:"):
+            ticker = key.split(":", 1)[1]
+            if ticker in HOT_TICKERS and _cache.pop(key, None) is not None:
+                cleared += 1
+    if cleared:
+        logger.debug("news cache invalidated after ingest — %d entries dropped", cleared)
 
 
 # ── FinBERT scorer (lazy singleton, stays in memory once loaded) ─────
@@ -507,7 +530,7 @@ async def get_hot_news(
         )
 
     cache_key = f"hot:{t or 'all'}:{limit}"
-    cached = _get_cached(cache_key, _MARKET_TTL)
+    cached = _get_cached(cache_key, _HOT_TTL)
     if cached is not None:
         return cached[:limit]
 

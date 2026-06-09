@@ -359,6 +359,59 @@ export interface FomcDiffResult {
   diff: FomcDiffLine[];
 }
 
+// ── Fear & Greed Index + Volatility (VIX/VVIX) ───────────────────────────────
+export type FearGreedRating =
+  | "extreme fear"
+  | "fear"
+  | "neutral"
+  | "greed"
+  | "extreme greed";
+
+export interface FearGreedComponent {
+  key: string;
+  label: string;
+  score: number | null; // 0–100 normalized contribution
+  rating: string | null;
+}
+
+export interface FearGreedCurrent {
+  score: number | null; // 0–100
+  rating: string | null; // raw CNN rating
+  label: string | null; // display label, e.g. "Extreme Fear"
+  updated_at: string | null;
+  source: string | null; // "cnn" | "computed" (VIX proxy fallback)
+  previous: {
+    close?: number | null;
+    week?: number | null;
+    month?: number | null;
+    year?: number | null;
+  };
+  components: FearGreedComponent[];
+}
+
+export interface FearGreedHistoryPoint {
+  date: string; // ISO date
+  score: number;
+  rating: string;
+}
+
+/** One daily bar of a volatility index (VIX/VVIX). time = unix seconds. */
+export interface VolatilityBar {
+  time: number;
+  date: string;
+  open: number | null;
+  high: number | null;
+  low: number | null;
+  close: number | null;
+}
+
+export interface VolatilitySeries {
+  symbol: string; // VIX | VVIX
+  latest: number | null;
+  change_pct: number | null;
+  bars: VolatilityBar[];
+}
+
 // ── Admin Dashboard ─────────────────────────────────────────────────────────
 export type ServiceStatus = "healthy" | "degraded" | "down";
 export type OverallHealth = "healthy" | "degraded" | "critical";
