@@ -1,8 +1,10 @@
 import asyncio
+import atexit
 import contextlib
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -36,6 +38,125 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 # data/, ml/, scripts/ live at the repo root — make them importable from backend/.
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+
+
+class _ProcessWatchdog:
+    """Generic subprocess watchdog: auto-restarts on crash, captures stdout."""
+
+    _MAX_RESTARTS = 10
+    _RESTART_WINDOW = 3600.0
+
+    def __init__(self, name: str, cmd: list[str], *, cwd: str | Path | None = None,
+                 enabled: bool = True, parse_health: bool = False):
+        self.name = name
+        self.cmd = cmd
+        self.cwd = str(cwd) if cwd else None
+        self.proc: subprocess.Popen | None = None
+        self.enabled = enabled
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._restart_count = 0
+        self._last_stable_since = monotonic()
+        self._last_health: dict | None = None
+        self._parse_health = parse_health
+
+    def start(self) -> None:
+        if not self.enabled:
+            logger.info("%s: disabled", self.name)
+            return
+        self._spawn()
+        if self.proc is not None:
+            self._thread = threading.Thread(
+                target=self._watch_loop, daemon=True, name=f"wd-{self.name}"
+            )
+            self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        self._kill_proc()
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+    @property
+    def alive(self) -> bool:
+        return self.proc is not None and self.proc.poll() is None
+
+    @property
+    def health(self) -> dict:
+        if not self.enabled:
+            return {"status": "disabled"}
+        return {
+            "status": "running" if self.alive else "dead",
+            "pid": self.proc.pid if self.proc else None,
+            "restarts": self._restart_count,
+            **({"services": self._last_health.get("services", {})} if self._last_health else {}),
+        }
+
+    def _spawn(self) -> None:
+        try:
+            self.proc = subprocess.Popen(
+                self.cmd, cwd=self.cwd,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                start_new_session=False,
+            )
+            logger.info("%s started (pid=%s)", self.name, self.proc.pid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("could not start %s: %r", self.name, exc)
+            self.proc = None
+
+    def _kill_proc(self) -> None:
+        if self.proc is None or self.proc.poll() is not None:
+            return
+        self.proc.terminate()
+        try:
+            self.proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.proc.kill()
+
+    def _watch_loop(self) -> None:
+        while not self._stop.is_set():
+            if self.proc is None:
+                self._stop.wait(5.0)
+                continue
+
+            line = b""
+            with contextlib.suppress(Exception):
+                line = self.proc.stdout.readline()  # type: ignore[union-attr]
+
+            if line:
+                decoded = line.decode("utf-8", errors="replace").strip()
+                if self._parse_health and decoded.startswith("HEALTH:"):
+                    try:
+                        self._last_health = json.loads(decoded[7:])
+                    except json.JSONDecodeError:
+                        pass
+                elif decoded:
+                    logger.info("[%s] %s", self.name, decoded)
+
+            if self.proc.poll() is not None:
+                rc = self.proc.returncode
+                logger.error("%s exited (rc=%s)", self.name, rc)
+
+                now = monotonic()
+                if now - self._last_stable_since > self._RESTART_WINDOW:
+                    self._restart_count = 0
+                    self._last_stable_since = now
+
+                if self._restart_count >= self._MAX_RESTARTS:
+                    logger.error(
+                        "%s crashed %d times — giving up", self.name, self._restart_count
+                    )
+                    return
+
+                backoff = min(2**self._restart_count, 60)
+                self._restart_count += 1
+                logger.info(
+                    "restarting %s in %ds (attempt #%d)",
+                    self.name, backoff, self._restart_count,
+                )
+                if self._stop.wait(backoff):
+                    return
+                self._spawn()
 
 
 class _SupervisorWatchdog:
@@ -161,6 +282,45 @@ class _SupervisorWatchdog:
 
 _watchdog = _SupervisorWatchdog()
 
+_celery_enabled = os.getenv("CELERY_EMBEDDED", "true").strip().lower() not in (
+    "0", "false", "no", "off",
+)
+_celery_worker = _ProcessWatchdog(
+    "celery-worker",
+    [sys.executable, "-m", "celery", "-A", "ml.tasks.celery_app",
+     "worker", "--queues=ml_inference,default", "-c", "2", "--loglevel=info"],
+    cwd=_REPO_ROOT,
+    enabled=_celery_enabled,
+)
+_celery_beat = _ProcessWatchdog(
+    "celery-beat",
+    [sys.executable, "-m", "celery", "-A", "ml.tasks.celery_app",
+     "beat", "--loglevel=info"],
+    cwd=_REPO_ROOT,
+    enabled=_celery_enabled,
+)
+
+
+_all_watchdogs: list[_ProcessWatchdog] = [_celery_worker, _celery_beat]
+
+
+def _cleanup_subprocesses():
+    """Kill all managed subprocesses — safety net for uvicorn --reload."""
+    for wd in _all_watchdogs:
+        wd._kill_proc()
+    _watchdog._kill_proc()
+
+
+atexit.register(_cleanup_subprocesses)
+
+
+def _sigterm_handler(signum, frame):
+    _cleanup_subprocesses()
+    sys.exit(0)
+
+
+signal.signal(signal.SIGTERM, _sigterm_handler)
+
 
 async def _fetch_celebrity_holdings():
     """Run all three celebrity holdings ingestion tasks."""
@@ -283,6 +443,11 @@ async def lifespan(app: FastAPI):
     _watchdog.start()
     app.state.watchdog = _watchdog
 
+    _celery_worker.start()
+    _celery_beat.start()
+    app.state.celery_worker = _celery_worker
+    app.state.celery_beat = _celery_beat
+
     from app.api.routes.admin.logs import init_log_buffer
 
     init_log_buffer()
@@ -369,6 +534,8 @@ async def lifespan(app: FastAPI):
         mcap_thread.join(timeout=5)
         _celeb_stop.set()
         celeb_thread.join(timeout=5)
+        _celery_beat.stop()
+        _celery_worker.stop()
         _watchdog.stop()
 
 
@@ -429,10 +596,19 @@ async def health():
     elif not sv_ok:
         overall = "degraded"
 
+    celery_health = {
+        "worker": _celery_worker.health,
+        "beat": _celery_beat.health,
+    }
+    workers_ok = _celery_worker.health.get("status") in ("running", "disabled")
+    if not workers_ok and overall == "ok":
+        overall = "degraded"
+
     return {
         "status": overall,
         "version": "0.1.0",
         "realtime": sv,
+        "celery": celery_health,
         "data_readiness": data_readiness,
         "startup": {
             "completed_at": (

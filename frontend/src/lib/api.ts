@@ -18,6 +18,7 @@ import type {
   FomcMarketReaction,
   FomcNextMeeting,
   FomcRatePoint,
+  FomcRateProbability,
   FomcScheduleItem,
   FomcStatement,
   FomcTrendPoint,
@@ -268,26 +269,32 @@ export const news = {
 
 // ── FOMC API ────────────────────────────────────────────────────────────────
 export const fomc = {
-  statements: (limit = 50) =>
+  statements: (limit = 10) =>
     apiFetch<FomcStatement[]>(`/fomc/statements?limit=${limit}`),
 
-  trend: (limit = 20) =>
+  trend: (limit = 10) =>
     apiFetch<FomcTrendPoint[]>(`/fomc/trend?limit=${limit}`),
 
   nextMeeting: () =>
     apiFetch<FomcNextMeeting>("/fomc/next-meeting"),
 
-  schedule: () =>
-    apiFetch<FomcScheduleItem[]>("/fomc/schedule"),
+  schedule: (past = 10, future = 10) =>
+    apiFetch<FomcScheduleItem[]>(`/fomc/schedule?past=${past}&future=${future}`),
 
-  rateHistory: () =>
-    apiFetch<FomcRatePoint[]>("/fomc/rate-history"),
+  rateHistory: (years = 5) =>
+    apiFetch<FomcRatePoint[]>(`/fomc/rate-history?years=${years}`),
 
-  marketReaction: (limit = 30) =>
+  marketReaction: (limit = 20) =>
     apiFetch<FomcMarketReaction[]>(`/fomc/market-reaction?limit=${limit}`),
 
   diff: (date: string) =>
     apiFetch<FomcDiffResult>(`/fomc/diff?date=${date}`),
+
+  news: (limit = 10) =>
+    apiFetch<NewsApiArticle[]>(`/fomc/news?limit=${limit}`),
+
+  rateProbabilities: () =>
+    apiFetch<FomcRateProbability[]>("/fomc/rate-probabilities"),
 };
 
 // ── Admin API ───────────────────────────────────────────────────────────────

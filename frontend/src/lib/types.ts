@@ -330,6 +330,13 @@ export interface FomcMarketReaction {
   rate_high: number | null;
 }
 
+export interface FomcRateProbability {
+  meeting_date: string | null;
+  target_rate_low: number;
+  target_rate_high: number;
+  probability: number;
+}
+
 export interface FomcDiffLine {
   type: "added" | "removed" | "unchanged";
   text: string;
@@ -533,8 +540,13 @@ export interface EarningsEvent {
   eps_surprise_pct: number | null;
   revenue_actual: number | null; // absolute USD
   revenue_estimate: number | null;
+  revenue_surprise_pct: number | null;
   guidance_text: string | null;
-  // ── enriched server-side (name joined from `tickers`; session from report_hour) ──
+  // ── enriched server-side ──
   name?: string;
   session?: EarningsSession;
+  /** Post-earnings gap: reaction day open vs prev close (%) */
+  reaction_open_pct: number | null;
+  /** Post-earnings 1-day: reaction day close vs prev close (%) */
+  reaction_close_pct: number | null;
 }

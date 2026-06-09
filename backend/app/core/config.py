@@ -109,6 +109,14 @@ class Settings(BaseSettings):
     ADMIN_EMAIL: str = "admin@penguinai.com"
     ADMIN_PASSWORD: str = ""  # auto-generated on first startup if empty
 
+    # ── FOMC defaults ────────────────────────────────────────────
+    FOMC_DEFAULT_TREND_LIMIT: int = 10
+    FOMC_DEFAULT_STATEMENTS_LIMIT: int = 10
+    FOMC_DEFAULT_MARKET_REACTION_LIMIT: int = 20
+    FOMC_DEFAULT_SCHEDULE_PAST: int = 10
+    FOMC_DEFAULT_SCHEDULE_FUTURE: int = 10
+    FOMC_DEFAULT_RATE_HISTORY_YEARS: int = 5
+
     # ── OAuth (future) ────────────────────────────────────────────
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""

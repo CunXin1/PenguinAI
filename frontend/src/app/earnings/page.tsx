@@ -13,6 +13,8 @@ import {
   AlertCircle,
   BarChart3,
   ExternalLink,
+  TrendingUp,
+  TrendingDown,
 } from "lucide-react";
 import { earnings as earningsApi } from "@/lib/api";
 import { Card } from "@/components/ui/Card";
@@ -64,7 +66,7 @@ const isReported = (e: EarningsEvent) => e.eps_actual !== null;
 /* ── Loading skeleton ───────────────────────────────────────────── */
 function Skeleton() {
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6 space-y-5">
+    <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
       <div>
         <div className="h-6 w-48 rounded bg-zinc-200 dark:bg-zinc-800 animate-pulse" />
         <div className="h-4 w-72 rounded bg-zinc-100 dark:bg-zinc-800/60 animate-pulse mt-2" />
@@ -99,7 +101,7 @@ function Skeleton() {
 /* ── Error state ────────────────────────────────────────────────── */
 function ErrorBanner({ onRetry }: { onRetry: () => void }) {
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6">
+    <div className="max-w-6xl mx-auto px-4 py-6">
       <Card className="py-16 flex flex-col items-center gap-4 text-center">
         <AlertCircle size={32} className="text-red-500" />
         <div>
@@ -126,7 +128,7 @@ function ErrorBanner({ onRetry }: { onRetry: () => void }) {
 /* ── Empty state ────────────────────────────────────────────────── */
 function EmptyBanner() {
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6 space-y-5">
+    <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
       <div>
         <h1 className="text-xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
           <CalendarDays size={20} className="text-sky-500 dark:text-sky-400" />
@@ -196,6 +198,32 @@ function EpsSparkline({ history }: { history: EarningsEvent[] }) {
   );
 }
 
+/* ── Reaction badge ────────────────────────────────────────────── */
+function ReactionBadge({ value, label }: { value: number | null; label: string }) {
+  if (value === null) return null;
+  const up = value >= 0;
+  return (
+    <div className="flex items-center gap-1">
+      {up ? (
+        <TrendingUp size={11} className="text-emerald-500" />
+      ) : (
+        <TrendingDown size={11} className="text-red-500" />
+      )}
+      <span
+        className={cn(
+          "font-mono text-xs font-semibold",
+          up
+            ? "text-emerald-600 dark:text-emerald-400"
+            : "text-red-600 dark:text-red-400"
+        )}
+        title={label}
+      >
+        {value >= 0 ? "+" : ""}{value.toFixed(2)}%
+      </span>
+    </div>
+  );
+}
+
 /* ── Per-ticker expanded detail ─────────────────────────────────── */
 function EarningsDetail({
   ticker,
@@ -247,57 +275,95 @@ function EarningsDetail({
         </p>
       ) : (
         <div className="rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800">
-          <div className="grid grid-cols-12 gap-1 px-3 py-1.5 bg-zinc-100 dark:bg-zinc-800/60 text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
-            <div className="col-span-2">Date</div>
-            <div className="col-span-2 text-right">EPS Est</div>
-            <div className="col-span-2 text-right">EPS Act</div>
-            <div className="col-span-2 text-right">Surprise</div>
-            <div className="col-span-2 text-right">Rev Est</div>
-            <div className="col-span-2 text-right">Rev Act</div>
+          {/* Header */}
+          <div className="grid grid-cols-[72px_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-1 px-3 py-1.5 bg-zinc-100 dark:bg-zinc-800/60 text-[10px] font-medium text-zinc-500 uppercase tracking-wider">
+            <div>Date</div>
+            <div className="text-right">EPS Est</div>
+            <div className="text-right">EPS Act</div>
+            <div className="text-right">EPS Surp</div>
+            <div className="text-right">Rev Est</div>
+            <div className="text-right">Rev Act</div>
+            <div className="text-right">Rev Surp</div>
+            <div className="text-right">Reaction</div>
           </div>
-          {history.slice(0, 8).map((h) => {
+          {history.slice(0, 12).map((h) => {
             const r = isReported(h);
-            const s = h.eps_surprise_pct ?? 0;
-            const b = s >= 0;
+            const epsSurp = h.eps_surprise_pct ?? 0;
+            const revSurp = h.revenue_surprise_pct;
+            const epsBeat = epsSurp >= 0;
+            const revBeat = revSurp != null && revSurp >= 0;
+            const reaction = h.reaction_close_pct;
             return (
               <div
                 key={h.report_date}
-                className="grid grid-cols-12 gap-1 px-3 py-1.5 border-t border-zinc-100 dark:border-zinc-800/40 text-xs"
+                className="grid grid-cols-[72px_1fr_1fr_1fr_1fr_1fr_1fr_1fr] gap-1 px-3 py-1.5 border-t border-zinc-100 dark:border-zinc-800/40 text-xs"
               >
-                <div className="col-span-2 font-mono text-zinc-500">
+                <div className="font-mono text-zinc-500">
                   {h.report_date.slice(0, 7)}
                 </div>
-                <div className="col-span-2 text-right font-mono text-zinc-600 dark:text-zinc-400">
+                <div className="text-right font-mono text-zinc-600 dark:text-zinc-400">
                   {h.eps_estimate != null ? `$${h.eps_estimate.toFixed(2)}` : "—"}
                 </div>
-                <div className="col-span-2 text-right font-mono font-semibold text-zinc-900 dark:text-zinc-100">
+                <div className="text-right font-mono font-semibold text-zinc-900 dark:text-zinc-100">
                   {r ? `$${h.eps_actual!.toFixed(2)}` : "—"}
                 </div>
-                <div className="col-span-2 text-right">
+                <div className="text-right">
                   {r ? (
                     <span
                       className={cn(
                         "font-mono font-semibold",
-                        b
+                        epsBeat
                           ? "text-emerald-600 dark:text-emerald-400"
                           : "text-red-600 dark:text-red-400"
                       )}
                     >
-                      {signedPct(s, 1)}
+                      {signedPct(epsSurp, 1)}
                     </span>
                   ) : (
-                    <span className="text-zinc-400">{"—"}</span>
+                    <span className="text-zinc-400">—</span>
                   )}
                 </div>
-                <div className="col-span-2 text-right font-mono text-zinc-600 dark:text-zinc-400">
+                <div className="text-right font-mono text-zinc-600 dark:text-zinc-400">
                   {h.revenue_estimate != null
                     ? `$${compact(h.revenue_estimate)}`
                     : "—"}
                 </div>
-                <div className="col-span-2 text-right font-mono text-zinc-600 dark:text-zinc-400">
-                  {h.revenue_actual != null
+                <div className="text-right font-mono font-semibold text-zinc-900 dark:text-zinc-100">
+                  {r && h.revenue_actual != null
                     ? `$${compact(h.revenue_actual)}`
                     : "—"}
+                </div>
+                <div className="text-right">
+                  {r && revSurp != null ? (
+                    <span
+                      className={cn(
+                        "font-mono font-semibold",
+                        revBeat
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-red-600 dark:text-red-400"
+                      )}
+                    >
+                      {signedPct(revSurp, 1)}
+                    </span>
+                  ) : (
+                    <span className="text-zinc-400">—</span>
+                  )}
+                </div>
+                <div className="text-right">
+                  {r && reaction != null ? (
+                    <span
+                      className={cn(
+                        "font-mono font-semibold",
+                        reaction >= 0
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-red-600 dark:text-red-400"
+                      )}
+                    >
+                      {signedPct(reaction, 2)}
+                    </span>
+                  ) : (
+                    <span className="text-zinc-400">—</span>
+                  )}
                 </div>
               </div>
             );
@@ -337,7 +403,7 @@ function EarningsRow({
                    hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors cursor-pointer"
       >
         {/* ticker + name */}
-        <div className="col-span-5 sm:col-span-4 min-w-0 flex items-center gap-2">
+        <div className="col-span-4 sm:col-span-3 min-w-0 flex items-center gap-2">
           <ChevronRight
             size={14}
             className={cn(
@@ -366,27 +432,29 @@ function EarningsRow({
           </div>
         </div>
 
-        {/* EPS estimate */}
+        {/* EPS est / actual */}
         <div className="col-span-3 sm:col-span-2 text-right">
           <p className="text-[10px] text-zinc-400 dark:text-zinc-600 uppercase tracking-wide">
-            Est
+            EPS
           </p>
           <p className="font-mono text-sm text-zinc-700 dark:text-zinc-300">
-            {e.eps_estimate != null ? `$${e.eps_estimate.toFixed(2)}` : "—"}
+            {reported ? (
+              <>
+                <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                  ${e.eps_actual!.toFixed(2)}
+                </span>
+                <span className="text-zinc-400 dark:text-zinc-600 text-xs">
+                  {" / "}
+                  {e.eps_estimate != null ? `$${e.eps_estimate.toFixed(2)}` : "—"}
+                </span>
+              </>
+            ) : (
+              <>Est {e.eps_estimate != null ? `$${e.eps_estimate.toFixed(2)}` : "—"}</>
+            )}
           </p>
         </div>
 
-        {/* EPS actual */}
-        <div className="col-span-4 sm:col-span-2 text-right">
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-600 uppercase tracking-wide">
-            Actual
-          </p>
-          <p className="font-mono text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            {reported ? `$${e.eps_actual!.toFixed(2)}` : "—"}
-          </p>
-        </div>
-
-        {/* surprise badge */}
+        {/* EPS surprise badge */}
         <div className="hidden sm:flex col-span-2 justify-end">
           {reported ? (
             <span
@@ -406,18 +474,44 @@ function EarningsRow({
           )}
         </div>
 
-        {/* revenue */}
-        <div className="hidden sm:block col-span-2 text-right">
+        {/* revenue est / actual */}
+        <div className="col-span-3 sm:col-span-2 text-right">
           <p className="text-[10px] text-zinc-400 dark:text-zinc-600 uppercase tracking-wide">
-            {reported && e.revenue_actual != null ? "Revenue" : "Rev Est"}
+            Revenue
           </p>
           <p className="font-mono text-sm text-zinc-600 dark:text-zinc-400">
-            {reported && e.revenue_actual != null
-              ? `$${compact(e.revenue_actual)}`
-              : e.revenue_estimate != null
-                ? `$${compact(e.revenue_estimate)}`
-                : "—"}
+            {reported && e.revenue_actual != null ? (
+              <>
+                <span className="font-semibold text-zinc-900 dark:text-zinc-100">
+                  ${compact(e.revenue_actual)}
+                </span>
+                <span className="text-zinc-400 dark:text-zinc-600 text-xs">
+                  {" / "}
+                  {e.revenue_estimate != null ? `$${compact(e.revenue_estimate)}` : "—"}
+                </span>
+              </>
+            ) : e.revenue_estimate != null ? (
+              <>Est ${compact(e.revenue_estimate)}</>
+            ) : (
+              "—"
+            )}
           </p>
+        </div>
+
+        {/* price reaction (1-day close-to-close) */}
+        <div className="hidden sm:flex col-span-3 items-center justify-end gap-3">
+          {reported && e.reaction_close_pct != null ? (
+            <div className="flex flex-col items-end gap-0.5">
+              <ReactionBadge value={e.reaction_close_pct} label="1-day close-to-close" />
+              {e.reaction_open_pct != null && (
+                <span className="text-[10px] font-mono text-zinc-400 dark:text-zinc-600" title="Gap at open">
+                  gap {e.reaction_open_pct >= 0 ? "+" : ""}{e.reaction_open_pct.toFixed(2)}%
+                </span>
+              )}
+            </div>
+          ) : reported ? (
+            <span className="text-xs text-zinc-400 dark:text-zinc-600">—</span>
+          ) : null}
         </div>
       </div>
 
@@ -428,7 +522,7 @@ function EarningsRow({
 
 /* ── Main page ──────────────────────────────────────────────────── */
 export default function EarningsPage() {
-  const [tab, setTab] = useState<Tab>("upcoming");
+  const [tab, setTab] = useState<Tab>("all");
   const [q, setQ] = useState("");
   const [today, setToday] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -439,7 +533,7 @@ export default function EarningsPage() {
     queryKey: ["earnings-calendar"],
     queryFn: async () => {
       const now = new Date();
-      const from = new Date(now.getTime() - 7 * 864e5).toISOString().slice(0, 10);
+      const from = new Date(now.getTime() - 90 * 864e5).toISOString().slice(0, 10);
       const to = new Date(now.getTime() + 30 * 864e5).toISOString().slice(0, 10);
       return earningsApi.calendar(from, to);
     },
@@ -454,11 +548,15 @@ export default function EarningsPage() {
     const avgSurprise = reported.length
       ? reported.reduce((s, e) => s + (e.eps_surprise_pct ?? 0), 0) / reported.length
       : 0;
+    const avgReaction = reported.length
+      ? reported.reduce((s, e) => s + (e.reaction_close_pct ?? 0), 0) / reported.length
+      : 0;
     return {
       upcoming: events.length - reported.length,
       beats: beats.length,
       misses: misses.length,
       avgSurprise,
+      avgReaction,
     };
   }, [events]);
 
@@ -490,19 +588,19 @@ export default function EarningsPage() {
   if (events.length === 0) return <EmptyBanner />;
 
   return (
-    <div className="max-w-5xl mx-auto px-4 py-6 space-y-5">
+    <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
       <div>
         <h1 className="text-xl font-bold text-zinc-900 dark:text-white flex items-center gap-2">
           <CalendarDays size={20} className="text-sky-500 dark:text-sky-400" />
           Earnings Calendar
         </h1>
         <p className="text-sm text-zinc-500 mt-0.5">
-          EPS estimates vs. actuals across the signal universe
+          EPS &amp; revenue estimates vs. actuals with post-earnings price reaction
         </p>
       </div>
 
       {/* stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <StatTile label="Upcoming" value={stats.upcoming} accent="brand" sub="next 30 days" />
         <StatTile label="Beats" value={stats.beats} accent="up" sub="EPS > estimate" />
         <StatTile label="Misses" value={stats.misses} accent="down" sub="EPS < estimate" />
@@ -510,7 +608,13 @@ export default function EarningsPage() {
           label="Avg Surprise"
           value={signedPct(stats.avgSurprise, 1)}
           accent={stats.avgSurprise >= 0 ? "up" : "down"}
-          sub="reported average"
+          sub="EPS surprise avg"
+        />
+        <StatTile
+          label="Avg Reaction"
+          value={signedPct(stats.avgReaction, 2)}
+          accent={stats.avgReaction >= 0 ? "up" : "down"}
+          sub="1-day price move"
         />
       </div>
 
@@ -541,6 +645,15 @@ export default function EarningsPage() {
             className="bg-transparent outline-none text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 dark:placeholder-zinc-600 w-full"
           />
         </div>
+      </div>
+
+      {/* column headers (desktop) */}
+      <div className="hidden sm:grid grid-cols-12 gap-2 px-5 text-[10px] font-medium text-zinc-400 dark:text-zinc-600 uppercase tracking-wider">
+        <div className="col-span-3">Company</div>
+        <div className="col-span-2 text-right">EPS (Act / Est)</div>
+        <div className="col-span-2 text-right">Surprise</div>
+        <div className="col-span-2 text-right">Revenue (Act / Est)</div>
+        <div className="col-span-3 text-right">Price Reaction</div>
       </div>
 
       {/* calendar groups */}
@@ -593,7 +706,7 @@ export default function EarningsPage() {
       </div>
 
       <p className="text-xs text-zinc-400 dark:text-zinc-600 text-center pt-2">
-        {events.length} earnings events &middot; Finnhub data &middot; refreshed 3&times;/day
+        {events.length} earnings events &middot; Finnhub data &middot; refreshed 2&times;/day
       </p>
     </div>
   );

@@ -1,4 +1,4 @@
-.PHONY: up down logs backend frontend ml-worker ibkr-stream minute-parquet fetch-earnings fetch-fomc fetch-congress fetch-13f fetch-ark fetch-celebrities lint type-check test test-backend test-frontend db-init bootstrap
+.PHONY: up down logs backend frontend ml-worker ibkr-stream minute-parquet fetch-earnings fetch-fomc fetch-congress fetch-13f fetch-ark fetch-celebrities lint type-check test test-backend test-frontend db-init bootstrap status
 
 # ── Docker Compose ────────────────────────────────────────────────────────────
 up:
@@ -57,6 +57,10 @@ fetch-celebrities: fetch-congress fetch-13f fetch-ark
 
 celery-beat:
 	cd . && celery -A ml.tasks.celery_app beat --loglevel=info
+
+# ── Monitoring ───────────────────────────────────────────────────────────────
+status:
+	python3 scripts/status.py
 
 # ── Code quality ──────────────────────────────────────────────────────────────
 lint:

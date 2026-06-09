@@ -22,13 +22,16 @@ services:
     restart: unless-stopped
 
   api:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     env_file:
       - path: .env
         required: false
     environment:
       - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD:-penguinai_dev}@timescaledb:5432/penguinai
       - REDIS_URL=redis://redis:6379/0
+      - CELERY_EMBEDDED=false
     depends_on:
       timescaledb:
         condition: service_healthy
@@ -81,8 +84,10 @@ services:
       - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD:-penguinai_dev}@timescaledb:5432/penguinai
       - REDIS_URL=redis://redis:6379/0
     depends_on:
-      - timescaledb
-      - redis
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   ml_worker:
@@ -96,17 +101,20 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD:-penguinai_dev}@timescaledb:5432/penguinai
       - REDIS_URL=redis://redis:6379/0
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: 1
-              capabilities: [gpu]
     depends_on:
-      - timescaledb
-      - redis
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
+    # GPU: uncomment below on hosts with nvidia-container-toolkit
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
 
   celery_beat:
     build:
@@ -120,8 +128,8 @@ services:
       - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD:-penguinai_dev}@timescaledb:5432/penguinai
       - REDIS_URL=redis://redis:6379/0
     depends_on:
-      - timescaledb
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   scraper:
@@ -136,8 +144,10 @@ services:
       - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD:-penguinai_dev}@timescaledb:5432/penguinai
       - REDIS_URL=redis://redis:6379/0
     depends_on:
-      - timescaledb
-      - redis
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

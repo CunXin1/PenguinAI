@@ -1,6 +1,6 @@
 """
 FOMC API — statements, hawk/dove scores, meeting schedule, rate history,
-market reactions, and statement diffs.
+market reactions, statement diffs, Fed news, and CME FedWatch probabilities.
 
 Reads from the ``fomc_statements`` table (populated by ``data.fomc.loader``).
 Rate history from ``data.fomc.fed_funds_rate`` (hardcoded, cross-verified).
@@ -18,6 +18,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.core.config import settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -33,6 +34,8 @@ FOMC_MEETINGS = [
 
 _cache: dict[str, tuple[float, object]] = {}
 _STATEMENTS_TTL = 3600.0
+_NEWS_TTL = 900.0
+_FEDWATCH_TTL = 1800.0
 
 
 def _get_cached(key: str, ttl: float):
@@ -79,9 +82,11 @@ def _map_statement(row) -> dict:
 @router.get("/statements")
 async def get_fomc_statements(
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: int = Query(default=None, ge=1, le=200),
 ):
     """All FOMC statements with hawk/dove scores, most recent first."""
+    if limit is None:
+        limit = settings.FOMC_DEFAULT_STATEMENTS_LIMIT
     cache_key = f"fomc:statements:{limit}"
     cached = _get_cached(cache_key, _STATEMENTS_TTL)
     if cached is not None:
@@ -104,9 +109,11 @@ async def get_fomc_statements(
 @router.get("/trend")
 async def get_fomc_trend(
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(default=20, ge=1, le=50),
+    limit: int = Query(default=None, ge=1, le=50),
 ):
     """Hawk/dove score time-series for chart visualization (oldest first)."""
+    if limit is None:
+        limit = settings.FOMC_DEFAULT_TREND_LIMIT
     cache_key = f"fomc:trend:{limit}"
     cached = _get_cached(cache_key, _STATEMENTS_TTL)
     if cached is not None:
@@ -167,18 +174,33 @@ async def get_next_meeting():
 
 
 @router.get("/schedule")
-async def get_fomc_schedule():
-    """Full FOMC meeting schedule (for calendar display)."""
+async def get_fomc_schedule(
+    past: int = Query(default=None, ge=0, le=50),
+    future: int = Query(default=None, ge=0, le=50),
+):
+    """FOMC meeting schedule with configurable past/future window."""
+    if past is None:
+        past = settings.FOMC_DEFAULT_SCHEDULE_PAST
+    if future is None:
+        future = settings.FOMC_DEFAULT_SCHEDULE_FUTURE
+
     now_str = datetime.now(UTC).strftime("%Y-%m-%d")
+    past_meetings = [d for d in FOMC_MEETINGS if d < now_str]
+    future_meetings = [d for d in FOMC_MEETINGS if d >= now_str]
+
+    selected_past = past_meetings[-past:] if past > 0 else []
+    selected_future = future_meetings[:future] if future > 0 else []
+
     return [
         {"date": d, "past": d < now_str}
-        for d in FOMC_MEETINGS
+        for d in selected_past + selected_future
     ]
 
 
 @router.get("/rate-history")
 async def get_rate_history(
     db: Annotated[AsyncSession, Depends(get_db)],
+    years: int = Query(default=None, ge=1, le=30),
 ):
     """Federal funds rate over time — one point per FOMC statement date.
 
@@ -186,15 +208,25 @@ async def get_rate_history(
     FRED, Fed press releases, and Bankrate). Each point shows the
     effective rate on that meeting date, NOT extracted from statement text.
     """
-    cache_key = "fomc:rate-history"
+    if years is None:
+        years = settings.FOMC_DEFAULT_RATE_HISTORY_YEARS
+    cache_key = f"fomc:rate-history:{years}"
     cached = _get_cached(cache_key, _STATEMENTS_TTL)
     if cached is not None:
         return cached
 
     from data.fomc.fed_funds_rate import get_rate_on_date
 
+    cutoff = datetime.now(UTC).replace(year=datetime.now(UTC).year - years)
+    cutoff_str = cutoff.strftime("%Y-%m-%d")
+
     rows = await db.execute(
-        text("SELECT DISTINCT time::date AS d FROM fomc_statements ORDER BY d")
+        text(
+            "SELECT DISTINCT time::date AS d FROM fomc_statements "
+            "WHERE time::date >= :cutoff "
+            "ORDER BY d"
+        ),
+        {"cutoff": cutoff_str},
     )
     points = []
     for row in rows:
@@ -216,12 +248,14 @@ async def get_rate_history(
 @router.get("/market-reaction")
 async def get_market_reaction(
     db: Annotated[AsyncSession, Depends(get_db)],
-    limit: int = Query(default=30, ge=1, le=100),
+    limit: int = Query(default=None, ge=1, le=100),
 ):
     """SPY return on each FOMC meeting day (intraday: close/prev_close - 1).
 
     Only returns dates where both the FOMC statement AND SPY daily bar exist.
     """
+    if limit is None:
+        limit = settings.FOMC_DEFAULT_MARKET_REACTION_LIMIT
     cache_key = f"fomc:market-reaction:{limit}"
     cached = _get_cached(cache_key, _STATEMENTS_TTL)
     if cached is not None:
@@ -290,11 +324,7 @@ async def get_statement_diff(
     db: Annotated[AsyncSession, Depends(get_db)],
     date: str = Query(..., description="Date of the statement to diff (YYYY-MM-DD)"),
 ):
-    """Sentence-level diff between a statement and the previous one.
-
-    Returns added, removed, and unchanged sentences so the frontend can
-    render a redline view.
-    """
+    """Sentence-level diff between a statement and the previous one."""
     cache_key = f"fomc:diff:{date}"
     cached = _get_cached(cache_key, _STATEMENTS_TTL)
     if cached is not None:
@@ -360,6 +390,50 @@ async def get_statement_diff(
     }
     _set_cache(cache_key, result)
     return result
+
+
+@router.get("/news")
+async def get_fomc_news(
+    limit: int = Query(default=10, ge=1, le=50),
+):
+    """Fed/FOMC-related news headlines via Google News RSS."""
+    cache_key = f"fomc:news:{limit}"
+    cached = _get_cached(cache_key, _NEWS_TTL)
+    if cached is not None:
+        return cached[:limit]
+
+    from app.api.routes.news import _fetch_google_rss
+
+    articles = await _fetch_google_rss(
+        query="Federal Reserve FOMC interest rate decision",
+        limit=limit,
+    )
+    if articles is None:
+        articles = []
+    _set_cache(cache_key, articles)
+    return articles[:limit]
+
+
+@router.get("/rate-probabilities")
+async def get_rate_probabilities():
+    """CME FedWatch implied rate probabilities for the next FOMC meeting."""
+    cache_key = "fomc:rate-probs"
+    cached = _get_cached(cache_key, _FEDWATCH_TTL)
+    if cached is not None:
+        return cached
+
+    try:
+        from data.fomc.fedwatch import fetch_fedwatch_probabilities
+
+        result = await fetch_fedwatch_probabilities()
+    except Exception:
+        logger.warning("CME FedWatch fetch failed", exc_info=True)
+        result = None
+
+    if result:
+        _set_cache(cache_key, result)
+        return result
+    return []
 
 
 def _split_sentences(text: str) -> list[str]:

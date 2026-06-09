@@ -99,7 +99,20 @@ async def health_overview(
         }
     )
 
-    # 4. Celery workers (inspect is synchronous — run in thread to avoid blocking)
+    # 4a. Embedded Celery processes (managed by backend lifespan)
+    for attr, label in [("celery_worker", "celery_worker_proc"), ("celery_beat", "celery_beat_proc")]:
+        wd = getattr(request.app.state, attr, None)
+        if wd is not None:
+            h = wd.health
+            st = h.get("status", "unknown")
+            services.append({
+                "name": label,
+                "status": "healthy" if st == "running" else ("degraded" if st == "disabled" else "down"),
+                "latency_ms": None,
+                "detail": f"pid={h.get('pid')}, restarts={h.get('restarts', 0)}",
+            })
+
+    # 4b. Celery workers (inspect via broker — confirms tasks are actually being consumed)
     try:
         from celery import Celery
 
