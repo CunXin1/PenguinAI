@@ -5,25 +5,26 @@ backend. One model, three transports — picked by `LLM_BACKEND` (default `auto`
 
 | Platform | Backend | Server | Default model |
 |----------|---------|--------|---------------|
-| macOS (Apple Silicon) | `ollama` | Ollama `:11434` | `gemma3n:e2b` |
-| Windows / Linux (NVIDIA GPU) | `vllm` | vLLM `:8080` | `google/gemma-3n-E2B-it` |
+| macOS (Apple Silicon) | `ollama` | Ollama `:11434` | `gemma4:e2b` |
+| Windows / Linux (NVIDIA GPU) | `vllm` | vLLM `:8080` | `google/gemma-4-E2B-it` |
 | Hosted (future) | `api` | any OpenAI-compatible | `gemma-4` |
 
 `auto` → Ollama on macOS, vLLM elsewhere. The whole pipeline already degrades to
 an ML-only signal if the LLM is down (`signal_engine._fallback_gemma_output`), so
 serving is additive, never load-bearing.
 
-> **Model naming.** E2B/E4B is Gemma's *effective-parameter* (MatFormer) sizing.
-> Defaults point at the publicly pullable `gemma3n:e2b` / `google/gemma-3n-E2B-it`.
-> If your "Gemma 4 E2B" weights live under a different id, override `OLLAMA_MODEL`
-> / `VLLM_MODEL` — no code change. **E2B now; E4B later** = flip
-> `GEMMA_MODEL_VARIANT=e4b` (or pass `-Variant e4b` / `GEMMA_VARIANT=e4b`).
+> **Model.** Gemma 4 (released 2026-03-31, Apache 2.0). E2B/E4B = *effective*
+> parameter sizing for edge/on-device; 128K context, day-one Ollama + vLLM + HF.
+> Defaults: `gemma4:e2b` (Ollama) / `google/gemma-4-E2B-it` (HF/vLLM). Override
+> `OLLAMA_MODEL` / `VLLM_MODEL` for a quant or finetune — no code change.
+> **E2B now; E4B later** = flip `GEMMA_MODEL_VARIANT=e4b` (or pass `-Variant e4b`
+> / `GEMMA_VARIANT=e4b`).
 
 ## macOS — Ollama
 
 ```bash
 brew install ollama            # if needed
-ml/serving/start_ollama.sh     # starts server + pulls gemma3n:e2b
+ml/serving/start_ollama.sh     # starts server + pulls gemma4:e2b
 ```
 `.env`: leave `LLM_BACKEND=auto` (or set `ollama`).
 
@@ -31,7 +32,7 @@ ml/serving/start_ollama.sh     # starts server + pulls gemma3n:e2b
 
 ```powershell
 pip install vllm               # heavy, CUDA-specific — install on the GPU host only
-./ml/serving/start_vllm.ps1    # serves google/gemma-3n-E2B-it on :8080
+./ml/serving/start_vllm.ps1    # serves google/gemma-4-E2B-it on :8080
 ```
 `.env`: leave `LLM_BACKEND=auto` (or set `vllm`).
 

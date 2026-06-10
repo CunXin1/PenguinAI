@@ -48,7 +48,7 @@ export default function ProfilePage() {
     );
   }
 
-  const name = user.display_name || user.email.split("@")[0];
+  const name = user.username || user.display_name || user.email.split("@")[0];
   const memberSince = new Date(user.created_at);
   const memberDays = Math.max(
     0,

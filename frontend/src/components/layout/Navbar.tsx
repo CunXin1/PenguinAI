@@ -319,7 +319,7 @@ export function Navbar() {
                 <div className="absolute right-0 mt-2 w-52 z-50 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 shadow-lg py-1">
                   <div className="px-3 py-2 border-b border-zinc-200 dark:border-zinc-800">
                     <p className="text-sm font-medium text-zinc-900 dark:text-white truncate">
-                      {user?.display_name || user?.email?.split("@")[0] || "Account"}
+                      {user?.username || user?.display_name || user?.email?.split("@")[0] || "Account"}
                     </p>
                     {user?.email && <p className="text-xs text-zinc-500 truncate">{user.email}</p>}
                   </div>

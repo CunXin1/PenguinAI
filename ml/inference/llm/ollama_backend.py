@@ -6,7 +6,7 @@ passing the JSON Schema directly as `format`, which constrains decoding to
 conforming JSON — the same format-lock guarantee as vLLM guided decoding.
 
 Finetune note: build a derived model from a LoRA/GGUF adapter via a Modelfile
-(`FROM gemma3n:e2b` + `ADAPTER ./adapter`) — see `ml/serving/Modelfile.gemma` —
+(`FROM gemma4:e2b` + `ADAPTER ./adapter`) — see `ml/serving/Modelfile.gemma` —
 then point `OLLAMA_MODEL` at the new tag. No code change required.
 """
 
@@ -72,7 +72,7 @@ class OllamaBackend(LLMBackend):
                 resp = await client.get(f"{self._base_url}/api/tags")
                 resp.raise_for_status()
                 tags = {m.get("name") for m in resp.json().get("models", [])}
-                # Ollama tags are like "gemma3n:e2b"; bare "gemma3n" implies ":latest".
+                # Ollama tags are like "gemma4:e2b"; a bare name implies ":latest".
                 wanted = self._model if ":" in self._model else f"{self._model}:latest"
                 if wanted not in tags:
                     logger.warning(

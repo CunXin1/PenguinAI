@@ -7,7 +7,7 @@
 #  Install it only on the serving host.)
 #
 # Usage:
-#   ml/serving/start_vllm.sh                       # google/gemma-3n-E2B-it on :8080
+#   ml/serving/start_vllm.sh                       # google/gemma-4-E2B-it on :8080
 #   GEMMA_VARIANT=e4b ml/serving/start_vllm.sh
 #   VLLM_MODEL=/models/gemma-ft ml/serving/start_vllm.sh   # finetuned/merged checkpoint
 #   LORA_PATH=/models/lora-adapter ml/serving/start_vllm.sh
@@ -18,7 +18,7 @@ set -euo pipefail
 VARIANT="${GEMMA_VARIANT:-e2b}"
 PORT="${PORT:-8080}"
 VARIANT_UPPER="$(echo "$VARIANT" | tr '[:lower:]' '[:upper:]')"
-MODEL="${VLLM_MODEL:-google/gemma-3n-${VARIANT_UPPER}-it}"
+MODEL="${VLLM_MODEL:-google/gemma-4-${VARIANT_UPPER}-it}"
 
 if ! command -v vllm >/dev/null 2>&1; then
   echo "vLLM not found. Install on this GPU host:  pip install vllm"

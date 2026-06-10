@@ -57,5 +57,5 @@ export function useAuth() {
 
 /** First letter for an avatar badge. */
 export function userInitial(user?: User): string {
-  return (user?.display_name || user?.email || "U").charAt(0).toUpperCase();
+  return (user?.username || user?.display_name || user?.email || "U").charAt(0).toUpperCase();
 }

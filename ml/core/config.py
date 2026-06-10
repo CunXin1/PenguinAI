@@ -49,11 +49,11 @@ class MLSettings(BaseSettings):
 
     def vllm_model(self) -> str:
         """Resolved vLLM model id (HF id or local path)."""
-        return self.VLLM_MODEL or f"google/gemma-3n-{self.GEMMA_MODEL_VARIANT.upper()}-it"
+        return self.VLLM_MODEL or f"google/gemma-4-{self.GEMMA_MODEL_VARIANT.upper()}-it"
 
     def ollama_model(self) -> str:
         """Resolved Ollama model tag."""
-        return self.OLLAMA_MODEL or f"gemma3n:{self.GEMMA_MODEL_VARIANT.lower()}"
+        return self.OLLAMA_MODEL or f"gemma4:{self.GEMMA_MODEL_VARIANT.lower()}"
 
     # FinBERT
     FINBERT_MODEL: str = "ProsusAI/finbert"

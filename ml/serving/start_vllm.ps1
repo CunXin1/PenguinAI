@@ -6,7 +6,7 @@
 #  platform/CUDA-specific. Install it only on the serving host.)
 #
 # Usage:
-#     ./ml/serving/start_vllm.ps1                 # serves google/gemma-3n-E2B-it on :8080
+#     ./ml/serving/start_vllm.ps1                 # serves google/gemma-4-E2B-it on :8080
 #     ./ml/serving/start_vllm.ps1 -Variant e4b
 #     ./ml/serving/start_vllm.ps1 -Model C:\models\gemma-ft  # finetuned/merged checkpoint
 #
@@ -22,7 +22,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 if (-not $Model) {
-    $Model = "google/gemma-3n-$($Variant.ToUpper())-it"
+    $Model = "google/gemma-4-$($Variant.ToUpper())-it"
 }
 
 $vllmArgs = @(

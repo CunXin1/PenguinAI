@@ -13,7 +13,7 @@
 # Until a finetune exists, this just pins the base E2B model + decoding params,
 # so creating it is harmless and gives a stable, project-owned tag.
 
-FROM gemma3n:e2b
+FROM gemma4:e2b
 
 # --- Finetuned adapter (uncomment when you have one) ----------------------
 # ADAPTER ./adapters/gemma-penguinai-lora.gguf

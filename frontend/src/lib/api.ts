@@ -101,16 +101,16 @@ async function apiFetch<T>(path: string, options?: RequestInit & { timeoutMs?: n
 
 // ── Auth API ───────────────────────────────────────────────────────────────────
 export const auth = {
-  register: (email: string, password: string, display_name?: string) =>
+  register: (email: string, password: string, username: string, display_name?: string) =>
     apiFetch<TokenResponse>("/auth/register", {
       method: "POST",
-      body: JSON.stringify({ email, password, display_name }),
+      body: JSON.stringify({ email, username, password, display_name }),
     }),
 
-  login: (email: string, password: string) =>
+  login: (identifier: string, password: string) =>
     apiFetch<TokenResponse>("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ identifier, password }),
     }),
 
   me: () => apiFetch<User>("/auth/me"),

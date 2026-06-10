@@ -132,8 +132,8 @@ class TestModelResolution:
         monkeypatch.setattr(ml_settings, "VLLM_MODEL", "")
         monkeypatch.setattr(ml_settings, "OLLAMA_MODEL", "")
         monkeypatch.setattr(ml_settings, "GEMMA_MODEL_VARIANT", "e2b")
-        assert ml_settings.vllm_model() == "google/gemma-3n-E2B-it"
-        assert ml_settings.ollama_model() == "gemma3n:e2b"
+        assert ml_settings.vllm_model() == "google/gemma-4-E2B-it"
+        assert ml_settings.ollama_model() == "gemma4:e2b"
         monkeypatch.setattr(ml_settings, "GEMMA_MODEL_VARIANT", "e4b")
-        assert ml_settings.vllm_model() == "google/gemma-3n-E4B-it"
-        assert ml_settings.ollama_model() == "gemma3n:e4b"
+        assert ml_settings.vllm_model() == "google/gemma-4-E4B-it"
+        assert ml_settings.ollama_model() == "gemma4:e4b"

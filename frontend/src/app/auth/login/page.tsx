@@ -39,7 +39,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [displayName, setDisplayName] = useState("");
+  const [username, setUsername] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,12 +57,15 @@ export default function LoginPage() {
     const errors: Record<string, string> = {};
 
     if (!email.trim()) {
-      errors.email = "Email is required";
-    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      errors.email = mode === "login" ? "Email or username is required" : "Email is required";
+    } else if (mode === "register" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       errors.email = "Enter a valid email address";
     }
 
     if (mode === "register") {
+      if (!/^[A-Za-z0-9_]{3,20}$/.test(username.trim())) {
+        errors.username = "3-20 characters: letters, numbers, or underscore";
+      }
       if (strength.score < 5) {
         errors.password = "Password does not meet all requirements";
       }
@@ -86,11 +89,11 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const normalizedEmail = email.trim().toLowerCase();
+      const identifier = email.trim();
       const res =
         mode === "login"
-          ? await auth.login(normalizedEmail, password)
-          : await auth.register(normalizedEmail, password, displayName.trim() || undefined);
+          ? await auth.login(identifier, password)
+          : await auth.register(identifier.toLowerCase(), password, username.trim());
 
       localStorage.setItem("access_token", res.access_token);
       if (mode === "register") {
@@ -166,23 +169,26 @@ export default function LoginPage() {
           <form onSubmit={handleSubmit} className="space-y-4" noValidate>
             {mode === "register" && (
               <Field
-                label="Display name"
+                label="Username"
                 type="text"
-                value={displayName}
-                onChange={(v) => { setDisplayName(v); setFieldErrors((e) => ({ ...e, displayName: "" })); }}
-                placeholder="Optional"
+                value={username}
+                onChange={(v) => { setUsername(v); setFieldErrors((e) => ({ ...e, username: "" })); }}
+                placeholder="your_handle"
+                required
+                error={fieldErrors.username}
+                autoComplete="username"
               />
             )}
 
             <Field
-              label="Email"
-              type="email"
+              label={mode === "login" ? "Email or username" : "Email"}
+              type={mode === "login" ? "text" : "email"}
               value={email}
               onChange={(v) => { setEmail(v); setFieldErrors((e) => ({ ...e, email: "" })); }}
-              placeholder="you@example.com"
+              placeholder={mode === "login" ? "you@example.com or your_handle" : "you@example.com"}
               required
               error={fieldErrors.email}
-              autoComplete="email"
+              autoComplete={mode === "login" ? "username" : "email"}
             />
 
             <div className="space-y-1.5">

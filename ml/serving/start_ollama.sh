@@ -2,14 +2,14 @@
 # Gemma 4 local serving — macOS (Apple Silicon / Metal) via Ollama.
 #
 # Usage:
-#   ml/serving/start_ollama.sh            # serve + pull gemma3n:e2b
+#   ml/serving/start_ollama.sh            # serve + pull gemma4:e2b
 #   GEMMA_VARIANT=e4b ml/serving/start_ollama.sh
 #
 # After this, set in .env:   LLM_BACKEND=ollama   (or leave LLM_BACKEND=auto on macOS)
 set -euo pipefail
 
 VARIANT="${GEMMA_VARIANT:-e2b}"
-MODEL="${OLLAMA_MODEL:-gemma3n:${VARIANT}}"
+MODEL="${OLLAMA_MODEL:-gemma4:${VARIANT}}"
 
 if ! command -v ollama >/dev/null 2>&1; then
   echo "Ollama not found. Install it:  brew install ollama   (or https://ollama.com/download)"

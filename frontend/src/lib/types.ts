@@ -97,6 +97,7 @@ export interface Candle {
 export interface User {
   id: string;
   email: string;
+  username: string | null;
   display_name: string | null;
   tier: UserTier;
   email_verified: boolean;
