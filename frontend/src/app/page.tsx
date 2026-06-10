@@ -7,6 +7,7 @@ import { TrendingTickers } from "@/components/dashboard/TrendingTickers";
 import { NewsPreview } from "@/components/dashboard/NewsPreview";
 import { WatchlistWidget } from "@/components/dashboard/WatchlistWidget";
 import { FomcWidget } from "@/components/dashboard/FomcWidget";
+import { FearGreedWidget } from "@/components/dashboard/FearGreedWidget";
 
 export default function DashboardPage() {
   return (
@@ -30,6 +31,7 @@ export default function DashboardPage() {
             <TrendingTickers />
             <WatchlistWidget />
           </div>
+          <FearGreedWidget />
           <FomcWidget />
           <NewsPreview />
         </div>

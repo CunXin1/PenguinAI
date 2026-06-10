@@ -26,7 +26,7 @@ export default function HeatmapPage() {
   const [period, setPeriod] = useState<HeatmapPeriod>("1D");
   const { isOpen } = useMarketStatus();
 
-  const { data, isLoading, isError, isFetching } = useQuery<HeatmapResponse>({
+  const { data, isLoading, isError, isPlaceholderData } = useQuery<HeatmapResponse>({
     queryKey: ["heatmap", limit, period],
     queryFn: () => marketData.heatmap(limit, period),
     // Keep the current tiles on screen while switching period/size — otherwise the
@@ -196,7 +196,11 @@ export default function HeatmapPage() {
             No market-cap data yet — run the market-cap backfill to populate the map.
           </div>
         ) : (
-          <Heatmap tiles={items} height={H} scale={scale} />
+          // Dim only while showing the previous period's tiles (placeholder) — a
+          // soft "updating" cue on switch, without dimming on the live 15s poll.
+          <div className={cn("transition-opacity duration-200", isPlaceholderData && "opacity-50")}>
+            <Heatmap tiles={items} height={H} scale={scale} />
+          </div>
         )}
       </Card>
 

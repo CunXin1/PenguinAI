@@ -9,6 +9,7 @@ import {
   CalendarDays,
   Crown,
   Landmark,
+  Gauge,
   Star,
   Newspaper,
   User,
@@ -35,6 +36,7 @@ const NAV = [
   { href: "/earnings", label: "Earnings", icon: CalendarDays },
   { href: "/celebrity-holdings", label: "Celebrity", icon: Crown },
   { href: "/fomc", label: "FOMC", icon: Landmark },
+  { href: "/fear-greed", label: "Fear & Greed", icon: Gauge },
   { href: "/watchlist", label: "Watchlist", icon: Star },
   { href: "/news", label: "News", icon: Newspaper },
 ];
