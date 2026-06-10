@@ -59,7 +59,8 @@ class VLLMBackend(LLMBackend):
                 "json_schema": {"name": "signal_output", "schema": schema},
             }
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        # trust_env=False: never route local serving through a system/HTTP proxy.
+        async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
             resp = await client.post(f"{self._base_url}/chat/completions", json=payload)
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
@@ -67,7 +68,7 @@ class VLLMBackend(LLMBackend):
 
     async def health(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
                 resp = await client.get(f"{self._base_url}/models")
                 resp.raise_for_status()
                 ids = {m.get("id") for m in resp.json().get("data", [])}

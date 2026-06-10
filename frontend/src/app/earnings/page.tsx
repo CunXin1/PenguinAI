@@ -371,7 +371,7 @@ function UnifiedRow({ e, isOpen, onToggle, today }: { e: EarningsEvent; isOpen: 
         </div>
 
         {/* Revenue */}
-        <div className="col-span-3 sm:col-span-2 text-right">
+        <div className="col-span-3 sm:col-span-2 text-right sm:translate-x-2">
           <p className="text-[10px] text-zinc-400 dark:text-zinc-600 uppercase tracking-wide">Revenue</p>
           <p className="font-mono text-sm">
             {reported && e.revenue_actual != null ? (
@@ -559,7 +559,7 @@ export default function EarningsPage() {
           <div className="col-span-2">Company</div>
           <div className="col-span-2 text-right">EPS (Act / Est)</div>
           <div className="col-span-2 text-right">EPS Surp / In</div>
-          <div className="col-span-2 text-right">Revenue (Act / Est)</div>
+          <div className="col-span-2 text-right sm:translate-x-2">Revenue (Act / Est)</div>
           <div className="col-span-2 text-right">Rev Surp</div>
           <div className="col-span-2 text-right">Reaction</div>
         </div>

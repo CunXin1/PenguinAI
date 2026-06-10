@@ -60,7 +60,8 @@ class OllamaBackend(LLMBackend):
         if schema is not None:
             payload["format"] = schema
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        # trust_env=False: never route local serving through a system/HTTP proxy.
+        async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
             resp = await client.post(f"{self._base_url}/api/chat", json=payload)
             resp.raise_for_status()
             content = resp.json()["message"]["content"]
@@ -68,7 +69,7 @@ class OllamaBackend(LLMBackend):
 
     async def health(self) -> bool:
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:
                 resp = await client.get(f"{self._base_url}/api/tags")
                 resp.raise_for_status()
                 tags = {m.get("name") for m in resp.json().get("models", [])}
