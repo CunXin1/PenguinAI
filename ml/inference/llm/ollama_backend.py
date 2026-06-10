@@ -76,8 +76,7 @@ class OllamaBackend(LLMBackend):
                 wanted = self._model if ":" in self._model else f"{self._model}:latest"
                 if wanted not in tags:
                     logger.warning(
-                        "Ollama reachable but model %s not pulled (have %s). "
-                        "Run: ollama pull %s",
+                        "Ollama reachable but model %s not pulled (have %s). Run: ollama pull %s",
                         wanted,
                         tags,
                         self._model,

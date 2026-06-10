@@ -5,7 +5,10 @@
 ---
 
 ## 1. 完善 ML 层
-- [ ] 接入 Gemma 4 LLM（vLLM 本地部署或 Vertex AI），替换当前 ML-only fallback
+- [x] 接入 Gemma 4 LLM 本地推理 MVP — 可插拔 backend 层（macOS=Ollama / Windows·Linux=vLLM / api 预留），
+      `LLM_BACKEND=auto` 按平台自选，E2B 现用 E4B 后续切 `GEMMA_MODEL_VARIANT`。部署见 `ml/serving/`，
+      验证 `make gemma-check`。保留 finetune seam（vLLM LoRA / Ollama Modelfile ADAPTER）。
+  - [ ] 拉起真实 Gemma 服务跑通线上（当前未起服务时自动降级为 ML-only fallback）
 - [ ] 实现 Reddit scraper（PRAW）+ Twitter scraper（Playwright），填充 social_posts
 - [ ] 实现 fetch_fundamentals（yfinance / Massive），填充 fundamentals 表
 - [ ] 补全 ml/tests（trainer、model_registry、celery tasks 测试覆盖）

@@ -61,9 +61,7 @@ async def register(
     username = body.username.strip()
 
     existing = await db.execute(
-        select(User).where(
-            or_(User.email == email, func.lower(User.username) == username.lower())
-        )
+        select(User).where(or_(User.email == email, func.lower(User.username) == username.lower()))
     )
     dup = existing.scalars().first()
     if dup:

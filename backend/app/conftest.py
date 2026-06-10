@@ -19,6 +19,15 @@ os.environ["DATABASE_URL"] = "sqlite+aiosqlite://"
 os.environ["SECRET_KEY"] = "test-secret-key-for-pytest"
 os.environ["ALLOWED_ORIGINS"] = '["http://localhost:3000"]'
 
+# Disable rate limiting in tests. The limiter talks to a real Redis whose counters
+# persist across tests and runs, which otherwise 429s repeated register/login calls
+# (the limits are captured at import time, so these must be set before the app loads).
+os.environ["RATE_LIMIT_REGISTER_TIMES"] = "1000000"
+os.environ["RATE_LIMIT_LOGIN_TIMES"] = "1000000"
+os.environ["RATE_LIMIT_FORGOT_PW_TIMES"] = "1000000"
+os.environ["RATE_LIMIT_RESET_PW_TIMES"] = "1000000"
+os.environ["RATE_LIMIT_ACCOUNT_LOGIN_TIMES"] = "1000000"
+
 # Register SQLite adapters for types that PostgreSQL handles natively.
 sqlite3.register_adapter(_uuid_mod.UUID, lambda u: str(u))
 sqlite3.register_adapter(list, lambda lst: _json.dumps(lst))
@@ -189,6 +198,7 @@ async def test_user(db_session: AsyncSession) -> User:
     user = User(
         id=uuid.uuid4(),
         email="free@example.com",
+        username="freeuser",
         password_hash=hash_password("Test1234!"),
         display_name="Free User",
         tier="FREE",
@@ -207,6 +217,7 @@ async def pro_user(db_session: AsyncSession) -> User:
     user = User(
         id=uuid.uuid4(),
         email="pro@example.com",
+        username="prouser",
         password_hash=hash_password("Test1234!"),
         display_name="Pro User",
         tier="PRO",
@@ -225,6 +236,7 @@ async def admin_user(db_session: AsyncSession) -> User:
     user = User(
         id=uuid.uuid4(),
         email="admin@example.com",
+        username="adminuser",
         password_hash=hash_password("Test1234!"),
         display_name="Admin User",
         tier="ADMIN",

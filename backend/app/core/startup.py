@@ -477,8 +477,8 @@ async def check_and_seed_admin() -> CheckResult:
         async with AsyncSessionLocal() as db:
             await db.execute(
                 text("""
-                    INSERT INTO users (email, password_hash, display_name, tier, is_active, email_verified)
-                    VALUES (:email, :pw_hash, 'Admin', 'ADMIN', true, true)
+                    INSERT INTO users (email, username, password_hash, display_name, tier, is_active, email_verified)
+                    VALUES (:email, 'admin', :pw_hash, 'Admin', 'ADMIN', true, true)
                 """),
                 {"email": email, "pw_hash": pw_hash},
             )

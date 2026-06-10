@@ -12,10 +12,17 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from time import monotonic
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import (
+# data/, ml/, scripts/ live at the repo root — this MUST run before importing any
+# route module (e.g. fomc → data.fomc.meetings), or that import fails in the
+# container, where the app runs from backend/ and the repo root isn't on sys.path.
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from app.api.routes import (  # noqa: E402  (depends on the sys.path setup above)
     admin,
     auth,
     celebrity_holdings,
@@ -30,15 +37,10 @@ from app.api.routes import (
     tickers,
     watchlist,
 )
-from app.core.config import settings
-from app.core.startup import get_startup_report, run_startup_checks
+from app.core.config import settings  # noqa: E402
+from app.core.startup import get_startup_report, run_startup_checks  # noqa: E402
 
 logger = logging.getLogger("app.realtime")
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-
-# data/, ml/, scripts/ live at the repo root — make them importable from backend/.
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
 
 
 class _ProcessWatchdog:
@@ -127,10 +129,8 @@ class _ProcessWatchdog:
             if line:
                 decoded = line.decode("utf-8", errors="replace").strip()
                 if self._parse_health and decoded.startswith("HEALTH:"):
-                    try:
+                    with contextlib.suppress(json.JSONDecodeError):
                         self._last_health = json.loads(decoded[7:])
-                    except json.JSONDecodeError:
-                        pass
                 elif decoded:
                     logger.info("[%s] %s", self.name, decoded)
 
@@ -579,6 +579,13 @@ async def lifespan(app: FastAPI):
         _celery_worker.stop()
         _watchdog.stop()
 
+        # Dispose the DB connection pool last (the steps above may still need it).
+        # Prevents leaked connections on reload / redeploy.
+        with contextlib.suppress(Exception):
+            from app.core.database import engine
+
+            await engine.dispose()
+
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -595,6 +602,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    """Attach baseline security response headers to every response."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    # HSTS only matters over HTTPS (browsers ignore it on plain HTTP); advertise it
+    # in production where a TLS-terminating proxy sits in front.
+    if not settings.DEBUG:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=63072000; includeSubDomains"
+        )
+    return response
+
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(signals.router, prefix="/api/signals", tags=["signals"])
@@ -659,3 +683,44 @@ async def health():
             "overall": report.overall_status if report else "unknown",
         },
     }
+
+
+@app.get("/health/live")
+async def health_live():
+    """Liveness probe — the process is up. No dependency checks (k8s livenessProbe)."""
+    return {"status": "alive"}
+
+
+@app.get("/health/ready")
+async def health_ready(response: Response):
+    """Readiness probe — probes the DB (hard dependency) + Redis (soft). Returns 503
+    when the DB is unreachable so orchestrators stop routing here (k8s readinessProbe)."""
+    from sqlalchemy import text as _sql_text
+
+    from app.core.database import engine
+    from app.core.rate_limit import _get_redis
+
+    checks: dict[str, str] = {}
+
+    db_ok = False
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(_sql_text("SELECT 1"))
+        db_ok = True
+        checks["database"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        checks["database"] = f"error: {type(exc).__name__}"
+
+    try:
+        redis = await _get_redis()
+        if redis is None:
+            checks["redis"] = "unavailable"  # rate limiting degrades gracefully
+        else:
+            await redis.ping()
+            checks["redis"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        checks["redis"] = f"error: {type(exc).__name__}"
+
+    if not db_ok:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return {"status": "ready" if db_ok else "not_ready", "checks": checks}

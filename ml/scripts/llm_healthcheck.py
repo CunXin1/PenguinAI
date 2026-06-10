@@ -21,7 +21,7 @@ async def main() -> int:
     from ml.inference.llm import get_llm_backend
 
     backend = get_llm_backend()
-    print(f"\n=== LLM healthcheck ===")
+    print("\n=== LLM healthcheck ===")
     print(f"backend  : {backend.name}")
     print(f"model    : {backend.model_id()}")
     print(f"variant  : {ml_settings.GEMMA_MODEL_VARIANT}")

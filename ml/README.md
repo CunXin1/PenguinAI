@@ -109,10 +109,19 @@ ml/
 - **Loading**: Lazy-loaded on first call, cached in memory via `@lru_cache`
 
 #### Gemma 4
-- **Deployment**: Local vLLM server on RTX 4090, OpenAI-compatible API
-- **Fallback**: External API (Google Vertex AI or similar) if `GEMMA_API_URL` is set
-- **Output format**: JSON mode locked via `response_format.json_schema`
+- **Backend layer**: pluggable transport under `ml/inference/llm/` selected by
+  `LLM_BACKEND` (`auto` → Ollama on macOS, vLLM on Windows/Linux GPU; `api` for
+  hosted). The Agent 2 harness (`gemma_agent.py`) is backend-agnostic.
+- **Model**: Gemma 4 **E2B** now (`GEMMA_MODEL_VARIANT`); flip to **E4B** later.
+- **Deployment**: `ml/serving/` (`start_ollama.sh` / `start_vllm.ps1` /
+  `start_vllm.sh`). Verify with `make gemma-check`. Full guide: `ml/serving/README.md`.
+- **Output format**: JSON-schema locked per backend (vLLM guided decoding /
+  Ollama `format` / API json_schema).
 - **Temperature**: 0.1 (near-deterministic for financial reasoning)
+- **Finetune seam**: vLLM LoRA/merged checkpoint or Ollama `Modelfile.gemma`
+  ADAPTER — serve-time only, no code change.
+- **Graceful degrade**: if the LLM is down, `signal_engine` falls back to an
+  ML-only signal, so serving is additive, never load-bearing.
 
 ### Celery Tasks & Schedule
 

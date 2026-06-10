@@ -62,6 +62,18 @@ class Settings(BaseSettings):
             'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
         )
 
+    @model_validator(mode="after")
+    def _warn_localhost_origins_in_prod(self) -> "Settings":
+        if not self.DEBUG:
+            local = [o for o in self.ALLOWED_ORIGINS if "localhost" in o or "127.0.0.1" in o]
+            if local:
+                _logger.warning(
+                    "ALLOWED_ORIGINS includes localhost in non-DEBUG mode: %s — "
+                    "tighten CORS to your production domain(s) only.",
+                    local,
+                )
+        return self
+
     # ── Database ──────────────────────────────────────────────────
     DATABASE_URL: str = "postgresql+asyncpg://penguinai:penguinai_dev@localhost:5432/penguinai"
     DATABASE_POOL_SIZE: int = 40
