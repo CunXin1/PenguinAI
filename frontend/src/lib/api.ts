@@ -143,6 +143,9 @@ export const auth = {
     apiFetch<{ message: string }>("/auth/resend-verification", {
       method: "POST",
     }),
+
+  /** Full-page redirect target to begin the OAuth flow. Navigate, don't fetch. */
+  oauthStartUrl: (provider: "google" | "apple") => `${BASE_URL}/auth/oauth/${provider}`,
 };
 
 // ── Signal API ─────────────────────────────────────────────────────────────────
@@ -260,9 +263,9 @@ export const celebrityHoldings = {
 
 // ── News API ─────────────────────────────────────────────────────────────────
 export const news = {
-  /** Market-wide news feed. `category` = general|forex|crypto|merger. */
-  market: (category = "general", minId = 0) =>
-    apiFetch<NewsApiArticle[]>(`/news/market?category=${category}&min_id=${minId}`),
+  /** Market-wide news feed (Massive → Google RSS → Finnhub, cached 5 min). */
+  market: (limit = 30) =>
+    apiFetch<NewsApiArticle[]>(`/news/market?limit=${limit}`),
 
   /** Hot ticker news from DB (pre-fetched Nasdaq-100 + key ETFs). */
   hot: (limit = 50, ticker?: string) => {

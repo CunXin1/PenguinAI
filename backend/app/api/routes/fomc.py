@@ -7,6 +7,7 @@ Rate history from ``data.fomc.fed_funds_rate`` (hardcoded, cross-verified).
 Market reactions from ``bars_1d`` (SPY daily bars).
 """
 
+import contextlib
 import difflib
 import logging
 import time
@@ -19,18 +20,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
 from app.core.config import settings
+from data.fomc.meetings import FOMC_MEETINGS, next_meeting_date
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-FOMC_MEETINGS = [
-    "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
-    "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-10",
-    "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17",
-    "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09",
-    "2027-01-27", "2027-03-17", "2027-05-05", "2027-06-16",
-    "2027-07-28", "2027-09-22", "2027-10-27", "2027-12-15",
-]
+# FOMC_MEETINGS / next_meeting_date come from data/fomc/meetings.py — the single
+# source of truth shared with the data-layer scheduler so the two never drift.
 
 _cache: dict[str, tuple[float, object]] = {}
 _STATEMENTS_TTL = 3600.0
@@ -92,16 +88,20 @@ async def get_fomc_statements(
     if cached is not None:
         return cached
 
-    rows = await db.execute(
-        text(
-            "SELECT time, document_url, hawk_dove_score, summary "
-            "FROM fomc_statements "
-            "ORDER BY time DESC "
-            "LIMIT :limit"
-        ),
-        {"limit": limit},
-    )
-    result = [_map_statement(r) for r in rows.mappings()]
+    try:
+        rows = await db.execute(
+            text(
+                "SELECT time, document_url, hawk_dove_score, summary "
+                "FROM fomc_statements "
+                "ORDER BY time DESC "
+                "LIMIT :limit"
+            ),
+            {"limit": limit},
+        )
+        result = [_map_statement(r) for r in rows.mappings()]
+    except Exception:
+        logger.warning("FOMC /statements DB query failed", exc_info=True)
+        return []  # don't cache the failure — retry on next request
     _set_cache(cache_key, result)
     return result
 
@@ -119,29 +119,31 @@ async def get_fomc_trend(
     if cached is not None:
         return cached
 
-    rows = await db.execute(
-        text(
-            "SELECT time, hawk_dove_score "
-            "FROM fomc_statements "
-            "WHERE hawk_dove_score IS NOT NULL "
-            "ORDER BY time DESC "
-            "LIMIT :limit"
-        ),
-        {"limit": limit},
-    )
-    points = []
-    for r in rows.mappings():
-        ts = r["time"]
-        score = r["hawk_dove_score"]
-        date_str = ""
-        if isinstance(ts, datetime):
-            date_str = ts.strftime("%Y-%m-%d")
-        elif ts is not None:
-            try:
-                date_str = datetime.fromisoformat(str(ts)).strftime("%Y-%m-%d")
-            except (ValueError, TypeError):
-                pass
-        points.append({"date": date_str, "score": float(score)})
+    try:
+        rows = await db.execute(
+            text(
+                "SELECT time, hawk_dove_score "
+                "FROM fomc_statements "
+                "WHERE hawk_dove_score IS NOT NULL "
+                "ORDER BY time DESC "
+                "LIMIT :limit"
+            ),
+            {"limit": limit},
+        )
+        points = []
+        for r in rows.mappings():
+            ts = r["time"]
+            score = r["hawk_dove_score"]
+            date_str = ""
+            if isinstance(ts, datetime):
+                date_str = ts.strftime("%Y-%m-%d")
+            elif ts is not None:
+                with contextlib.suppress(ValueError, TypeError):
+                    date_str = datetime.fromisoformat(str(ts)).strftime("%Y-%m-%d")
+            points.append({"date": date_str, "score": float(score)})
+    except Exception:
+        logger.warning("FOMC /trend DB query failed", exc_info=True)
+        return []
 
     points.reverse()
     _set_cache(cache_key, points)
@@ -152,13 +154,7 @@ async def get_fomc_trend(
 async def get_next_meeting():
     """Next scheduled FOMC meeting date and countdown."""
     now = datetime.now(UTC)
-    today_str = now.strftime("%Y-%m-%d")
-
-    next_date = None
-    for d in FOMC_MEETINGS:
-        if d >= today_str:
-            next_date = d
-            break
+    next_date = next_meeting_date()
 
     if next_date is None:
         return {"next_meeting": None, "days_until": None}
@@ -270,59 +266,63 @@ async def get_market_reaction(
     if cached is not None:
         return cached
 
-    rows = await db.execute(
-        text("""
-            WITH fomc_dates AS (
-                SELECT DISTINCT time::date AS fomc_date
-                FROM fomc_statements
-                ORDER BY fomc_date DESC
-                LIMIT :limit
-            ),
-            spy AS (
+    try:
+        rows = await db.execute(
+            text("""
+                WITH fomc_dates AS (
+                    SELECT DISTINCT time::date AS fomc_date
+                    FROM fomc_statements
+                    ORDER BY fomc_date DESC
+                    LIMIT :limit
+                ),
+                spy AS (
+                    SELECT
+                        b.ts::date AS bar_date,
+                        b.adj_close AS close
+                    FROM bars_1d b
+                    JOIN instruments i ON i.instrument_id = b.instrument_id
+                    WHERE i.symbol = 'SPY'
+                ),
+                spy_with_prev AS (
+                    SELECT
+                        bar_date,
+                        close,
+                        LAG(close) OVER (ORDER BY bar_date) AS prev_close
+                    FROM spy
+                )
                 SELECT
-                    b.ts::date AS bar_date,
-                    b.adj_close AS close
-                FROM bars_1d b
-                JOIN instruments i ON i.instrument_id = b.instrument_id
-                WHERE i.symbol = 'SPY'
-            ),
-            spy_with_prev AS (
-                SELECT
-                    bar_date,
-                    close,
-                    LAG(close) OVER (ORDER BY bar_date) AS prev_close
-                FROM spy
-            )
-            SELECT
-                f.fomc_date,
-                s.close,
-                s.prev_close
-            FROM fomc_dates f
-            JOIN spy_with_prev s ON s.bar_date = f.fomc_date
-            ORDER BY f.fomc_date DESC
-        """),
-        {"limit": limit},
-    )
+                    f.fomc_date,
+                    s.close,
+                    s.prev_close
+                FROM fomc_dates f
+                JOIN spy_with_prev s ON s.bar_date = f.fomc_date
+                ORDER BY f.fomc_date DESC
+            """),
+            {"limit": limit},
+        )
 
-    from data.fomc.fed_funds_rate import get_rate_on_date
+        from data.fomc.fed_funds_rate import get_rate_on_date
 
-    result = []
-    for r in rows.mappings():
-        date_str = str(r["fomc_date"])
-        close = r["close"]
-        prev = r["prev_close"]
-        ret = round((close / prev - 1) * 100, 4) if close and prev and prev > 0 else None
-        try:
-            low, high = get_rate_on_date(date_str)
-        except ValueError:
-            low, high = None, None
-        result.append({
-            "date": date_str,
-            "spy_return_pct": ret,
-            "spy_close": round(float(close), 2) if close else None,
-            "rate_low": low,
-            "rate_high": high,
-        })
+        result = []
+        for r in rows.mappings():
+            date_str = str(r["fomc_date"])
+            close = r["close"]
+            prev = r["prev_close"]
+            ret = round((close / prev - 1) * 100, 4) if close and prev and prev > 0 else None
+            try:
+                low, high = get_rate_on_date(date_str)
+            except ValueError:
+                low, high = None, None
+            result.append({
+                "date": date_str,
+                "spy_return_pct": ret,
+                "spy_close": round(float(close), 2) if close else None,
+                "rate_low": low,
+                "rate_high": high,
+            })
+    except Exception:
+        logger.warning("FOMC /market-reaction query failed", exc_info=True)
+        return []
 
     _set_cache(cache_key, result)
     return result
@@ -346,17 +346,21 @@ async def get_statement_diff(
     except ValueError:
         return {"error": "Invalid date format, use YYYY-MM-DD", "date": date}
 
-    rows = await db.execute(
-        text("""
-            SELECT time::date AS d, raw_text
-            FROM fomc_statements
-            WHERE time::date <= :target_date
-            ORDER BY time DESC
-            LIMIT 2
-        """),
-        {"target_date": target},
-    )
-    statements = [(str(r[0]), r[1]) for r in rows]
+    try:
+        rows = await db.execute(
+            text("""
+                SELECT time::date AS d, raw_text
+                FROM fomc_statements
+                WHERE time::date <= :target_date
+                ORDER BY time DESC
+                LIMIT 2
+            """),
+            {"target_date": target},
+        )
+        statements = [(str(r[0]), r[1]) for r in rows]
+    except Exception:
+        logger.warning("FOMC /diff DB query failed", exc_info=True)
+        return {"error": "Statement data temporarily unavailable", "date": date}
 
     if len(statements) < 1 or statements[0][1] is None:
         return {"error": "Statement not found", "date": date}
@@ -417,7 +421,7 @@ async def get_fomc_news(
     try:
         rows = await db.execute(
             text(
-                "SELECT id, time, headline, source, url, raw_metadata "
+                "SELECT id, time, headline, source, url, finbert_score, finbert_label, raw_metadata "
                 "FROM news_articles "
                 "WHERE ticker = 'FOMC' "
                 "ORDER BY time DESC "
@@ -428,6 +432,16 @@ async def get_fomc_news(
         for r in rows.mappings():
             ts = r["time"]
             unix_ts = int(ts.timestamp()) if isinstance(ts, datetime) else 0
+            # Surface the FinBERT sentiment the table already stores (mirrors
+            # news._map_db_row): prefer the label, else derive from the score.
+            fb_score = r.get("finbert_score")
+            fb_label = r.get("finbert_label")
+            sentiment = None
+            if fb_label in ("positive", "negative", "neutral"):
+                sentiment = fb_label
+            elif fb_score is not None:
+                s = float(fb_score)
+                sentiment = "positive" if s > 0.1 else "negative" if s < -0.1 else "neutral"
             articles.append({
                 "id": str(r["id"]),
                 "headline": r["headline"],
@@ -436,7 +450,8 @@ async def get_fomc_news(
                 "url": r.get("url"),
                 "datetime": unix_ts,
                 "tickers": [],
-                "sentiment": None,
+                "sentiment": sentiment,
+                "sentiment_score": float(fb_score) if fb_score is not None else None,
             })
     except Exception:
         logger.debug("FOMC news DB query failed, using RSS fallback")
@@ -475,6 +490,7 @@ async def get_rate_probabilities(
                 SELECT DISTINCT ON (target_rate_low)
                     meeting_date, target_rate_low, target_rate_high, probability
                 FROM fomc_rate_probabilities
+                WHERE meeting_date >= CURRENT_DATE
                 ORDER BY target_rate_low, time DESC
             """)
         )
@@ -496,6 +512,12 @@ async def get_rate_probabilities(
             result = await fetch_fedwatch_probabilities() or []
         except Exception:
             logger.warning("CME FedWatch fetch failed", exc_info=True)
+        # The live scraper may omit meeting_date; backfill with the next
+        # scheduled FOMC meeting so the response shape stays consistent.
+        next_mtg = next_meeting_date()
+        for item in result:
+            if not item.get("meeting_date"):
+                item["meeting_date"] = next_mtg
 
     if result:
         result.sort(key=lambda x: x["probability"], reverse=True)

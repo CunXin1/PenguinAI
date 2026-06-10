@@ -1,4 +1,4 @@
-.PHONY: up down logs backend frontend ml-worker ibkr-stream minute-parquet fetch-earnings fetch-fomc fetch-congress fetch-13f fetch-ark fetch-celebrities lint type-check test test-backend test-frontend db-init bootstrap status dev
+.PHONY: up down logs backend frontend ml-worker ibkr-stream minute-parquet fetch-earnings fetch-fomc fetch-fear-greed backfill-fear-greed fetch-congress fetch-13f fetch-ark fetch-celebrities lint type-check test test-backend test-frontend db-init bootstrap status dev
 
 # ── Docker Compose ────────────────────────────────────────────────────────────
 up:
@@ -56,6 +56,16 @@ fetch-ark:
 # FinBERT. Incremental (skips dates already in DB). No API key needed.
 fetch-fomc:
 	python -m data.fomc.loader
+
+# Fear & Greed index + VIX/VVIX → fear_greed_index / volatility_index. Live fetch
+# (CNN + CBOE/Yahoo/FRED), idempotent upsert. No API key needed (FRED optional).
+fetch-fear-greed:
+	python -m data.fear_greed.loader
+
+# One-time historical backfill: reconstruct multi-year F&G from the VIX percentile
+# model (CNN only serves ~1yr). Safe to re-run — preserves existing CNN rows.
+backfill-fear-greed:
+	python scripts/backfill_fear_greed.py
 
 fetch-celebrities: fetch-congress fetch-13f fetch-ark
 

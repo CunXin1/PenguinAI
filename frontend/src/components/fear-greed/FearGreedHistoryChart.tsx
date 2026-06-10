@@ -11,9 +11,9 @@ import { ZONES, fgColor } from "./util";
 
 const RANGES = [
   { key: "1M", days: 31 },
-  { key: "3M", days: 93 },
-  { key: "6M", days: 186 },
+  { key: "5M", days: 155 },
   { key: "1Y", days: 365 },
+  { key: "5Y", days: 1826 },
 ] as const;
 type RangeKey = (typeof RANGES)[number]["key"];
 
@@ -55,12 +55,16 @@ function Canvas({ points }: { points: FearGreedHistoryPoint[] }) {
     const line = xs.map((x, i) => `${i === 0 ? "M" : "L"}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(" ");
 
     const N = 6;
+    const years = tSpan / (365.25 * 864e5);
     const xTicks = Array.from({ length: N + 1 }, (_, k) => {
       const t = tMin + (k / N) * tSpan;
       const d = new Date(t);
       return {
         x: xAt(t),
-        label: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        label:
+          years >= 2
+            ? String(d.getFullYear())
+            : d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
       };
     });
 

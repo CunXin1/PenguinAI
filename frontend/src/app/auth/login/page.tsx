@@ -6,6 +6,10 @@ import Link from "next/link";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { auth } from "@/lib/api";
 
+// Apple Sign In needs a paid Apple Developer account + an HTTPS domain, so the
+// button stays hidden until NEXT_PUBLIC_APPLE_OAUTH_ENABLED=true.
+const APPLE_OAUTH_ENABLED = process.env.NEXT_PUBLIC_APPLE_OAUTH_ENABLED === "true";
+
 type Mode = "login" | "register";
 
 interface PasswordCheck {
@@ -121,6 +125,11 @@ export default function LoginPage() {
     setFieldErrors({});
     setShowPassword(false);
     setShowConfirm(false);
+  };
+
+  const startOAuth = (provider: "google" | "apple") => {
+    // Full-page navigation — the backend 302s to the provider and back to /auth/callback.
+    window.location.href = auth.oauthStartUrl(provider);
   };
 
   return (
@@ -295,6 +304,37 @@ export default function LoginPage() {
             </button>
           </form>
 
+          {/* Divider */}
+          <div className="flex items-center gap-3">
+            <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-700/60" />
+            <span className="text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">
+              or
+            </span>
+            <div className="h-px flex-1 bg-zinc-200 dark:bg-zinc-700/60" />
+          </div>
+
+          {/* OAuth providers */}
+          <div className="space-y-2.5">
+            <button
+              type="button"
+              onClick={() => startOAuth("google")}
+              className="w-full flex items-center justify-center gap-2.5 py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white hover:bg-zinc-50 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-zinc-900 dark:text-white text-sm font-medium transition-colors"
+            >
+              <GoogleIcon />
+              Continue with Google
+            </button>
+            {APPLE_OAUTH_ENABLED && (
+              <button
+                type="button"
+                onClick={() => startOAuth("apple")}
+                className="w-full flex items-center justify-center gap-2.5 py-2.5 rounded-lg bg-black hover:bg-zinc-900 text-white text-sm font-medium transition-colors"
+              >
+                <AppleIcon />
+                Continue with Apple
+              </button>
+            )}
+          </div>
+
           {/* Forgot password (login only) */}
           {mode === "login" && (
             <div className="text-center">
@@ -362,5 +402,24 @@ function Field({
       />
       {error && <p className="text-xs text-red-500 dark:text-red-400">{error}</p>}
     </div>
+  );
+}
+
+function GoogleIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#FFC107" d="M43.6 20.5h-1.9V20H24v8h11.3c-1.6 4.7-6.1 8-11.3 8-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.3-.4-3.5z" />
+      <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 13 24 13c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z" />
+      <path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.6 39.6 16.2 44 24 44z" />
+      <path fill="#1976D2" d="M43.6 20.5H24v8h11.3c-.8 2.2-2.2 4.1-4.1 5.6l6.2 5.2C41.4 36.4 44 30.7 44 24c0-1.3-.1-2.3-.4-3.5z" />
+    </svg>
+  );
+}
+
+function AppleIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 384 512" fill="currentColor" aria-hidden="true">
+      <path d="M318.7 268c-.3-37 16.4-65 50.1-85.7-18.8-27-47.3-41.8-84.8-44.7-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C71.3 139.5 18 184.4 18 273.5c0 26.3 4.8 53.5 14.4 81.5 12.8 36.8 59 127 107.2 125.5 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.4-65.2-30.7-61.7-90-61.7-91.6zm-56.6-164c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z" />
+    </svg>
   );
 }

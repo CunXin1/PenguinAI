@@ -51,10 +51,10 @@ The feature set exposed by `indicators_30min` / `FEATURE_COLS`:
 | `bb_pct_b` | (close−lower)/(upper−lower) | Position in Bollinger Band |
 | `bb_width` | (upper−lower)/middle | Volatility level |
 | `atr_14_pct` | ATR(14)/close | Normalized volatility |
-| `ema20_slope` | (EMA20[−1]−EMA20[−4])/EMA20[−4] | Short-term trend slope |
 | `price_vs_sma200` | close/SMA200 − 1 | Bull/bear regime |
-| `volume_ratio` | volume/SMA20(volume) | Unusual volume activity |
+| `price_vs_ema50` | close/EMA50 − 1 | Medium-term trend regime |
 | `vwap_pct` | (close−VWAP)/VWAP | Institutional price reference |
+| `ret_1bar` | close/close[−1] − 1 | Most recent 30-min return |
 
 Missing values stay as NULL/NaN — XGBoost/RF handle them natively.
 
@@ -145,8 +145,8 @@ Sends the assembled context to Gemma 4 (local vLLM or external API) with a stric
 - `direction` must be `LONG | SHORT | NEUTRAL` — defaults to NEUTRAL if invalid
 - `confidence` clamped to [0.0, 1.0]
 - `holding_period` must be in enum — defaults to SHORT_TERM
-- `ai_attribution` truncated to 300 chars
-- `ai_analysis` truncated to 600 chars
+- `ai_attribution` — prompt asks for ≤150 chars; hard-capped (truncated) at 300 chars
+- `ai_analysis` — prompt asks for ≤300 chars; hard-capped (truncated) at 600 chars
 
 **Retry policy**: 3 attempts with 2^attempt second delays (2s, 4s backoff).
 

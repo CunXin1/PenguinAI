@@ -1,6 +1,7 @@
 import re
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from typing import Annotated
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import text
@@ -12,6 +13,36 @@ router = APIRouter()
 
 _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 _SESSION = {"bmo": "BMO", "amc": "AMC"}
+
+# Earnings dates are US market calendar dates — anchor "today" to ET, not UTC,
+# so the upcoming→past flip happens on the US trading day, not ~5h early.
+_ET = ZoneInfo("America/New_York")
+
+
+def _today_et() -> date:
+    return datetime.now(_ET).date()
+
+
+def _status(eps_actual, report_date: date, today: date) -> str:
+    """Lifecycle phase of an earnings row — the single source of truth for the
+    upcoming → past transition.
+
+    REPORTED  actuals published (``eps_actual`` present). Terminal state.
+    UPCOMING  no actuals yet AND ``report_date`` is today or later.
+    PENDING   no actuals yet AND ``report_date`` already passed — results were
+              expected but not captured (AMC report not yet backfilled by the
+              scheduler, or a ticker Finnhub never covers). Belongs on the
+              "past" side; it must NOT linger in the upcoming list.
+
+    The status flips to REPORTED purely from data (the scheduler overwriting
+    ``eps_actual``), and flips out of UPCOMING from time (``report_date``
+    passing) even if data never arrives — so nothing gets stuck upcoming.
+    """
+    if eps_actual is not None:
+        return "REPORTED"
+    if report_date >= today:
+        return "UPCOMING"
+    return "PENDING"
 
 _SELECT = """
     SELECT e.ticker, e.report_date, e.fiscal_quarter, e.fiscal_year,
@@ -96,7 +127,7 @@ def _price_reaction(
     return open_pct, close_pct
 
 
-def _to_event(row, price_map: dict | None = None) -> dict:
+def _to_event(row, today: date, price_map: dict | None = None) -> dict:
     num = lambda v: float(v) if v is not None else None  # noqa: E731
     rev_actual = int(row["revenue_actual"]) if row["revenue_actual"] is not None else None
     rev_estimate = int(row["revenue_estimate"]) if row["revenue_estimate"] is not None else None
@@ -114,6 +145,7 @@ def _to_event(row, price_map: dict | None = None) -> dict:
     return {
         "ticker": row["ticker"],
         "report_date": row["report_date"].isoformat(),
+        "status": _status(row["eps_actual"], row["report_date"], today),
         "fiscal_quarter": int(fq) if fq is not None else None,
         "fiscal_year": int(fy) if fy is not None else None,
         "eps_actual": num(row["eps_actual"]),
@@ -147,7 +179,7 @@ async def get_calendar(
     date_to: date | None = Query(default=None, alias="to"),
 ):
     """Earnings calendar for a date window (defaults to today-7d .. today+30d)."""
-    today = datetime.now(UTC).date()
+    today = _today_et()
     start = date_from or (today - timedelta(days=7))
     end = date_to or (today + timedelta(days=30))
     if end < start:
@@ -166,7 +198,7 @@ async def get_calendar(
     earnings = list(rows.mappings())
     reported_tickers = list({r["ticker"] for r in earnings if r["eps_actual"] is not None})
     price_map = await _fetch_prices(db, reported_tickers, start, end)
-    return [_to_event(r, price_map) for r in earnings]
+    return [_to_event(r, today, price_map) for r in earnings]
 
 
 @router.get("/{ticker}")
@@ -188,6 +220,7 @@ async def get_ticker_earnings(
     earnings = list(rows.mappings())
     if not earnings:
         return []
+    today = _today_et()
     dates = [r["report_date"] for r in earnings]
     price_map = await _fetch_prices(db, [t], min(dates), max(dates))
-    return [_to_event(r, price_map) for r in earnings]
+    return [_to_event(r, today, price_map) for r in earnings]

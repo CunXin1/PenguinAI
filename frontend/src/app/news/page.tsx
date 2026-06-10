@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import Image from "next/image";
-import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { Newspaper, ArrowRight, ExternalLink, Search, X, SlidersHorizontal } from "lucide-react";
 import { Card } from "@/components/ui/Card";
@@ -136,7 +135,6 @@ export default function NewsPage() {
     return items;
   }, [allNews, featuredIds, f]);
 
-  const articleHref = (n: NewsArticle) => n.url ?? "#";
   const isExternal = (n: NewsArticle) => Boolean(n.url);
 
   const handleSearch = (e: React.FormEvent) => {
@@ -262,13 +260,14 @@ export default function NewsPage() {
         {feed.map((n) => {
           const s = SENT[n.sentiment];
           const ext = isExternal(n);
-          const LinkOrA = ext ? "a" : Link;
-          const linkProps = ext
-            ? { href: n.url!, target: "_blank" as const, rel: "noopener noreferrer" }
-            : { href: `/news/${n.id}` };
 
           return (
-            <LinkOrA key={n.id} {...linkProps} className="block group">
+            <a
+              key={n.id}
+              href={n.url ?? "#"}
+              {...(ext ? { target: "_blank" as const, rel: "noopener noreferrer" } : {})}
+              className="block group"
+            >
               <Card className="p-4 hover:border-zinc-300 dark:hover:border-zinc-700 transition-colors">
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1.5 min-w-0">
@@ -301,7 +300,7 @@ export default function NewsPage() {
                   <span className={cn("shrink-0 px-2 py-0.5 rounded-full text-[11px] font-semibold border", s.chip)}>{s.label}</span>
                 </div>
               </Card>
-            </LinkOrA>
+            </a>
           );
         })}
         {!isLoading && feed.length === 0 && (

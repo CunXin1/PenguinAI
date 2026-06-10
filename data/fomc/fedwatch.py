@@ -1,9 +1,17 @@
 """
-CME FedWatch rate probability fetcher.
+CME FedWatch rate probability fetcher (best-effort).
 
 Scrapes the CME Group FedWatch tool page to extract market-implied
 probabilities for each target rate level at the next FOMC meeting.
 Returns a list of {meeting_date, target_rate_low, target_rate_high, probability}.
+
+NOTE: CME serves this tool as a JS-rendered page behind Akamai bot protection,
+so plain server-side requests are frequently rejected (HTTP 403) and — even when
+they succeed — the probabilities are populated client-side and may be absent from
+the initial HTML. This fetcher is therefore best-effort: it returns None on any
+failure, and the API/UI degrade to an explicit "unavailable" state rather than
+fabricating numbers. A robust implementation would need a headless browser or a
+paid market-data feed (e.g. 30-Day Fed Funds futures + CME's binary-tree method).
 """
 
 import logging
@@ -37,7 +45,9 @@ async def fetch_fedwatch_probabilities() -> list[dict] | None:
         ) as client:
             resp = await client.get(_FEDWATCH_URL)
             if resp.status_code != 200:
-                logger.warning("CME FedWatch returned %d", resp.status_code)
+                # CME bot-blocks server-side requests (typically 403). Expected —
+                # callers treat None as "unavailable" and the UI degrades cleanly.
+                logger.info("CME FedWatch unavailable (HTTP %d)", resp.status_code)
                 return None
 
             return _parse_fedwatch_page(resp.text)

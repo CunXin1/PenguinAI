@@ -1,6 +1,6 @@
 # Frontend Pages Reference
 
-> Last updated: 2026-06-09. Next.js 15 App Router, all pages client-rendered (`"use client"`).
+> Last updated: 2026-06-10. Next.js 15 App Router, all pages client-rendered (`"use client"`).
 
 ## Page Index
 
@@ -13,10 +13,15 @@
 | `/heatmap` | Market Heatmap | Real API | — | Complete |
 | `/watchlist` | Watchlist | API (logged in) / localStorage (guest) | Optional | Complete |
 | `/celebrity-holdings` | Smart Money | Real API + mock fallback | — | Complete |
-| `/news` | News Feed | Mock only | — | UI complete, backend pending |
-| `/news/[id]` | Article Detail | Mock only | — | UI complete, backend pending |
+| `/celebrity-holdings/[slug]` | Celebrity Detail | Real API | — | Complete |
+| `/news` | News Feed | Real API | — | Complete |
+| `/fear-greed` | Fear & Greed Index | Real API | — | Complete |
+| `/fomc` | FOMC Tracker | Real API | — | Complete |
 | `/profile` | User Profile | Real API | Required | Complete |
 | `/auth/login` | Login / Register | Real API | — | Complete |
+| `/auth/callback` | OAuth Callback | Real API (token fragment) | — | Complete |
+| `/auth/verify-email` | Verify Email | Real API (token param) | — | Complete |
+| `/auth/verify-pending` | Verify Pending | Real API | Optional | Complete |
 | `/auth/forgot-password` | Forgot Password | Real API | — | Complete |
 | `/auth/reset-password` | Reset Password | Real API (token param) | — | Complete |
 | `/admin` | Admin Dashboard | Real API (12 endpoints) | ADMIN | Complete |
@@ -35,7 +40,7 @@ Market overview with 7 widget components in a responsive grid layout.
 - **MarketChart** — Intraday/multi-timeframe candlestick chart
 - **TopSignals** — Top signals enriched with live prices + sparklines (`useTopSignals`)
 - **TrendingTickers** — Top movers by change_pct from Nasdaq-100 subset (`useTrending`)
-- **NewsPreview** — Recent articles (currently mock)
+- **NewsPreview** — Recent articles via `news.market()`
 - **WatchlistWidget** — User's tracked tickers with live quotes
 
 **API endpoints:** `/market-data/mini`, `/market-data/quotes`, `/market-data/heatmap`, `/signals/top`, `/market-data/{ticker}/series`
@@ -169,24 +174,9 @@ Filterable news feed with FinBERT sentiment analysis.
 - Sentiment filter tabs
 - Ticker mention tags linking to signal pages
 - Source attribution and timestamps
+- Ticker filter: hot news (default) vs. market vs. per-ticker feed
 
-**Status:** UI fully built. Data is 100% mock (`MOCK_NEWS`). Requires:
-- Backend `/api/news` endpoint (not yet built)
-- `news_articles` table populated by a scraper (not yet built)
-
----
-
-### Article Detail (`/news/[id]`)
-
-Full article view with related signal links.
-
-**Features:**
-- Article body text (paragraph rendering)
-- Sentiment badge and source/timestamp
-- Related signals section (tickers mentioned in article)
-- `notFound()` if article ID doesn't exist
-
-**Status:** Same as News Feed — mock data only.
+**API endpoints:** `news.hot()`, `news.market()`, `news.byTicker(ticker)` — backed by the `news_articles` hypertable (Massive → Google News RSS → Finnhub, FinBERT-scored).
 
 ---
 
@@ -330,8 +320,5 @@ All signal/market hooks follow the same pattern:
 
 | Feature | What Exists | What's Missing |
 |---------|-------------|----------------|
-| News backend | `news_articles` DB table, mock UI | `/api/news` endpoint, scraper, frontend API call |
-| Email verification page | Backend endpoints, API methods | `/auth/verify-email` and `/auth/verify-pending` pages |
 | Profile settings | "Coming soon" UI | Notifications/preferences implementation |
 | Payment/upgrade | Upgrade button in profile | Stripe integration, tier change flow |
-| OAuth | Backend returns 501 | Google/Apple login buttons |

@@ -46,6 +46,8 @@ const SESSION: Record<EarningsSession, { label: string; cls: string; Icon: typeo
   TBD: { label: "TBD", cls: "text-zinc-600 dark:text-zinc-400 bg-zinc-200 dark:bg-zinc-700/40 border-zinc-300 dark:border-zinc-600/50", Icon: CalendarDays },
 };
 
+// Reported = actuals are in. Anything else (incl. a report whose date has
+// arrived but whose actuals haven't landed yet) is still "upcoming".
 const isReported = (e: EarningsEvent) => e.eps_actual !== null;
 
 function quarterShort(e: EarningsEvent) {
@@ -301,7 +303,7 @@ function UpcomingRow({ e, isOpen, onToggle, today }: { e: EarningsEvent; isOpen:
           <p className="font-mono text-sm text-zinc-600 dark:text-zinc-400">{e.revenue_estimate != null ? `$${compact(e.revenue_estimate)}` : "—"}</p>
         </div>
         <div className="col-span-4 sm:col-span-3 flex items-center justify-end">
-          {days != null && (
+          {days != null && days >= 0 && (
             <span className={cn(
               "flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-semibold border",
               days <= 1 ? "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/30"
@@ -339,7 +341,7 @@ function UnifiedRow({ e, isOpen, onToggle, today }: { e: EarningsEvent; isOpen: 
             {reported ? (
               <>
                 <span className="font-semibold text-zinc-900 dark:text-zinc-100">${e.eps_actual!.toFixed(2)}</span>
-                <span className="text-zinc-400 dark:text-zinc-600 text-xs"> / {e.eps_estimate != null ? `$${e.eps_estimate.toFixed(2)}` : "—"}</span>
+                <span className="text-zinc-400 dark:text-zinc-600"> / {e.eps_estimate != null ? `$${e.eps_estimate.toFixed(2)}` : "—"}</span>
               </>
             ) : (
               <span className="text-zinc-600 dark:text-zinc-400">
@@ -355,7 +357,7 @@ function UnifiedRow({ e, isOpen, onToggle, today }: { e: EarningsEvent; isOpen: 
             <span className={cn("px-2 py-0.5 rounded-md text-xs font-mono font-semibold border", beat ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30" : "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30")}>
               {signedPct(surprise, 1)}
             </span>
-          ) : days != null ? (
+          ) : days != null && days >= 0 ? (
             <span className={cn(
               "flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold border",
               days <= 1 ? "text-amber-600 dark:text-amber-400 bg-amber-500/10 border-amber-500/30"
@@ -375,12 +377,23 @@ function UnifiedRow({ e, isOpen, onToggle, today }: { e: EarningsEvent; isOpen: 
             {reported && e.revenue_actual != null ? (
               <>
                 <span className="font-semibold text-zinc-900 dark:text-zinc-100">${compact(e.revenue_actual)}</span>
-                <span className="text-zinc-400 dark:text-zinc-600 text-xs"> / {e.revenue_estimate != null ? `$${compact(e.revenue_estimate)}` : "—"}</span>
+                <span className="text-zinc-400 dark:text-zinc-600"> / {e.revenue_estimate != null ? `$${compact(e.revenue_estimate)}` : "—"}</span>
               </>
             ) : e.revenue_estimate != null ? (
               <span>Est ${compact(e.revenue_estimate)}</span>
             ) : "—"}
           </p>
+          {reported && e.revenue_surprise_pct != null && (
+            <p
+              className={cn(
+                "font-mono text-[11px] font-semibold",
+                e.revenue_surprise_pct >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+              )}
+              title="Revenue surprise vs. estimate"
+            >
+              {signedPct(e.revenue_surprise_pct, 1)} vs est
+            </p>
+          )}
         </div>
 
         {/* Price reaction */}
@@ -395,7 +408,7 @@ function UnifiedRow({ e, isOpen, onToggle, today }: { e: EarningsEvent; isOpen: 
               )}
             </div>
           ) : reported ? (
-            <span className="text-[10px] text-zinc-400 dark:text-zinc-600 italic" title="No daily price data">N/A</span>
+            <span className="text-sm font-mono text-zinc-400 dark:text-zinc-600" title="No price history for this ticker">—</span>
           ) : null}
         </div>
       </div>

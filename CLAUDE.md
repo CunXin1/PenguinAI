@@ -139,6 +139,8 @@ Tier check is done in `backend/app/api/deps.py:require_tier()`. Signal rows carr
 | POST | `/api/auth/forgot-password` | — | 5/hr per IP | Request password reset |
 | POST | `/api/auth/reset-password` | — | 5/hr per IP | Reset password with token |
 | POST | `/api/auth/change-password` | Bearer | — | Change password (returns new JWT) |
+| GET | `/api/auth/oauth/{provider}` | — | — | Start Google/Apple OAuth (302 to provider) |
+| GET·POST | `/api/auth/oauth/{provider}/callback` | — | — | OAuth callback → find-or-create user, issue JWT, 302 to frontend `/auth/callback` |
 
 All rate limits configurable via `.env` (`RATE_LIMIT_*` vars). Redis-backed; falls through when Redis is down.
 
@@ -346,7 +348,7 @@ make fetch-13f          # SEC EDGAR 13F/13D (Buffett, Soros, Dalio, Ackman, Trum
 make fetch-ark          # ARK Invest daily trades (Cathie Wood)
 ```
 
-Run a single Python test: `pytest backend/tests/test_signals.py::test_name -v`
+Run a single Python test: `pytest backend/app/api/routes/tests/test_signals.py::test_name -v`
 (pytest config in `pyproject.toml`; `asyncio_mode=auto`, so async tests need no decorator).
 Frontend has no test runner configured — CI gates it via `tsc --noEmit` + `next lint` + `next build`.
 
@@ -354,8 +356,10 @@ Frontend has no test runner configured — CI gates it via `tsc --noEmit` + `nex
 Python 3.12, Node 22. `make ml-worker` resolves the `ml.tasks.celery_app` import path only from
 the repo root — never `cd ml` first.
 
-> Note: `backend/tests/` and `ml/tests/` are not created yet — `make test` is a no-op until they exist.
-> Add tests under those paths (files `test_*.py`) to wire into CI automatically.
+> Tests are colocated next to the code they cover — `backend/app/**/tests/test_*.py`
+> (e.g. `app/api/routes/tests/`, `app/core/tests/`). `pyproject.toml:testpaths` scans
+> `backend/app`, `backend/tests`, and `ml/tests`, so any `test_*.py` under those wires into
+> `make test` / CI automatically. `ml/tests/` does not exist yet.
 
 ## What NOT to do
 

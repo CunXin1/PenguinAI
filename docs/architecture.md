@@ -12,10 +12,14 @@ PenguinAI follows three non-negotiable architectural principles:
 
 > **Implementation status.** This map is the target design. Live today: nginx,
 > Next.js, FastAPI, TimescaleDB (`bars_30m` ~236M rows loaded), Redis, and the
-> Celery workers/beat (data ingestion: Massive, Finnhub, IBKR). **Not built yet:**
-> the long-lived `scraper` service (Playwright/PRAW) — `data/scrapers/` doesn't
-> exist, so `social_posts` / `celebrity_holdings` / `fomc_statements` stay empty.
-> The `ml_worker` runs but has no trained model pickles or Gemma endpoint yet.
+> Celery workers/beat (data ingestion: Massive, Finnhub, IBKR). `celebrity_holdings`
+> and `fomc_statements` ARE auto-populated by background schedulers wired into the
+> FastAPI lifespan (`_run_celebrity_scheduler` — startup + daily 19:00 ET, loaders
+> in `data/celebrity/`; `data/fomc/scheduler.py` via the `fomc-sched` thread).
+> **Not built yet:** the long-lived `scraper` service (Playwright/PRAW) —
+> `data/scrapers/` doesn't exist, so only `social_posts` stays empty (Twitter/Reddit
+> scrapers are still planned). The `ml_worker` runs but has no trained model pickles
+> or Gemma endpoint yet.
 
 ### Service Map
 

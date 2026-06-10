@@ -14,7 +14,11 @@ import { ScheduleTimeline } from "@/components/fomc/ScheduleTimeline";
 import { FomcNewsCard } from "@/components/fomc/FomcNewsCard";
 
 export default function FomcPage() {
-  const { data: nextMeeting } = useQuery<FomcNextMeeting>({
+  const {
+    data: nextMeeting,
+    isLoading: meetingLoading,
+    isError: meetingError,
+  } = useQuery<FomcNextMeeting>({
     queryKey: ["fomcNextMeeting"],
     queryFn: () => fomcApi.nextMeeting(),
     staleTime: 60 * 60 * 1000,
@@ -51,14 +55,22 @@ export default function FomcPage() {
         </p>
       </div>
 
-      {nextMeeting && (
+      {meetingError ? (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-6 text-center">
+          <p className="text-sm text-red-600 dark:text-red-400">
+            Couldn&apos;t load FOMC data right now. Please try again shortly.
+          </p>
+        </div>
+      ) : nextMeeting ? (
         <CountdownCard
           meeting={nextMeeting}
           ratePoints={ratePoints}
           probabilities={probabilities}
           latestStatement={latestStatement}
         />
-      )}
+      ) : meetingLoading ? (
+        <div className="h-28 rounded-lg bg-zinc-100 dark:bg-zinc-800/50 animate-pulse" />
+      ) : null}
 
       {/* Rate chart full width */}
       <RateChart />

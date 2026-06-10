@@ -19,7 +19,7 @@ _FRESHNESS_QUERIES: list[tuple[str, str]] = [
     ("social_posts", "SELECT max(time) FROM social_posts"),
     ("celebrity_holdings", "SELECT max(trade_date) FROM celebrity_holdings"),
     ("earnings", "SELECT max(report_date) FROM earnings"),
-    ("news_articles", "SELECT max(published_at) FROM news_articles"),
+    ("news_articles", "SELECT max(time) FROM news_articles"),
 ]
 
 

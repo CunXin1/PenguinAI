@@ -11,8 +11,6 @@
 ## P0 — 阻断项
 
 ### 修复权限 / 正确性
-- [ ] **冷门股缺 PRO 门控** — `GET /api/signals/{ticker}` 当前任意登录用户即可触发任意 ticker 的 Celery 计算。按 CLAUDE.md「全 2000 股 = PRO」,应对非 Top-100 标的加 `require_tier("PRO","PREMIUM")`。
-  - 验收:FREE 用户请求冷门股返回 403;PRO 用户正常 202。
 - [ ] **`/api/signals/top` 信息泄漏复核** — 无鉴权、不按 tier 过滤,会把 `tier_required=PRO/PREMIUM` 标的暴露给匿名用户。确认是否为有意 teaser 并补文档/测试。
 - [ ] **自选股缺 tier 上限** — FREE 用户可无限添加。补 FREE/PRO 数量上限(配置化)。
   - 验收:超限返回 402/403 并有测试。
@@ -84,8 +82,8 @@
 
 ## P4 — 功能补全(产品向)
 
-- [ ] **OAuth 实现** — Google/Apple,与邮箱账号合并逻辑。
-- [ ] **Forgot-password 邮件发送** — 已生成 reset token 但仅 log,需接入邮件服务。
+- [x] **OAuth 实现** — Google + Apple 已接入(authorize→callback→id_token 验签→find-or-create→签发 JWT;无状态签名 state)。见 `core/oauth.py` + `auth.py`。**上线前需**:在 Google/Apple 控制台创建凭据并填 `.env`(`GOOGLE_CLIENT_ID/SECRET`、`APPLE_CLIENT_ID/TEAM_ID/KEY_ID/PRIVATE_KEY`)。
+- [x] **验证 / 重置邮件发送** — 已接入 `core/email.py`(`EMAIL_BACKEND=smtp` 走 SMTP,否则 console 兜底);register / resend-verification / forgot-password 三处均已发送。**上线前需**:配置 `SMTP_*`。
 - [ ] **PREMIUM API Key 访问** — 发放/吊销 API key + 限流/计费。
 - [ ] **用户自助** — 修改资料、登出、注销账号(GDPR/数据删除)。
 - [ ] **Tier 升级链路** — 支付 webhook → `users.tier`。

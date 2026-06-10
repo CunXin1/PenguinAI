@@ -14,12 +14,46 @@ class MLSettings(BaseSettings):
 
     MODEL_DIR: str = str(_PROJECT_ROOT / "models" / "penguinai")
 
-    # Gemma 4
-    GEMMA_MODEL_PATH: str = "/models/gemma4"
-    GEMMA_API_URL: str = ""
-    GEMMA_API_KEY: str = ""
+    # ── Gemma 4 LLM (Agent 2 reasoner) ───────────────────────────────────────
+    # Backend selection. "auto" → ollama on macOS, vllm elsewhere (Win/Linux GPU).
+    #   auto | vllm | ollama | api
+    LLM_BACKEND: str = "auto"
+    # Model size. e2b now; e4b later — only this line changes to upgrade.
+    #   e2b | e4b
+    GEMMA_MODEL_VARIANT: str = "e2b"
+
     GEMMA_MAX_TOKENS: int = 512
     GEMMA_TEMPERATURE: float = 0.1  # Low temp for deterministic financial reasoning
+
+    # vLLM (Windows / Linux GPU) — OpenAI-compatible server.
+    VLLM_BASE_URL: str = "http://localhost:8080/v1"
+    # Override to a HF id or a local finetuned/merged checkpoint path.
+    # Blank → derived from GEMMA_MODEL_VARIANT (see vllm_model()).
+    VLLM_MODEL: str = ""
+
+    # Ollama (macOS) — native /api/chat with structured-output `format`.
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    # Override to a custom (e.g. finetuned, built via Modelfile) tag.
+    # Blank → derived from GEMMA_MODEL_VARIANT (see ollama_model()).
+    OLLAMA_MODEL: str = ""
+
+    # External API (future: Vertex AI / any OpenAI-compatible endpoint).
+    # Used only when LLM_BACKEND="api". Left as the plug-in point.
+    GEMMA_API_URL: str = ""
+    GEMMA_API_KEY: str = ""
+    GEMMA_API_MODEL: str = "gemma-4"
+
+    # Legacy — kept for back-compat with older deploys; not used by the
+    # backend layer (model is now selected per-backend above).
+    GEMMA_MODEL_PATH: str = "/models/gemma4"
+
+    def vllm_model(self) -> str:
+        """Resolved vLLM model id (HF id or local path)."""
+        return self.VLLM_MODEL or f"google/gemma-3n-{self.GEMMA_MODEL_VARIANT.upper()}-it"
+
+    def ollama_model(self) -> str:
+        """Resolved Ollama model tag."""
+        return self.OLLAMA_MODEL or f"gemma3n:{self.GEMMA_MODEL_VARIANT.lower()}"
 
     # FinBERT
     FINBERT_MODEL: str = "ProsusAI/finbert"

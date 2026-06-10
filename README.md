@@ -17,6 +17,12 @@ PenguinAI is an industrial-grade AI investment research system that fuses classi
 - **Decoupled architecture**: Frontend, API gateway, and ML inference run as independent services.
 - **Dual-track caching**: Top-100 tickers pre-computed hourly (instant); cold tickers computed on-demand (~2–5 s).
 
+**Beyond signals**, the platform also surfaces:
+- **Accounts & sign-in**: Email/password auth plus "Sign in with Google" and "Sign in with Apple" (OAuth).
+- **Market sentiment**: Fear & Greed Index with VIX/VVIX volatility tracking.
+- **Smart-money holdings**: Celebrity/institutional trades from SEC 13F (Buffett, Soros, Dalio, Ackman), ARK (Cathie Wood), Congress (Pelosi, Tuberville, MTG, Crenshaw), and Trump DJT (13D).
+- **Macro context**: FOMC statements with hawk/dove scores and Fed-rate tracking.
+
 ### Quick Start
 
 ```bash
@@ -121,6 +127,12 @@ PenguinAI 是一个工业级 AI 自动化投研信号推荐系统，将经典量
 - **零提示词注入**：所有 LLM 提示词由后端硬编码组装，用户零自由文本输入
 - **三层解耦架构**：前端、API 网关、ML 推理层完全独立部署
 - **双轨缓存策略**：Top-100 热门股每小时预计算（毫秒响应）；冷门股按需实时推理（2–5 秒）
+
+**除信号外，平台还提供：**
+- **账户与登录**：邮箱密码认证，并支持「使用 Google 登录」与「使用 Apple 登录」（OAuth）
+- **市场情绪**：恐惧与贪婪指数，含 VIX / VVIX 波动率追踪
+- **聪明钱持仓**：名人/机构交易，来源覆盖 SEC 13F（巴菲特、索罗斯、达里奥、阿克曼）、ARK（木头姐）、国会议员（佩洛西、图伯维尔、MTG、克伦肖）及特朗普 DJT（13D）
+- **宏观背景**：FOMC 声明（鹰鸽评分）与美联储利率追踪
 
 ### 快速启动
 

@@ -49,9 +49,14 @@ Watchdog (main process thread)
 
 **Code:** `backend/app/main.py` (`_SupervisorWatchdog` class)
 
+Alongside the realtime supervisor watchdog, the lifespan also starts two embedded
+`_ProcessWatchdog` instances — `_celery_worker` and `_celery_beat` — which supervise
+the Celery worker and beat subprocesses (same auto-restart behavior). These start
+before the background data threads.
+
 ### Phase 3: Background Data Threads (immediate, non-blocking)
 
-Five daemon threads start simultaneously. Each fetches data immediately on startup, then on a schedule:
+Seven daemon threads start simultaneously. Each fetches data immediately on startup, then on a schedule:
 
 | Thread | Startup Action | Schedule | Data Source | Target Table |
 |--------|---------------|----------|-------------|--------------|
@@ -59,6 +64,8 @@ Five daemon threads start simultaneously. Each fetches data immediately on start
 | `mcap-fetch` | Fetch immediately | Daily 06:00 ET (weekdays) | Massive API | `tickers.market_cap` |
 | `earnings-sched` | Fetch immediately | 08:00 + 18:00 ET (weekdays) | Finnhub API | `earnings` |
 | `news-sched` | Fetch immediately | Tier-1: 15min, Tier-2: 60min | Massive API | `news_articles` |
+| `fomc-sched` | Fetch immediately | FOMC scheduler (`data.fomc.scheduler`) | Fed website + FinBERT | `fomc_statements` |
+| `fng-sched` | Fetch immediately | Startup + hourly | Fear & Greed + VIX/VVIX (`data.fear_greed.scheduler`) | Fear & Greed / VIX tables |
 | `seed-data` | Check & seed | Once (then exits) | Local parquets or Massive API | `bars_30m`, `bars_1d`, `instruments` |
 
 **Error handling:** Each thread has independent `try/except` — one thread's failure doesn't affect others. Missing dependencies (`ImportError`) are caught and logged.
@@ -73,11 +80,15 @@ On SIGTERM, threads are stopped in reverse order with 5-second join timeouts:
 
 ```
 seed_stop.set()     → seed_thread.join(5s)
+fng_stop.set()      → fng_thread.join(5s)
+fomc_stop.set()     → fomc_thread.join(5s)
 news_stop.set()     → news_thread.join(5s)
 earnings_stop.set() → earnings_thread.join(5s)
 mcap_stop.set()     → mcap_thread.join(5s)
 celeb_stop.set()    → celeb_thread.join(5s)
-watchdog.stop()     → SIGTERM subprocess → wait 10s → SIGKILL
+celery_beat.stop()    → SIGTERM Celery beat subprocess
+celery_worker.stop()  → SIGTERM Celery worker subprocess
+watchdog.stop()       → SIGTERM realtime supervisor subprocess → wait 10s → SIGKILL
 ```
 
 ---
@@ -207,6 +218,9 @@ T=31s     Service ready — accepting requests
           ├── earnings: fetching from Finnhub
           ├── celebrity: fetching SEC/Congress/ARK
           ├── news: fetching from Massive
+          ├── fomc: fetching Fed statements → FinBERT scoring
+          ├── fng: fetching Fear & Greed + VIX/VVIX
+          ├── celery worker + beat: embedded watchdog subprocesses
           └── realtime supervisor: connecting IBKR + Finnhub WS
 
 T=1-3min  Seed complete → charts available for 36 tickers
@@ -214,6 +228,8 @@ T=1-3min  Seed complete → charts available for 36 tickers
           Earnings complete → Earnings page available
           Celebrity holdings complete
           News complete
+          FOMC statements complete
+          Fear & Greed / VIX complete
 
 T=5min    ML worker processes refresh_top100
           └── Dashboard shows signals (NEUTRAL if no indicators, real if parquets imported)

@@ -11,7 +11,10 @@ Authentication: `Authorization: Bearer <access_token>` header (JWT)
 ### Authentication
 
 #### `POST /auth/register`
-Create a new user account.
+Create a new user account. Sends a verification email (logged in DEBUG mode). The
+returned JWT is valid immediately; email verification is not required to log in.
+
+**Rate limit**: 5 / hour per IP
 
 **Request**
 ```json
@@ -26,13 +29,16 @@ Create a new user account.
 ```json
 { "access_token": "eyJ...", "token_type": "bearer" }
 ```
+In DEBUG mode the response also carries `_debug_verify_token`.
 
-**Errors**: `409 Conflict` (email already exists)
+**Errors**: `409 Conflict` (email already exists), `429` (rate limited)
 
 ---
 
 #### `POST /auth/login`
 Authenticate and receive a JWT token.
+
+**Rate limit**: 10 / minute per IP + 20 / hour per account (keyed by email hash)
 
 **Request**
 ```json
@@ -44,7 +50,7 @@ Authenticate and receive a JWT token.
 { "access_token": "eyJ...", "token_type": "bearer" }
 ```
 
-**Errors**: `401 Unauthorized` (invalid credentials)
+**Errors**: `401 Unauthorized` (invalid credentials), `429` (rate limited)
 
 ---
 
@@ -63,6 +69,129 @@ Get current authenticated user info.
   "created_at": "2026-05-31T00:00:00Z"
 }
 ```
+
+---
+
+#### `POST /auth/verify-email`
+Verify an email address with the token from the verification link.
+
+**Request**
+```json
+{ "token": "eyJ..." }
+```
+
+**Response** `200 OK`
+```json
+{ "message": "Email verified successfully." }
+```
+(or `"Email already verified."` if already done)
+
+**Errors**: `400 Bad Request` (invalid or expired token)
+
+---
+
+#### `POST /auth/resend-verification`
+Re-send the verification email for the current user.
+
+**Auth**: Required
+
+**Response** `200 OK`
+```json
+{ "message": "Verification email sent." }
+```
+Returns `"Email already verified."` when nothing to send. In DEBUG mode the
+response also carries `_debug_verify_token`.
+
+---
+
+#### `POST /auth/forgot-password`
+Request a password-reset link. Always returns the same message regardless of
+whether the email exists (no account enumeration).
+
+**Rate limit**: 5 / hour per IP
+
+**Request**
+```json
+{ "email": "user@example.com" }
+```
+
+**Response** `200 OK`
+```json
+{ "message": "If this email is registered, you will receive a reset link shortly." }
+```
+
+---
+
+#### `POST /auth/reset-password`
+Reset the password using the token from the reset link. Increments
+`token_version`, invalidating all existing sessions.
+
+**Rate limit**: 5 / hour per IP
+
+**Request**
+```json
+{ "token": "eyJ...", "password": "newStrongPass1!" }
+```
+
+**Response** `200 OK`
+```json
+{ "message": "Password has been reset successfully." }
+```
+
+**Errors**: `400 Bad Request` (invalid or expired token)
+
+---
+
+#### `POST /auth/change-password`
+Change the password for the current user. Increments `token_version` (invalidates
+all other sessions) and returns a fresh JWT.
+
+**Auth**: Required
+
+**Request**
+```json
+{ "current_password": "oldPass1!", "new_password": "newStrongPass1!" }
+```
+
+**Response** `200 OK`
+```json
+{ "message": "Password changed successfully.", "access_token": "eyJ..." }
+```
+
+**Errors**: `400 Bad Request` (current password incorrect)
+
+---
+
+### OAuth (Sign in with Google / Apple)
+
+Provider sign-in is browser-redirect based. `{provider}` ∈ `google` · `apple`.
+When a provider is not configured, the start endpoint returns `503` and the
+callbacks redirect to the frontend with an `error` fragment.
+
+#### `GET /auth/oauth/{provider}`
+Begin the OAuth flow. Issues a signed `state`/`nonce` and redirects the browser to
+the provider's authorization page.
+
+**Response** `302 Found` → provider authorize URL
+
+**Errors**: `404` (unknown provider), `503` (provider not configured)
+
+---
+
+#### `GET /auth/oauth/{provider}/callback`
+#### `POST /auth/oauth/{provider}/callback`
+Provider redirect target (`GET` for Google, `POST` form_post for Apple). Verifies
+the `state`/`id_token`, then finds-or-creates the user (links to an existing
+email/password account on email match; OAuth emails are pre-verified) and issues a
+JWT.
+
+**Query / form params**: `code`, `state`, `error` (Apple also sends a one-time
+`user` JSON payload with the display name on first consent)
+
+**Response** `302 Found` → `{FRONTEND_BASE_URL}/auth/callback#access_token=eyJ...`
+(the token rides in the URL fragment so it is never logged or sent in `Referer`).
+On any failure it redirects with `#error=<reason>` instead (e.g. `oauth_unavailable`,
+`invalid_state`, `oauth_failed`, `oauth_no_email`).
 
 ---
 
@@ -245,6 +374,26 @@ Remove a ticker from watchlist.
 ---
 
 ### Market Data
+
+#### `GET /market-data/status`
+Global "is the US market open right now" — the single source of truth the frontend
+uses for the LIVE/CLOSED badge and live-poll cadence. Public, cached 5s
+(`Cache-Control: public, max-age=5`).
+
+**Response** `200 OK` — market status object (open flag, session phase, etc.).
+
+---
+
+#### `POST /market-data/{ticker}/warm`
+On-demand: pull a freshly opened ticker's recent 1-min bars from Massive into
+`market_data_1min` so its chart fills immediately. Idempotent.
+
+**Response** `200 OK`
+```json
+{ "ticker": "NVDA", "warmed_bars": 120 }
+```
+
+---
 
 #### `GET /market-data/{ticker}/candles`
 Get raw OHLCV bars for charting (legacy/simple form).
@@ -448,6 +597,32 @@ All trades for one celebrity.
 
 ---
 
+#### `GET /celebrity-holdings/{celebrity}/top-holdings`
+Distinct tickers held by one celebrity, each with its latest action and trade count.
+
+**Path params**: `celebrity` — lowercase slug
+
+**Query params**: `limit` — int, default 30, max 100
+
+**Response** `200 OK`
+```json
+[
+  {
+    "ticker": "AAPL",
+    "ticker_name": "Apple Inc.",
+    "latest_action": "HOLD",
+    "last_activity": "2026-05-15T00:00:00+00:00",
+    "shares": 400000000,
+    "value_usd": 85720000000,
+    "trade_count": 6
+  }
+]
+```
+
+**Errors**: `422` (invalid celebrity slug format)
+
+---
+
 #### `GET /celebrity-holdings/ticker/{ticker}`
 Which celebrities traded a given ticker.
 
@@ -490,6 +665,250 @@ Admin: inspect the data-demand queue, most-requested first.
 **Auth**: ADMIN tier
 
 **Query params**: `status` (filter), `limit` (default 100, max 500)
+
+---
+
+### News
+
+All news endpoints are public. Articles share a unified shape:
+`{ id, headline, summary, source, url, image, datetime (unix sec), tickers[], category, sentiment, sentiment_score }`.
+Source priority: Massive → Google News RSS → Finnhub. FinBERT scores
+DB-stored and cold-ticker articles (`sentiment` ∈ `positive` · `negative` · `neutral`).
+
+#### `GET /news/market`
+General market news for the feed page (cached 5 min).
+
+**Query params**: `limit` — int, default 30, max 100
+
+**Response** `200 OK` — array of article objects.
+
+---
+
+#### `GET /news/hot`
+Pre-stored hot-ticker news from the DB (last 7 days). Optionally filter by ticker;
+falls back to on-demand API fetch when the DB is empty.
+
+**Query params**:
+| Param | Type | Default | Max |
+|-------|------|---------|-----|
+| `limit` | int | 50 | 200 |
+| `ticker` | string | — | — |
+
+**Response** `200 OK` — array of article objects.
+
+**Errors**: `422` (invalid ticker format)
+
+---
+
+#### `GET /news/{ticker}`
+News for a specific ticker. Hot tickers served from the DB; cold tickers fetched
+on-demand via the 3-tier fallback, FinBERT-scored, and cached 10 min.
+
+**Path params**: `ticker` — uppercase symbol
+
+**Query params**:
+| Param | Type | Default | Max |
+|-------|------|---------|-----|
+| `days` | int | 7 | 30 |
+| `limit` | int | 20 | 50 |
+
+**Response** `200 OK` — array of article objects.
+
+**Errors**: `422` (invalid ticker format)
+
+---
+
+### Pinned Signals
+
+User-customizable "Top Signals" ticker list (0–12 tickers).
+
+#### `GET /pinned-signals`
+Return the current user's pinned tickers, ordered by position.
+
+**Auth**: Required
+
+**Response** `200 OK`
+```json
+["AAPL", "MSFT", "NVDA"]
+```
+
+---
+
+#### `PUT /pinned-signals`
+Replace the entire pinned list. Each ticker is validated against the universe;
+duplicates are de-duped (uppercased).
+
+**Auth**: Required
+
+**Request**
+```json
+{ "tickers": ["AAPL", "MSFT", "NVDA"] }
+```
+
+**Response** `200 OK` — the stored ordered ticker list.
+
+**Errors**: `404` (a ticker is not in the universe), `422` (more than 12 tickers)
+
+---
+
+### FOMC
+
+All FOMC endpoints are public and backed by a short in-process TTL cache. They read
+`fomc_statements`, `fomc_fed_funds_rate`, `fomc_rate_probabilities`, `bars_1d` (SPY),
+and `news_articles` (`ticker='FOMC'`), with live fallbacks where noted.
+
+#### `GET /fomc/statements`
+All FOMC statements with hawk/dove scores, most recent first.
+
+**Query params**: `limit` — int, 1–200 (default from `FOMC_DEFAULT_STATEMENTS_LIMIT`)
+
+**Response** `200 OK`
+```json
+[
+  { "date": "2026-04-29", "datetime": 1777334400, "hawk_dove_score": -0.2,
+    "summary": "...", "document_url": "https://www.federalreserve.gov/..." }
+]
+```
+
+---
+
+#### `GET /fomc/trend`
+Hawk/dove score time-series for charts (oldest first).
+
+**Query params**: `limit` — int, 1–50 (default from `FOMC_DEFAULT_TREND_LIMIT`)
+
+**Response** `200 OK` — `[{ "date": "2026-04-29", "score": -0.2 }]`
+
+---
+
+#### `GET /fomc/next-meeting`
+Next scheduled FOMC meeting date and countdown.
+
+**Response** `200 OK`
+```json
+{ "next_meeting": "2026-06-17", "days_until": 7 }
+```
+
+---
+
+#### `GET /fomc/schedule`
+Meeting schedule with a configurable past/future window.
+
+**Query params**: `past` (0–50), `future` (0–50) — defaults from settings.
+
+**Response** `200 OK` — `[{ "date": "2026-04-29", "past": true }]`
+
+---
+
+#### `GET /fomc/rate-history`
+Federal funds target rate over time (DB table, hardcoded fallback).
+
+**Query params**: `years` — int, 1–30 (default from settings)
+
+**Response** `200 OK` — `[{ "date": "2025-12-10", "rate_low": 4.25, "rate_high": 4.5 }]`
+
+---
+
+#### `GET /fomc/market-reaction`
+SPY return on each FOMC meeting day (close/prev_close − 1), with the rate in effect.
+
+**Query params**: `limit` — int, 1–100 (default from settings)
+
+**Response** `200 OK`
+```json
+[ { "date": "2026-04-29", "spy_return_pct": 0.83, "spy_close": 542.1, "rate_low": 4.25, "rate_high": 4.5 } ]
+```
+
+---
+
+#### `GET /fomc/diff`
+Sentence-level diff between a statement and the previous one.
+
+**Query params**: `date` (required) — `YYYY-MM-DD`
+
+**Response** `200 OK`
+```json
+{ "current_date": "2026-04-29", "previous_date": "2026-03-18",
+  "diff": [ { "type": "unchanged", "text": "..." }, { "type": "added", "text": "..." } ] }
+```
+`type` ∈ `unchanged` · `added` · `removed`. Returns `{ "error": ... }` for an
+invalid date or missing statement.
+
+---
+
+#### `GET /fomc/news`
+Fed/FOMC-related news (DB rows tagged `ticker='FOMC'`, live RSS fallback).
+
+**Query params**: `limit` — int, 1–50 (default 10)
+
+**Response** `200 OK` — array of news article objects (same shape as `/news/*`).
+
+---
+
+#### `GET /fomc/rate-probabilities`
+CME FedWatch implied probabilities for the next meeting (DB snapshot, live fallback).
+
+**Response** `200 OK`
+```json
+[ { "meeting_date": "2026-06-17", "target_rate_low": 4.0, "target_rate_high": 4.25, "probability": 0.62 } ]
+```
+
+---
+
+### Fear & Greed
+
+All endpoints public, backed by a 5-minute in-process cache. Reads the
+`fear_greed_index` + `volatility_index` tables (CNN + CBOE/Yahoo/FRED).
+
+#### `GET /fear-greed`
+Current index reading: score, rating, the 7 components, and the value at previous
+close / 1 week / 1 month / 1 year ago.
+
+**Response** `200 OK`
+```json
+{
+  "score": 62.5,
+  "rating": "greed",
+  "label": "Greed",
+  "updated_at": "2026-06-10T00:00:00+00:00",
+  "source": "cnn",
+  "previous": { "close": 60.1, "week": 55.0, "month": 48.2, "year": 70.4 },
+  "components": [ ... ]
+}
+```
+`label` ∈ `Extreme Fear` · `Fear` · `Neutral` · `Greed` · `Extreme Greed`.
+
+---
+
+#### `GET /fear-greed/history`
+Daily Fear & Greed score series (ascending).
+
+**Query params**: `days` — int, 7–3650 (default 365)
+
+**Response** `200 OK` — `[{ "date": "2026-06-09", "score": 60.1, "rating": "greed" }]`
+
+---
+
+#### `GET /fear-greed/volatility`
+Daily OHLC series for a volatility index (ascending) + latest value and change.
+
+**Query params**:
+| Param | Type | Default | Notes |
+|-------|------|---------|-------|
+| `symbol` | string | `VIX` | `VIX` or `VVIX` only |
+| `days` | int | 365 | 7–20000 |
+
+**Response** `200 OK`
+```json
+{
+  "symbol": "VIX",
+  "latest": 14.2,
+  "change_pct": -3.1,
+  "bars": [ { "time": 1749513600, "date": "2026-06-09", "open": 14.5, "high": 14.9, "low": 14.0, "close": 14.6 } ]
+}
+```
+
+**Errors**: `422` (symbol not VIX/VVIX)
 
 ---
 

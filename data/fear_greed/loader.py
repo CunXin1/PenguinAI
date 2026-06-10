@@ -7,6 +7,7 @@ with ``ON CONFLICT`` upserts, returns the number of rows written.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -100,6 +101,11 @@ async def run_loader(database_url: str, *, fred_key: str | None = None) -> int:
     written = 0
     try:
         # ── Volatility first (multi-source, merged + cross-checked) ──
+        # The full VIX/VVIX history is re-upserted every run by design: rows are
+        # idempotent (ON CONFLICT) and tiny (1/day/symbol), and the *full* history
+        # is required by the VIX-percentile fallback (252-day window), the 5Y chart,
+        # and scripts/backfill_fear_greed.py. Hence there is deliberately no
+        # retention policy and no tail-trim — a retention window would break those.
         vol = await fetch_all_volatility(fred_key)
         vix_rows = [r for r in vol["rows"] if r["symbol"] == "VIX"]
         if vol["rows"]:
@@ -125,3 +131,37 @@ async def run_loader(database_url: str, *, fred_key: str | None = None) -> int:
     finally:
         await engine.dispose()
     return written
+
+
+if __name__ == "__main__":
+    # Manual one-shot live fetch (mirrors data/fomc/loader.py). For multi-year
+    # historical backfill use scripts/backfill_fear_greed.py instead.
+    import argparse
+    from pathlib import Path
+
+    logging.basicConfig(
+        level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
+    argparse.ArgumentParser(
+        description="Fetch the live Fear & Greed index + VIX/VVIX once and upsert."
+    ).parse_args()
+
+    # Load .env (same lightweight pattern as scripts/backfill_fear_greed.py)
+    _env = Path(__file__).resolve().parents[2] / ".env"
+    if _env.exists():
+        for _line in _env.read_text().splitlines():
+            _line = _line.strip()
+            if _line and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
+
+    _db = os.environ.get(
+        "DATABASE_URL", "postgresql+asyncpg://penguinai:penguinai_dev@localhost:5432/penguinai"
+    )
+    # On the host the DB is on localhost, not the compose service name.
+    _db = _db.replace("@timescaledb:", "@localhost:")
+    if "+asyncpg" not in _db:
+        _db = _db.replace("postgresql://", "postgresql+asyncpg://")
+
+    _n = asyncio.run(run_loader(_db))
+    logger.info("fear&greed loader: %d rows written", _n)

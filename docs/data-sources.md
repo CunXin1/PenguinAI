@@ -25,13 +25,15 @@ ingestion code lands).
 | SEC EDGAR 13F + 13D | Smart money (Buffett, Soros, Dalio, Ackman, Trump DJT) | `celebrity_holdings` | ✅ Live | `data/celebrity/sec_13f.py` (daily auto-fetch) |
 | Quiver Quant | Congressional trades (Pelosi, Tuberville, MTG, Crenshaw) | `celebrity_holdings` | ✅ Live | `data/celebrity/congress.py` (daily auto-fetch) |
 | arkfunds.io | ARK Invest daily trades (Cathie Wood) | `celebrity_holdings` | ✅ Live | `data/celebrity/ark.py` (daily auto-fetch) |
-| SEC EDGAR FOMC | FOMC statements | `fomc_statements` | 🚧 Planned | designed: SEC submissions API |
+| Federal Reserve FOMC | FOMC statements + hawk/dove scores | `fomc_statements` | ✅ Live | `data/fomc/` (scraper + scorer + loader + scheduler), wired in `main.py` as `fomc-sched` |
+| CNN Fear & Greed + CBOE/Yahoo/FRED | Fear & Greed Index + VIX/VVIX volatility | (in-memory / API) | ✅ Live | `data/fear_greed/` (cnn/cboe/yahoo/fred/volatility/loader/fallback/scheduler), `fng-sched` thread (startup + hourly), route `/api/fear-greed` |
 | Polygon.io | Supplemental bars | — | ❌ Legacy placeholder (env key only, no loader) | superseded by Massive |
 
 > **Reality check.** `data/scrapers/` and `data/ingestion/polygon_loader.py` do
-> **not** exist. The social-sentiment and FOMC tables are created by the schema
-> but are not populated yet — those pipeline steps degrade gracefully.
-> Celebrity holdings **is live** (see `docs/celebrity-holdings.md`).
+> **not** exist. The social-sentiment table is created by the schema but is not
+> populated yet — that pipeline step degrades gracefully. FOMC **is live**
+> (`data/fomc/`, `fomc-sched` thread). Celebrity holdings **is live** (see
+> `docs/celebrity-holdings.md`).
 
 ---
 
@@ -210,12 +212,14 @@ Three free data sources populate `celebrity_holdings` daily. See
 
 **CLI**: `make fetch-celebrities` (runs all three).
 
-### 6b. FOMC Statements *(planned, not built)*
+### 6b. FOMC Statements *(live)*
 
-**Intended**: `data/scrapers/sec_scraper.py` → `fomc_statements` with
-keyword-based hawk/dove scoring, consumed by
-`signal_engine._apply_macro_filter()`. The FOMC filter no-ops when the
-table is empty.
+**Files**: `data/fomc/` (scraper + scorer + loader + scheduler) → `fomc_statements`
+with FinBERT-based hawk/dove scoring, consumed by
+`signal_engine._apply_macro_filter()`.
+
+**Schedule**: Backend lifespan thread (`fomc-sched`) — runs on startup, wired in
+`backend/app/main.py`. CLI: `make fetch-fomc`.
 
 ### 7. News *(live)*
 
@@ -286,12 +290,14 @@ ORDER BY bars;
 | Massive — 新闻 | 热门股新闻 + 情绪 | `news_articles`（hypertable） | ✅ 已接入（启动 + 分层定时） | `data/news/ingest.py` |
 | Google News RSS | 免费新闻备选（无 key，无情绪） | 同上 | ✅ 备用 | `data/news/ingest.py` |
 | Finnhub — 新闻 | 公司新闻（免费版，60 req/min） | 同上 | ✅ 最后手段 | `data/news/ingest.py` |
-| SEC EDGAR FOMC | FOMC 声明 | `fomc_statements` | 🚧 规划中 | SEC submissions API |
+| Federal Reserve FOMC | FOMC 声明 + 鹰鸽评分 | `fomc_statements` | ✅ 已接入 | `data/fomc/`（爬取+评分+加载+调度），`main.py` 中 `fomc-sched` 线程 |
+| CNN Fear & Greed + CBOE/Yahoo/FRED | 恐惧贪婪指数 + VIX/VVIX 波动率 | （内存 / API） | ✅ 已接入 | `data/fear_greed/`，`fng-sched` 线程（启动 + 每小时），路由 `/api/fear-greed` |
 | Polygon.io | 补充 K 线 | — | ❌ 遗留占位（仅 env，无 loader） | 已被 Massive 取代 |
 
-> **现状提醒**：`data/scrapers/` 与 `polygon_loader.py` **不存在**。社媒和 FOMC 表
-> 由 schema 建好但尚未填充，相关步骤优雅降级。名人持仓 **已上线**
->（详见 `docs/celebrity-holdings.md`）。新闻模块 **已上线**（详见 `docs/news-module.md`）。
+> **现状提醒**：`data/scrapers/` 与 `polygon_loader.py` **不存在**。社媒表由 schema
+> 建好但尚未填充，相关步骤优雅降级。FOMC **已上线**（`data/fomc/`，`fomc-sched`
+> 线程）。名人持仓 **已上线**（详见 `docs/celebrity-holdings.md`）。新闻模块
+> **已上线**（详见 `docs/news-module.md`）。
 
 ### 核心资产：历史 30 分钟 / 日线数据
 

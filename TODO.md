@@ -56,11 +56,10 @@
 - [ ] 联系方式 / 反馈入口
 
 ## 7. 完善财报界面
-- [ ] /earnings 页面：未来一周财报日历（Finnhub earnings calendar）
-- [ ] 已公布财报：EPS actual vs estimate、surprise %、beat/miss 标签
-- [ ] 财报前后股价反应图（earnings event overlay on price chart）
-- [ ] 按日期 / ticker / surprise 排序和筛选
-- [ ] 与信号联动：财报 surprise 如何影响信号置信度的可视化
+- [ ] 财报前后股价反应图（earnings event overlay on price chart）— 目前仅数值徽章 + EPS sparkline，缺 K 线 overlay
+- [ ] 按 surprise 排序（日期分组 + ticker 搜索已有，surprise 排序缺失）
+- [ ] 与信号联动：财报 surprise 如何影响信号置信度的可视化（信号页目前仅并列展示财报）
+- [ ] incoming→past 时间兜底：report_date 已过但 Finnhub 未回填 eps_actual 的行会永久停留在 upcoming 并显示负倒计时，需按日期剔除/折叠
 
 ---
 

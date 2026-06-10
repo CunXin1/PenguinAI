@@ -599,6 +599,9 @@ export type EarningsSession = "BMO" | "AMC" | "TBD";
 export interface EarningsEvent {
   ticker: string;
   report_date: string; // ISO date, e.g. "2026-06-08"
+  /** Lifecycle phase (backend-computed, single source of truth for upcoming→past).
+   *  REPORTED = actuals in · UPCOMING = future, no actuals · PENDING = date passed, awaiting actuals. */
+  status?: "REPORTED" | "UPCOMING" | "PENDING";
   fiscal_quarter: number | null; // 1–4
   fiscal_year: number | null;    // e.g. 2026
   eps_actual: number | null;

@@ -9,6 +9,11 @@ Schedule (ET, weekdays only):
   - Backend startup: immediate fetch
   - 08:00 ET: pre-market  (captures BMO actuals + refreshed calendar)
   - 18:00 ET: post-market  (captures AMC actuals after close)
+  - Report-time fast-poll: during the BMO (06:00–11:00) and AMC (16:00–21:00)
+    windows, whenever a company is due to report *today* but its ``eps_actual``
+    is still NULL, re-fetch every 15 min until the actuals land (or the window
+    closes). This pulls just-published results in quickly instead of waiting
+    for the next twice-daily fetch.
 """
 
 from __future__ import annotations
@@ -92,6 +97,48 @@ _CORE_STOCKS: dict[str, str] = {
 _FETCH_HOURS = (8, 18)  # 8 AM pre-market, 6 PM post-market ET
 _ET = zoneinfo.ZoneInfo("America/New_York")
 
+# Report-time fast-poll: how often to re-fetch while actuals are still pending.
+_POLL_INTERVAL = timedelta(minutes=15)
+# ET windows where freshly-published actuals are expected to land, with the
+# Finnhub ``report_hour`` codes that belong to each. "" matches rows whose hour
+# is unknown (NULL) — poll those in both windows since we can't tell when.
+_REPORT_WINDOWS: tuple[tuple[int, int, tuple[str, ...]], ...] = (
+    (6, 11, ("bmo", "")),  # pre-market reports
+    (16, 21, ("amc", "dmh", "")),  # after-close reports
+)
+
+
+def _active_report_window(now_et: datetime) -> tuple[str, ...] | None:
+    """Sessions expected to be publishing now, or None outside any window/weekend."""
+    if now_et.weekday() >= 5:
+        return None
+    for start, end, sessions in _REPORT_WINDOWS:
+        if start <= now_et.hour < end:
+            return sessions
+    return None
+
+
+async def count_pending_reports(db_url: str, sessions: tuple[str, ...]) -> int:
+    """Count today's (ET) earnings rows for ``sessions`` still missing ``eps_actual``."""
+    engine = create_async_engine(db_url)
+    try:
+        today = datetime.now(_ET).date()
+        async with engine.connect() as conn:
+            result = await conn.execute(
+                text(
+                    "SELECT COUNT(*) FROM earnings "
+                    "WHERE report_date = :today AND eps_actual IS NULL "
+                    "AND COALESCE(LOWER(report_hour), '') = ANY(:sessions)"
+                ),
+                {"today": today, "sessions": list(sessions)},
+            )
+            return int(result.scalar() or 0)
+    except Exception:
+        logger.warning("count_pending_reports failed", exc_info=True)
+        return 0
+    finally:
+        await engine.dispose()
+
 
 # ── Ensure core tickers exist ───────────────────────────────────────────────
 
@@ -156,6 +203,23 @@ def run_scheduler(stop_event: threading.Event, db_url: str) -> None:
     # ── Daily loop ────────────────────────────────────────────────
     while not stop_event.is_set():
         now_et = datetime.now(_ET)
+
+        # ── Report-time fast-poll ─────────────────────────────────
+        # If we're inside a publish window and some of today's reports haven't
+        # posted actuals yet, re-fetch every _POLL_INTERVAL until they land.
+        sessions = _active_report_window(now_et)
+        if sessions is not None:
+            pending = asyncio.run(count_pending_reports(db_url, sessions))
+            if pending > 0:
+                logger.info("report window active — %d pending today, fast fetch", pending)
+                try:
+                    count = asyncio.run(fetch_earnings(db_url))
+                    logger.info("fast fetch complete (%d rows)", count)
+                except Exception:
+                    logger.warning("fast fetch failed", exc_info=True)
+                if stop_event.wait(timeout=_POLL_INTERVAL.total_seconds()):
+                    break
+                continue
 
         candidates = []
         for h in _FETCH_HOURS:

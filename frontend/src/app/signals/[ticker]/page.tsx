@@ -300,6 +300,9 @@ function SessionBadge({ session, small }: { session: EarningsSession; small?: bo
 }
 
 function EarningsSection({ ticker, earnings }: { ticker: string; earnings: EarningsEvent[] }) {
+  // Reported = actuals in; everything else (incl. a report whose date arrived
+  // but whose actuals haven't landed) stays upcoming. earnings come newest-first,
+  // so the soonest upcoming is the last element.
   const reported = earnings.filter((e) => e.eps_actual !== null);
   const upcoming = earnings.filter((e) => e.eps_actual === null);
   const next = upcoming.length > 0 ? upcoming[upcoming.length - 1] : null;

@@ -10,7 +10,7 @@ import { timeAgoUnix } from "@/lib/utils";
 export function NewsPreview() {
   const { data: apiArticles, isLoading } = useQuery({
     queryKey: ["dashboardNews"],
-    queryFn: () => newsApi.market("general"),
+    queryFn: () => newsApi.market(),
     staleTime: 5 * 60 * 1000,
   });
 

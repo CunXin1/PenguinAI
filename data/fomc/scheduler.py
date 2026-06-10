@@ -15,20 +15,14 @@ import logging
 import threading
 from datetime import UTC, datetime, timedelta
 
+from data.fomc.meetings import FOMC_MEETINGS as _FOMC_MEETINGS
+from data.fomc.meetings import meetings_need_update, next_meeting_date
+
 logger = logging.getLogger("fomc.scheduler")
 
 STATEMENTS_FETCH_HOUR = 15
 NEWS_INTERVAL_SEC = 1800
 RATE_FRIDAY_FETCH_HOUR = 10
-
-_FOMC_MEETINGS = [
-    "2025-01-29", "2025-03-19", "2025-05-07", "2025-06-18",
-    "2025-07-30", "2025-09-17", "2025-10-29", "2025-12-10",
-    "2026-01-28", "2026-03-18", "2026-04-29", "2026-06-17",
-    "2026-07-29", "2026-09-16", "2026-10-28", "2026-12-09",
-    "2027-01-27", "2027-03-17", "2027-05-05", "2027-06-16",
-    "2027-07-28", "2027-09-22", "2027-10-27", "2027-12-15",
-]
 
 # Post-meeting fetch offsets in hours
 _POST_MEETING_OFFSETS_H = [1, 24, 72]
@@ -64,8 +58,8 @@ async def _refresh_news(db_url: str) -> int:
     import xml.etree.ElementTree as ET
 
     import httpx
-    from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy import text as sa_text
+    from sqlalchemy.ext.asyncio import create_async_engine
 
     query = "Federal Reserve FOMC interest rate decision"
     url = f"https://news.google.com/rss/search?q={query.replace(' ', '+')}&hl=en-US&gl=US&ceid=US:en"
@@ -152,22 +146,17 @@ async def _refresh_news(db_url: str) -> int:
 
 async def _refresh_fedwatch(db_url: str) -> int:
     """Fetch CME FedWatch probabilities and persist to fomc_rate_probabilities."""
-    from data.fomc.fedwatch import fetch_fedwatch_probabilities
-    from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy import text as sa_text
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    from data.fomc.fedwatch import fetch_fedwatch_probabilities
 
     probs = await fetch_fedwatch_probabilities()
     if not probs:
         return 0
 
     now = datetime.now(UTC)
-
-    today_str = now.strftime("%Y-%m-%d")
-    next_meeting = None
-    for d in _FOMC_MEETINGS:
-        if d >= today_str:
-            next_meeting = d
-            break
+    next_meeting = next_meeting_date()
 
     engine = create_async_engine(db_url)
     upsert_sql = sa_text("""
@@ -234,6 +223,14 @@ def run_scheduler(stop_event: threading.Event, db_url: str) -> None:
     import zoneinfo
 
     et = zoneinfo.ZoneInfo("America/New_York")
+
+    # Warn early if the hardcoded meeting calendar is running out — once the last
+    # date passes, the countdown/schedule freeze and post-meeting rate triggers stop.
+    if meetings_need_update():
+        logger.warning(
+            "fomc scheduler: FOMC_MEETINGS calendar is exhausted or nearly so — "
+            "append the Fed's newly-published schedule to data/fomc/meetings.py"
+        )
 
     # ── Startup: fetch all four sources ──
     logger.info("fomc scheduler: startup — refreshing fed funds rate")

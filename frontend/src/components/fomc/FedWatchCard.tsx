@@ -36,7 +36,20 @@ export function FedWatchCard() {
   }
 
   if (!probabilities || probabilities.length === 0) {
-    return null;
+    return (
+      <Card className="p-5">
+        <div className="flex items-center justify-between mb-1">
+          <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300 flex items-center gap-2">
+            <BarChart3 size={15} className="text-sky-600 dark:text-sky-400" />
+            Rate Expectations — Next Meeting
+          </h3>
+          <span className="text-[11px] text-zinc-500">CME FedWatch</span>
+        </div>
+        <p className="text-sm text-zinc-400 dark:text-zinc-600 py-6 text-center">
+          Market-implied rate probabilities are currently unavailable.
+        </p>
+      </Card>
+    );
   }
 
   const maxProb = Math.max(...probabilities.map((p) => p.probability));

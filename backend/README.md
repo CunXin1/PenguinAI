@@ -2,7 +2,7 @@
 
 ## Overview
 
-The backend is the API gateway for PenguinAI. It handles authentication (with password reset flow), signal retrieval, watchlist management, market-data serving, the earnings calendar, market status (NYSE calendar-aware), realtime ingestion supervision, and the user symbol-request (data-demand) queue. It deliberately contains **no ML logic** — all signal computation is dispatched to the ML layer via Celery task names.
+The backend is the API gateway for PenguinAI. It handles authentication (password reset flow + Google/Apple OAuth), signal retrieval, watchlist management, market-data serving, the earnings calendar, news headlines, FOMC statements, the Fear & Greed Index, celebrity/smart-money holdings, market status (NYSE calendar-aware), realtime ingestion supervision, and the user symbol-request (data-demand) queue. It deliberately contains **no ML logic** — all signal computation is dispatched to the ML layer via Celery task names.
 
 ## Project Structure
 
@@ -14,12 +14,17 @@ backend/
 │   ├── api/
 │   │   ├── deps.py              Dependency injection: get_db, get_current_user, get_optional_user, require_tier
 │   │   └── routes/
-│   │       ├── auth.py          Register, login, me, forgot/reset/change password, OAuth placeholder
+│   │       ├── auth.py          Register, login, me, forgot/reset/change password, Google/Apple OAuth
 │   │       ├── signals.py       GET /api/signals/{ticker}, GET /api/signals/top
 │   │       ├── tickers.py       GET /api/tickers/search, /universe, /{ticker}
 │   │       ├── watchlist.py     GET/POST/DELETE /api/watchlist
 │   │       ├── market_data.py   Candles, series, quotes, mini, heatmap, market status, on-demand warm
 │   │       ├── earnings.py      GET /api/earnings/calendar, /api/earnings/{ticker}
+│   │       ├── celebrity_holdings.py  GET /api/celebrity-holdings (SEC 13F / ARK / Congress / Trump DJT)
+│   │       ├── news.py          GET /api/news (per-ticker FinBERT-scored headlines)
+│   │       ├── pinned_signals.py  GET/PUT /api/pinned-signals (Top Signals customization)
+│   │       ├── fomc.py          GET /api/fomc (FOMC statements + hawk/dove scores)
+│   │       ├── fear_greed.py    GET /api/fear-greed (Fear & Greed Index + VIX/VVIX)
 │   │       ├── symbols.py       POST /api/symbols/request, GET /api/symbols/requests (ADMIN)
 │   │       ├── admin.py         GET /api/admin/pipeline/status, POST /api/admin/cache/refresh (ADMIN)
 │   │       └── tests/           Route-level integration tests
@@ -68,7 +73,8 @@ backend/
 | POST | `/api/auth/forgot-password` | No | Generate password reset token (always returns 200). Rate-limited: 5/hour |
 | POST | `/api/auth/reset-password` | No | Reset password using a token (1-hour expiry). Rate-limited: 5/hour |
 | POST | `/api/auth/change-password` | Yes | Change password (requires current password) |
-| GET | `/api/auth/oauth/{provider}` | No | OAuth placeholder (returns 501) |
+| GET | `/api/auth/oauth/{provider}` | No | Start Google/Apple sign-in (302 to provider). 503 if the provider isn't configured |
+| GET·POST | `/api/auth/oauth/{provider}/callback` | No | OAuth callback → find-or-create user, issue JWT, 302 to frontend. 503 if the provider isn't configured |
 
 ### Signals (`/api/signals`)
 
@@ -152,7 +158,7 @@ backend/
 
 1. `POST /api/auth/forgot-password` with email — always returns 200 (no email-enumeration leak). Generates a JWT with `purpose: "reset"` and 1-hour expiry
 2. `POST /api/auth/reset-password` with `{token, password}` — validates the reset token and updates the password
-3. Email delivery is a TODO (token is currently logged server-side)
+3. Email delivery: sent via SMTP when `EMAIL_BACKEND=smtp`; otherwise logged server-side (dev default). See `core/email.py`
 
 **Timing-safe login:** The login endpoint always runs bcrypt (against a dummy hash if the user doesn't exist) to prevent timing side-channel attacks that reveal whether an email is registered.
 
@@ -206,7 +212,7 @@ app/
 │                                      test users (FREE/PRO/ADMIN), test ticker, test signal
 ├── api/routes/tests/
 │   ├── conftest.py                    Route-specific fixture overrides
-│   ├── test_auth.py                   Register, login, me, token validation, OAuth 501
+│   ├── test_auth.py                   Register, login, me, token validation, OAuth (Google/Apple, implemented; 503 when unconfigured)
 │   ├── test_signals.py                Top signals, cache hit/miss, poll dedup, universe gate,
 │   │                                  tier gating (FREE blocked, PRO allowed, ADMIN bypass)
 │   ├── test_watchlist.py              CRUD lifecycle, auth gating, signal attachment
@@ -241,7 +247,7 @@ All configuration is via environment variables, loaded by Pydantic Settings (`ap
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SECRET_KEY` | — | JWT signing key (required in production; auto-generated in DEBUG mode) |
+| `SECRET_KEY` | — | JWT signing key (set in production; auto-generates an ephemeral key + logs CRITICAL if unset) |
 | `DEBUG` | `false` | Enables `/docs` and `/redoc` endpoints, sets SQLAlchemy echo |
 | `DATABASE_URL` | `postgresql+asyncpg://penguinai:penguinai_dev@localhost:5432/penguinai` | TimescaleDB connection |
 | `DATABASE_POOL_SIZE` | `40` | SQLAlchemy connection pool size |
@@ -256,10 +262,13 @@ All configuration is via environment variables, loaded by Pydantic Settings (`ap
 | `IBKR_HOST` / `IBKR_PORT` / `IBKR_CLIENT_ID` | `127.0.0.1` / `7497` / `1` | Interactive Brokers connection |
 | `GEMMA_MODEL_PATH` / `GEMMA_API_URL` / `GEMMA_API_KEY` | — | Gemma 4 model configuration |
 | `FINBERT_MODEL` | `ProsusAI/finbert` | FinBERT model name |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `APPLE_CLIENT_ID` | — | OAuth (future) |
+| `OAUTH_REDIRECT_BASE` | `http://localhost:8000` | Base URL for OAuth callback redirect (`{base}/api/auth/oauth/{provider}/callback`) |
+| `FRONTEND_BASE_URL` | `http://localhost:3000` | Frontend base URL OAuth redirects back to after issuing a JWT |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | — | "Sign in with Google" OAuth credentials |
+| `APPLE_CLIENT_ID` / `APPLE_TEAM_ID` / `APPLE_KEY_ID` / `APPLE_PRIVATE_KEY` | — | "Sign in with Apple" OAuth credentials (Services ID, team/key IDs, `.p8` PEM) |
 | `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | — | Reddit API (planned) |
 
-**SECRET_KEY safety:** In production, an insecure or empty SECRET_KEY raises a `ValueError`. In DEBUG mode, an ephemeral random key is generated with a warning (tokens reset on restart).
+**SECRET_KEY safety:** When the SECRET_KEY is insecure or empty, `_check_secret_key` generates an ephemeral random key (tokens reset on restart). It never raises — instead it logs CRITICAL in non-DEBUG mode and WARNING in DEBUG mode. Always set a strong `SECRET_KEY` in production.
 
 ## Local Development
 

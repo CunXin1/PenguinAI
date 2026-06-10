@@ -26,7 +26,7 @@ _TRACKED_TABLES: list[tuple[str, str | None]] = [
     ("instruments", None),
     ("celebrity_holdings", "trade_date"),
     ("earnings", "report_date"),
-    ("news_articles", "published_at"),
+    ("news_articles", "time"),
     ("symbol_requests", "created_at"),
 ]
 

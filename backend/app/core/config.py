@@ -110,17 +110,11 @@ class Settings(BaseSettings):
     ADMIN_EMAIL: str = "admin@penguinai.com"
     ADMIN_PASSWORD: str = ""  # auto-generated on first startup if empty
 
-    # ── Fear & Greed / Volatility (free sources, no API key) ─────
-    CNN_FEAR_GREED_URL: str = (
-        "https://production.dataviz.cnn.io/index/fearandgreed/graphdata"
-    )
-    CBOE_VIX_CSV_URL: str = (
-        "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
-    )
-    CBOE_VVIX_CSV_URL: str = (
-        "https://cdn.cboe.com/api/global/us_indices/daily_prices/VVIX_History.csv"
-    )
-    FEAR_GREED_REFRESH_MIN: int = 60  # how often the scheduler refreshes
+    # ── Fear & Greed / Volatility ────────────────────────────────
+    # No settings here by design: source URLs are module constants in
+    # data/fear_greed/{cnn,cboe}.py (single source of truth), and
+    # FEAR_GREED_REFRESH_MIN is read directly from the environment by
+    # data/fear_greed/scheduler.py.
 
     # ── FOMC defaults ────────────────────────────────────────────
     FOMC_DEFAULT_TREND_LIMIT: int = 10
@@ -130,10 +124,40 @@ class Settings(BaseSettings):
     FOMC_DEFAULT_SCHEDULE_FUTURE: int = 10
     FOMC_DEFAULT_RATE_HISTORY_YEARS: int = 5
 
-    # ── OAuth (future) ────────────────────────────────────────────
+    # ── OAuth (Google + Apple Sign In) ────────────────────────────
+    # Public origin of THIS backend; the OAuth redirect_uri is built as
+    # {OAUTH_REDIRECT_BASE}/api/auth/oauth/{provider}/callback and must be
+    # registered verbatim in the Google/Apple console.
+    OAUTH_REDIRECT_BASE: str = "http://localhost:8000"
+    # Where users land after sign-in and where email links point (the Next.js app).
+    FRONTEND_BASE_URL: str = "http://localhost:3000"
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
+    # "Sign in with Apple": APPLE_CLIENT_ID is the Services ID (e.g. com.penguinai.web).
+    # The client secret is an ES256 JWT minted on the fly from the .p8 key — see core/oauth.py.
     APPLE_CLIENT_ID: str = ""
+    APPLE_TEAM_ID: str = ""
+    APPLE_KEY_ID: str = ""
+    APPLE_PRIVATE_KEY: str = ""  # contents of the .p8 (PEM); \n-escaped in .env is fine
+
+    @field_validator("APPLE_PRIVATE_KEY", mode="before")
+    @classmethod
+    def _normalize_apple_key(cls, v: object) -> object:
+        # .env can't hold real newlines; allow a \n-escaped PEM and restore them.
+        if isinstance(v, str) and "\\n" in v:
+            return v.replace("\\n", "\n")
+        return v
+
+    # ── Email (transactional: verification + password reset) ──────
+    # EMAIL_BACKEND: "console" just logs the message (dev default); "smtp" sends it.
+    EMAIL_BACKEND: str = "console"
+    EMAIL_FROM: str = "PenguinAI <no-reply@penguinai.com>"
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_STARTTLS: bool = True  # True for port 587 (STARTTLS); for 465 set False + SMTP_SSL=true
+    SMTP_SSL: bool = False
 
     @field_validator("ALLOWED_ORIGINS", mode="before")
     @classmethod

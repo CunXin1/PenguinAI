@@ -1,13 +1,19 @@
+import json
 import logging
+import secrets
 from typing import Annotated
+from urllib.parse import parse_qs, urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import CurrentUser, get_db
+from app.core import oauth as oauthlib
 from app.core.config import settings
+from app.core.email import send_password_reset_email, send_verification_email
 from app.core.rate_limit import (
     check_account_rate_limit,
     forgot_password_rate_limit,
@@ -18,8 +24,10 @@ from app.core.rate_limit import (
 from app.core.security import (
     DUMMY_HASH,
     create_access_token,
+    create_oauth_state_token,
     create_reset_token,
     create_verify_token,
+    decode_oauth_state_token,
     decode_reset_token,
     decode_verify_token,
     hash_password,
@@ -70,8 +78,7 @@ async def register(
         ) from None
 
     verify_token = create_verify_token(email)
-    # TODO: send verification email with link containing verify_token
-    logger.info("Email verification token generated for %s", email)
+    await send_verification_email(email, verify_token)
 
     access_token = create_access_token(str(user.id), user.token_version)
     resp: dict = {"access_token": access_token, "token_type": "bearer"}
@@ -118,8 +125,7 @@ async def resend_verification(
         return {"message": "Email already verified."}
 
     verify_token = create_verify_token(current_user.email)
-    # TODO: send verification email
-    logger.info("Resent verification token for %s", current_user.email)
+    await send_verification_email(current_user.email, verify_token)
 
     resp: dict = {"message": "Verification email sent."}
     if settings.DEBUG:
@@ -164,9 +170,8 @@ async def forgot_password(
     user = result.scalar_one_or_none()
 
     if user:
-        _token = create_reset_token(email)  # noqa: F841 — will be used when email sending is implemented
-        # TODO: send email with reset link containing _token
-        logger.info("Password reset token generated for %s", body.email)
+        reset_token = create_reset_token(email)
+        await send_password_reset_email(email, reset_token)
 
     return {"message": "If this email is registered, you will receive a reset link shortly."}
 
@@ -221,7 +226,167 @@ async def change_password(
     return {"message": "Password changed successfully.", "access_token": new_token}
 
 
-# ── OAuth placeholder (future: Google / Apple) ────────────────────────────────
+# ── OAuth (Google + Apple "Sign in with") ─────────────────────────────────────
+def _frontend_callback(**fragment: str) -> RedirectResponse:
+    """Hand the result to the SPA via the URL fragment.
+
+    The token rides in the fragment (``#``) rather than the query string so it is
+    never sent to the server, logged, or leaked through the Referer header.
+    """
+    base = settings.FRONTEND_BASE_URL.rstrip("/")
+    return RedirectResponse(f"{base}/auth/callback#{urlencode(fragment)}", status_code=302)
+
+
 @router.get("/oauth/{provider}")
-async def oauth_redirect(provider: str):
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="OAuth coming soon")
+async def oauth_start(provider: str):
+    p = oauthlib.get_provider(provider)
+    if not p:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown OAuth provider")
+    if not oauthlib.is_configured(p):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"{provider.capitalize()} sign-in is not configured",
+        )
+    nonce = secrets.token_urlsafe(16)
+    state = create_oauth_state_token(provider, nonce)
+    return RedirectResponse(oauthlib.build_authorize_url(p, state, nonce), status_code=302)
+
+
+@router.get("/oauth/{provider}/callback")
+async def oauth_callback_get(
+    provider: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+):
+    return await _complete_oauth(provider, db, code, state, error, user_payload=None)
+
+
+@router.post("/oauth/{provider}/callback")
+async def oauth_callback_post(
+    provider: str,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    # Apple uses response_mode=form_post → an application/x-www-form-urlencoded body
+    # (and the one-time `user` display-name payload only on first consent). Parse it
+    # directly so this path doesn't depend on python-multipart being installed.
+    raw = (await request.body()).decode("utf-8")
+    form = {key: values[0] for key, values in parse_qs(raw).items()}
+    return await _complete_oauth(
+        provider,
+        db,
+        code=form.get("code"),
+        state=form.get("state"),
+        error=form.get("error"),
+        user_payload=form.get("user"),
+    )
+
+
+def _display_name(provider: str, claims: dict, user_payload: str | None, email: str) -> str:
+    if provider == "google":
+        return claims.get("name") or email.split("@")[0]
+    # Apple: the name is delivered once, in the `user` form field, not in the id_token.
+    if user_payload:
+        try:
+            name = (json.loads(user_payload).get("name") or {}) if user_payload else {}
+            full = f"{name.get('firstName', '')} {name.get('lastName', '')}".strip()
+            if full:
+                return full
+        except (ValueError, TypeError):
+            pass
+    return email.split("@")[0]
+
+
+async def _find_or_create_oauth_user(
+    db: AsyncSession,
+    provider: str,
+    sub: str,
+    email: str,
+    email_verified: bool,
+    display_name: str,
+) -> User:
+    # 1) Returning OAuth user — match on the stable provider subject.
+    result = await db.execute(
+        select(User).where(User.oauth_provider == provider, User.oauth_sub == sub)
+    )
+    user = result.scalar_one_or_none()
+    if user:
+        return user
+
+    # 2) Existing email/password account with the same email → link this provider.
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+    if user:
+        if not user.oauth_provider:
+            user.oauth_provider = provider
+            user.oauth_sub = sub
+        if email_verified and not user.email_verified:
+            user.email_verified = True
+        await db.flush()
+        return user
+
+    # 3) Brand-new user (OAuth emails are pre-verified by the provider).
+    user = User(
+        email=email,
+        password_hash=None,
+        display_name=display_name,
+        oauth_provider=provider,
+        oauth_sub=sub,
+        email_verified=email_verified,
+        tier="FREE",
+    )
+    db.add(user)
+    try:
+        await db.flush()
+    except IntegrityError:
+        # Race: a concurrent callback created this user between our SELECT and INSERT.
+        await db.rollback()
+        result = await db.execute(select(User).where(User.email == email))
+        user = result.scalar_one_or_none()
+        if user is None:
+            raise
+    return user
+
+
+async def _complete_oauth(
+    provider: str,
+    db: AsyncSession,
+    code: str | None,
+    state: str | None,
+    error: str | None,
+    user_payload: str | None,
+) -> RedirectResponse:
+    p = oauthlib.get_provider(provider)
+    if not p or not oauthlib.is_configured(p):
+        return _frontend_callback(error="oauth_unavailable")
+    if error or not code or not state:
+        return _frontend_callback(error=error or "oauth_cancelled")
+
+    state_data = decode_oauth_state_token(state)
+    if not state_data or state_data.get("provider") != provider:
+        return _frontend_callback(error="invalid_state")
+    nonce = state_data.get("nonce", "")
+
+    try:
+        token = await oauthlib.exchange_code(p, code)
+        id_token = token.get("id_token")
+        if not id_token:
+            raise oauthlib.OAuthError("token response had no id_token")
+        claims = await oauthlib.verify_id_token(p, id_token, nonce)
+    except oauthlib.OAuthError as exc:
+        logger.warning("OAuth %s callback failed: %s", provider, exc)
+        return _frontend_callback(error="oauth_failed")
+
+    sub = claims.get("sub")
+    email = (claims.get("email") or "").lower()
+    if not sub or not email:
+        return _frontend_callback(error="oauth_no_email")
+    email_verified = claims.get("email_verified") in (True, "true")
+    display_name = _display_name(provider, claims, user_payload, email)
+
+    user = await _find_or_create_oauth_user(db, provider, sub, email, email_verified, display_name)
+    logger.info("OAuth %s sign-in for %s", provider, email)
+    access_token = create_access_token(str(user.id), user.token_version)
+    return _frontend_callback(access_token=access_token)

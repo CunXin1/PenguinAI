@@ -1,3 +1,4 @@
+import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -70,5 +71,34 @@ def decode_verify_token(token: str) -> str | None:
         if payload.get("purpose") != "verify":
             return None
         return payload.get("sub")
+    except JWTError:
+        return None
+
+
+def create_oauth_state_token(provider: str, nonce: str) -> str:
+    """Signed, short-lived CSRF/nonce carrier for the OAuth round-trip.
+
+    Stateless by design: everything needed on callback (provider + the nonce that
+    must match the id_token) is sealed in this token, so there is no server-side
+    session or Redis entry to lose. Survives Apple's cross-site form_post callback
+    where a SameSite cookie would not be sent.
+    """
+    expire = datetime.now(UTC) + timedelta(minutes=10)
+    payload = {
+        "provider": provider,
+        "nonce": nonce,
+        "csrf": secrets.token_urlsafe(8),
+        "purpose": "oauth_state",
+        "exp": expire,
+    }
+    return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+
+
+def decode_oauth_state_token(token: str) -> dict | None:
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("purpose") != "oauth_state":
+            return None
+        return payload
     except JWTError:
         return None

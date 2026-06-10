@@ -29,104 +29,16 @@ HOT_TICKERS: frozenset[str]
 try:
     from data.news.constants import HOT_TICKERS_SET as HOT_TICKERS
 except ImportError:
-    _HOT_STOCKS = [
-        "AAPL",
-        "MSFT",
-        "AMZN",
-        "NVDA",
-        "GOOGL",
-        "META",
-        "TSLA",
-        "AVGO",
-        "COST",
-        "NFLX",
-        "AMD",
-        "ADBE",
-        "CRM",
-        "INTC",
-        "QCOM",
-        "TXN",
-        "AMAT",
-        "MU",
-        "LRCX",
-        "KLAC",
-        "ORCL",
-        "CSCO",
-        "IBM",
-        "NOW",
-        "PANW",
-        "CRWD",
-        "SNOW",
-        "PLTR",
-        "COIN",
-        "MSTR",
-        "JPM",
-        "V",
-        "MA",
-        "BAC",
-        "GS",
-        "MS",
-        "BRK.B",
-        "UNH",
-        "JNJ",
-        "PFE",
-        "XOM",
-        "CVX",
-        "LLY",
-        "ABBV",
-        "MRK",
-        "TMO",
-        "WMT",
-        "PG",
-        "KO",
-        "PEP",
-        "TMUS",
-        "CMCSA",
-        "AMGN",
-        "INTU",
-        "HON",
-        "ISRG",
-        "BKNG",
-        "SBUX",
-        "VRTX",
-        "ADP",
-        "MDLZ",
-        "GILD",
-        "ADI",
-        "REGN",
-        "PYPL",
-        "SNPS",
-        "CDNS",
-        "MRVL",
-        "ARM",
-        "SMCI",
-        "RIVN",
-        "MARA",
-        "RIOT",
-    ]
-    _HOT_ETFS = [
-        "SPY",
-        "QQQ",
-        "DIA",
-        "IWM",
-        "VTI",
-        "VOO",
-        "XLK",
-        "XLF",
-        "XLE",
-        "XLV",
-        "XLI",
-        "SOXX",
-        "SMH",
-        "ARKK",
-        "GLD",
-        "SLV",
-        "TLT",
-        "HYG",
-        "EEM",
-        "VWO",
-    ]
-    HOT_TICKERS = frozenset(_HOT_STOCKS + _HOT_ETFS)
+    # The data/ package isn't importable in this deployment. Fall back to a small
+    # core set so the API still runs. Kept intentionally minimal (NOT a copy of
+    # constants.HOT_TICKERS_SET) so the two lists can never silently drift —
+    # constants.py remains the single source of truth.
+    logging.getLogger(__name__).warning(
+        "data.news.constants unavailable; using minimal HOT_TICKERS fallback"
+    )
+    HOT_TICKERS = frozenset(
+        {"AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "META", "TSLA", "SPY", "QQQ", "DIA", "IWM", "SMH"}
+    )
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -534,33 +446,40 @@ async def get_hot_news(
     if cached is not None:
         return cached[:limit]
 
-    if t:
-        rows = await db.execute(
-            text(
-                "SELECT * FROM news_articles "
-                "WHERE ticker = :ticker "
-                "  AND time > NOW() - INTERVAL '7 days' "
-                "ORDER BY time DESC "
-                "LIMIT :limit"
-            ),
-            {"ticker": t, "limit": limit},
-        )
-    else:
-        rows = await db.execute(
-            text(
-                "SELECT * FROM news_articles "
-                "WHERE time > NOW() - INTERVAL '7 days' "
-                "ORDER BY time DESC "
-                "LIMIT :limit"
-            ),
-            {"limit": limit},
-        )
-    result = [a for a in (_map_db_row(r) for r in rows.mappings()) if _is_english(a)]
+    result: list[dict] = []
+    try:
+        if t:
+            rows = await db.execute(
+                text(
+                    "SELECT * FROM news_articles "
+                    "WHERE ticker = :ticker "
+                    "  AND time > NOW() - INTERVAL '7 days' "
+                    "ORDER BY time DESC "
+                    "LIMIT :limit"
+                ),
+                {"ticker": t, "limit": limit},
+            )
+        else:
+            rows = await db.execute(
+                text(
+                    "SELECT * FROM news_articles "
+                    "WHERE time > NOW() - INTERVAL '7 days' "
+                    "ORDER BY time DESC "
+                    "LIMIT :limit"
+                ),
+                {"limit": limit},
+            )
+        result = [a for a in (_map_db_row(r) for r in rows.mappings()) if _is_english(a)]
+    except Exception as exc:
+        # Parity with /{ticker}: a DB outage shouldn't 500 — fall through to the
+        # on-demand API fetch below instead.
+        logger.warning("news /hot DB query failed, falling back to API fetch: %s", exc)
+
     if result:
         _set_cache(cache_key, result)
         return result
 
-    # DB empty — fall back to on-demand API fetch
+    # DB empty or unavailable — fall back to on-demand API fetch
     articles = await _fetch_massive_news(ticker=t, limit=limit)
     if articles is None:
         articles = await _fetch_google_rss(
