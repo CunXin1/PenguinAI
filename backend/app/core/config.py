@@ -46,18 +46,21 @@ class Settings(BaseSettings):
     def _check_secret_key(self) -> "Settings":
         if self.SECRET_KEY not in _INSECURE_KEYS:
             return self
-        self.SECRET_KEY = secrets.token_urlsafe(64)
+        # DEBUG/dev: tolerate a missing key by minting an ephemeral one.
         if self.DEBUG:
+            self.SECRET_KEY = secrets.token_urlsafe(64)
             _logger.warning(
                 "SECRET_KEY not set — using ephemeral random key (dev only, tokens reset on restart)"
             )
-        else:
-            _logger.critical(
-                "SECRET_KEY is insecure in non-DEBUG mode! All tokens will reset on restart. "
-                "Set a strong SECRET_KEY in .env for production. "
-                'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
-            )
-        return self
+            return self
+        # Production: fail fast. A default/empty key means every JWT would reset on
+        # restart (and the key is public knowledge) — refuse to start rather than
+        # boot into a silently-insecure state.
+        raise ValueError(
+            "SECRET_KEY is unset or insecure but DEBUG is false — refusing to start in "
+            "production with a default key. Set a strong SECRET_KEY in the environment. "
+            'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(64))"'
+        )
 
     # ── Database ──────────────────────────────────────────────────
     DATABASE_URL: str = "postgresql+asyncpg://penguinai:penguinai_dev@localhost:5432/penguinai"

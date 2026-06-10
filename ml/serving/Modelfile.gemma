@@ -1,0 +1,27 @@
+# Ollama Modelfile — finetune / customization template for the Gemma 4 reasoner.
+#
+# This is the macOS serve-time seam for a finetuned model. Build a derived tag:
+#     ollama create penguinai-gemma -f ml/serving/Modelfile.gemma
+# then point .env at it:
+#     OLLAMA_MODEL=penguinai-gemma
+#
+# Two finetune paths:
+#   1. LoRA/QLoRA adapter (PEFT) — uncomment ADAPTER below, pointing at a GGUF
+#      adapter exported from your training run.
+#   2. Full finetuned checkpoint — change FROM to a local GGUF you converted.
+#
+# Until a finetune exists, this just pins the base E2B model + decoding params,
+# so creating it is harmless and gives a stable, project-owned tag.
+
+FROM gemma3n:e2b
+
+# --- Finetuned adapter (uncomment when you have one) ----------------------
+# ADAPTER ./adapters/gemma-penguinai-lora.gguf
+
+# --- Decoding defaults (mirror ml/core/config: GEMMA_TEMPERATURE) ----------
+PARAMETER temperature 0.1
+PARAMETER num_predict 512
+
+# Note: the Agent 2 system prompt is assembled in code
+# (ml/inference/gemma_agent.py:AGENT2_SYSTEM_PROMPT) and sent per-request, so it
+# is intentionally NOT baked in here — keep prompt logic in one place.

@@ -27,7 +27,7 @@ function PrevTile({ label, value }: { label: string; value?: number | null }) {
 }
 
 export default function FearGreedPage() {
-  const { data } = useQuery<FearGreedCurrent>({
+  const { data, isError } = useQuery<FearGreedCurrent>({
     queryKey: ["fearGreedCurrent"],
     queryFn: () => fgApi.current(),
     staleTime: 15 * 60 * 1000,
@@ -43,6 +43,14 @@ export default function FearGreedPage() {
           What emotion is driving the market — composite of seven indicators, plus the VIX/VVIX volatility gauges
         </p>
       </div>
+
+      {isError && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3">
+          <p className="text-sm text-red-600 dark:text-red-400">
+            Couldn&apos;t load the Fear &amp; Greed index right now. Showing the last known values where available.
+          </p>
+        </div>
+      )}
 
       {/* Hero: full-width gradient bar + previous-period strip */}
       <Card className="p-5 sm:p-6">

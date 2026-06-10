@@ -11,6 +11,7 @@ class User(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email = Column(Text, unique=True, nullable=False, index=True)
+    username = Column(Text, nullable=True)  # required + unique at app layer (case-insensitive)
     password_hash = Column(Text, nullable=True)
     display_name = Column(Text, nullable=True)
     oauth_provider = Column(String(20), nullable=True)  # 'google' | 'apple' | None

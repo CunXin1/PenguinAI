@@ -1,3 +1,4 @@
+import asyncio
 import re
 from datetime import date, datetime, timedelta
 from typing import Annotated
@@ -8,6 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db
+from app.services.daily_prices import fetch_daily_adjusted
 
 router = APIRouter()
 
@@ -127,17 +129,50 @@ def _price_reaction(
     return open_pct, close_pct
 
 
+def _next_weekday(d: date) -> date:
+    """Next Mon–Fri after ``d`` (weekend-aware; ignores holidays, which only
+    shifts the pending/unavailable boundary by a day — good enough here)."""
+    nxt = d + timedelta(days=1)
+    while nxt.weekday() >= 5:
+        nxt += timedelta(days=1)
+    return nxt
+
+
+def _reaction_status(report_date: date, report_hour: str | None, today: date) -> str:
+    """Why a reaction is missing for a reported row.
+
+    "pending"      the post-report session hasn't closed yet, so the reaction
+                   bar can't exist anywhere yet — it'll fill in next session.
+    "unavailable"  the reaction day is already in the past but we still have no
+                   price data for it (no source covers this ticker).
+
+    BMO reacts on the report day itself; AMC/TBD react on the next trading day.
+    """
+    is_bmo = (report_hour or "").strip().lower() == "bmo"
+    reaction_day = report_date if is_bmo else _next_weekday(report_date)
+    return "pending" if reaction_day >= today else "unavailable"
+
+
 def _to_event(row, today: date, price_map: dict | None = None) -> dict:
     num = lambda v: float(v) if v is not None else None  # noqa: E731
     rev_actual = int(row["revenue_actual"]) if row["revenue_actual"] is not None else None
     rev_estimate = int(row["revenue_estimate"]) if row["revenue_estimate"] is not None else None
 
     open_pct, close_pct = None, None
-    if price_map and row["eps_actual"] is not None:
-        open_pct, close_pct = _price_reaction(
-            price_map.get(row["ticker"]),
-            row["report_date"],
-            row["report_hour"],
+    reaction_status = None
+    if row["eps_actual"] is not None:  # only reported rows have a reaction
+        if price_map:
+            open_pct, close_pct = _price_reaction(
+                price_map.get(row["ticker"]),
+                row["report_date"],
+                row["report_hour"],
+            )
+        # available once computed; otherwise distinguish "wait for next session"
+        # (pending) from "no price source for this ticker" (unavailable).
+        reaction_status = (
+            "available"
+            if close_pct is not None
+            else _reaction_status(row["report_date"], row["report_hour"], today)
         )
 
     fq = row["fiscal_quarter"]
@@ -159,6 +194,7 @@ def _to_event(row, today: date, price_map: dict | None = None) -> dict:
         "session": _SESSION.get((row["report_hour"] or "").strip().lower(), "TBD"),
         "reaction_open_pct": open_pct,
         "reaction_close_pct": close_pct,
+        "reaction_status": reaction_status,
     }
 
 
@@ -169,7 +205,25 @@ async def _fetch_prices(db: AsyncSession, tickers: list[str], start: date, end: 
         text(_PRICES_SQL),
         {"tickers": tickers, "start": start - timedelta(days=5), "end": end + timedelta(days=5)},
     )
-    return _build_price_map(result.mappings())
+    price_map = _build_price_map(result.mappings())
+    await _augment_with_massive(price_map, tickers, start, end)
+    return price_map
+
+
+async def _augment_with_massive(
+    price_map: dict, tickers: list[str], start: date, end: date
+) -> None:
+    """Backfill ``price_map`` for tickers absent from ``bars_1d`` (only ~50 are
+    loaded) via Massive's on-demand daily aggregates, so their reaction computes.
+    Cached in-process, so this only hits Massive on a cold ticker."""
+    missing = [t for t in tickers if not price_map.get(t)]
+    if not missing:
+        return
+    lo, hi = start - timedelta(days=5), end + timedelta(days=5)
+    fetched = await asyncio.gather(*(fetch_daily_adjusted(t, lo, hi) for t in missing))
+    for t, rows in zip(missing, fetched, strict=True):
+        if rows:
+            price_map[t] = rows
 
 
 @router.get("/calendar")

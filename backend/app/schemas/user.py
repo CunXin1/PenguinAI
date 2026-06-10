@@ -24,10 +24,26 @@ def _validate_password_strength(password: str) -> str:
     return password
 
 
+_USERNAME_RE = re.compile(r"^[A-Za-z0-9_]{3,20}$")
+
+
+def _validate_username(username: str) -> str:
+    username = username.strip()
+    if not _USERNAME_RE.match(username):
+        raise ValueError("Username must be 3-20 characters: letters, digits, or underscore")
+    return username
+
+
 class RegisterRequest(BaseModel):
     email: EmailStr
+    username: str
     password: str = Field(min_length=_PASSWORD_MIN, max_length=_PASSWORD_MAX)
     display_name: str | None = Field(default=None, max_length=50)
+
+    @field_validator("username")
+    @classmethod
+    def username_format(cls, v: str) -> str:
+        return _validate_username(v)
 
     @field_validator("password")
     @classmethod
@@ -36,7 +52,7 @@ class RegisterRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    email: EmailStr
+    identifier: str = Field(min_length=1, max_length=254)  # email or username
     password: str = Field(max_length=_PASSWORD_MAX)
 
 
@@ -76,6 +92,7 @@ class VerifyEmailRequest(BaseModel):
 class UserResponse(BaseModel):
     id: str
     email: str
+    username: str | None
     display_name: str | None
     tier: Literal["FREE", "PRO", "PREMIUM", "ADMIN"]
     email_verified: bool

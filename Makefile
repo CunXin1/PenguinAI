@@ -1,4 +1,4 @@
-.PHONY: up down logs backend frontend ml-worker ibkr-stream minute-parquet fetch-earnings fetch-fomc fetch-fear-greed backfill-fear-greed fetch-congress fetch-13f fetch-ark fetch-celebrities lint type-check test test-backend test-frontend db-init bootstrap status dev
+.PHONY: up down logs backend frontend ml-worker gemma-serve gemma-check ibkr-stream minute-parquet fetch-earnings fetch-fomc fetch-fear-greed backfill-fear-greed fetch-congress fetch-13f fetch-ark fetch-celebrities lint type-check test test-backend test-frontend db-init bootstrap status dev
 
 # ── Docker Compose ────────────────────────────────────────────────────────────
 up:
@@ -26,6 +26,18 @@ dev:
 
 ml-worker:
 	cd . && celery -A ml.tasks.celery_app worker --queues=ml_inference -c 1 --loglevel=info
+
+# ── Gemma 4 local LLM serving (Agent 2 reasoner) ──────────────────────────────
+# macOS → Ollama; Windows/Linux GPU → vLLM. See ml/serving/README.md.
+gemma-serve:
+	@case "$$(uname -s)" in \
+	  Darwin) ml/serving/start_ollama.sh ;; \
+	  *)      ml/serving/start_vllm.sh ;; \
+	esac
+
+# Ping the configured LLM backend + run Agent 2 end-to-end on a synthetic context.
+gemma-check:
+	PYTHONPATH=. python ml/scripts/llm_healthcheck.py
 
 # Live IBKR 1-min bars → market_data_1min (needs TWS/Gateway + DB). Run from repo root.
 ibkr-stream:

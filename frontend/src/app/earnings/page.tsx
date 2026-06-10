@@ -270,8 +270,8 @@ function EarningsDetail({ ticker, current }: { ticker: string; current: Earnings
                 <div className="text-right">
                   {r && reaction != null ? (
                     <span className={cn("font-mono font-semibold", reaction >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400")}>{signedPct(reaction, 2)}</span>
-                  ) : r ? (
-                    <span className="text-zinc-400 italic" title="No price data">N/A</span>
+                  ) : r && h.reaction_status === "pending" ? (
+                    <span className="text-zinc-500" title="Available after the next session closes">Pending</span>
                   ) : <span className="text-zinc-400">—</span>}
                 </div>
               </div>
@@ -407,6 +407,13 @@ function UnifiedRow({ e, isOpen, onToggle, today }: { e: EarningsEvent; isOpen: 
                 </span>
               )}
             </div>
+          ) : reported && e.reaction_status === "pending" ? (
+            <span
+              className="flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-medium border text-zinc-500 bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700"
+              title="Available after the next session closes"
+            >
+              <Clock size={10} /> Pending
+            </span>
           ) : reported ? (
             <span className="text-sm font-mono text-zinc-400 dark:text-zinc-600" title="No price history for this ticker">—</span>
           ) : null}

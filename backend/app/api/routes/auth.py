@@ -1,12 +1,13 @@
 import json
 import logging
+import re
 import secrets
 from typing import Annotated
 from urllib.parse import parse_qs, urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,13 +58,21 @@ async def register(
     _rl: Annotated[None, Depends(register_rate_limit)],
 ):
     email = body.email.lower()
+    username = body.username.strip()
 
-    existing = await db.execute(select(User).where(User.email == email))
-    if existing.scalar_one_or_none():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
+    existing = await db.execute(
+        select(User).where(
+            or_(User.email == email, func.lower(User.username) == username.lower())
+        )
+    )
+    dup = existing.scalars().first()
+    if dup:
+        detail = "Email already registered" if dup.email == email else "Username already taken"
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
 
     user = User(
         email=email,
+        username=username,
         password_hash=hash_password(body.password),
         display_name=body.display_name,
         tier="FREE",
@@ -74,7 +83,8 @@ async def register(
     except IntegrityError:
         await db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="Email already registered"
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email or username already registered",
         ) from None
 
     verify_token = create_verify_token(email)
@@ -139,13 +149,18 @@ async def login(
     db: Annotated[AsyncSession, Depends(get_db)],
     _rl: Annotated[None, Depends(login_rate_limit)],
 ):
-    email = body.email.lower()
-    await check_account_rate_limit(email)
+    identifier = body.identifier.strip().lower()
+    await check_account_rate_limit(identifier)
 
-    result = await db.execute(select(User).where(User.email == email, User.is_active.is_(True)))
+    result = await db.execute(
+        select(User).where(
+            or_(func.lower(User.email) == identifier, func.lower(User.username) == identifier),
+            User.is_active.is_(True),
+        )
+    )
     user = result.scalar_one_or_none()
 
-    # Always run bcrypt to prevent timing side-channel that reveals whether the email exists
+    # Always run bcrypt to prevent a timing side-channel that reveals whether the account exists
     hashed = user.password_hash if (user and user.password_hash) else DUMMY_HASH
     password_ok = verify_password(body.password, hashed)
     if not user or not user.password_hash or not password_ok:
@@ -299,6 +314,22 @@ def _display_name(provider: str, claims: dict, user_payload: str | None, email: 
     return email.split("@")[0]
 
 
+async def _unique_username(db: AsyncSession, email: str) -> str:
+    """Derive a unique handle from an OAuth email (sanitized local-part + numeric suffix)."""
+    base = re.sub(r"[^a-z0-9_]", "", email.split("@")[0].lower())[:16] or "user"
+    if len(base) < 3:
+        base = f"{base}user"[:16]
+    candidate, suffix = base, 0
+    while True:
+        taken = await db.execute(
+            select(User.id).where(func.lower(User.username) == candidate.lower())
+        )
+        if taken.scalar_one_or_none() is None:
+            return candidate
+        suffix += 1
+        candidate = f"{base}{suffix}"
+
+
 async def _find_or_create_oauth_user(
     db: AsyncSession,
     provider: str,
@@ -322,6 +353,8 @@ async def _find_or_create_oauth_user(
         if not user.oauth_provider:
             user.oauth_provider = provider
             user.oauth_sub = sub
+        if not user.username:
+            user.username = await _unique_username(db, email)
         if email_verified and not user.email_verified:
             user.email_verified = True
         await db.flush()
@@ -330,6 +363,7 @@ async def _find_or_create_oauth_user(
     # 3) Brand-new user (OAuth emails are pre-verified by the provider).
     user = User(
         email=email,
+        username=await _unique_username(db, email),
         password_hash=None,
         display_name=display_name,
         oauth_provider=provider,

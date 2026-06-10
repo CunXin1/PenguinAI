@@ -618,4 +618,7 @@ export interface EarningsEvent {
   reaction_open_pct: number | null;
   /** Post-earnings 1-day: reaction day close vs prev close (%) */
   reaction_close_pct: number | null;
+  /** Why a reaction is / isn't shown (reported rows only): available = computed ·
+   *  pending = post-report session not closed yet (fills next day) · unavailable = no price source. */
+  reaction_status?: "available" | "pending" | "unavailable" | null;
 }

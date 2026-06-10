@@ -6,8 +6,9 @@
 CREATE TABLE IF NOT EXISTS users (
     id             UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
     email          TEXT        UNIQUE NOT NULL,
+    username       TEXT,       -- unique login/display handle; required + format-checked at app layer, case-insensitive
     password_hash  TEXT,
-    display_name   TEXT,
+    display_name   TEXT,       -- optional free-form nickname (may contain spaces)
     oauth_provider TEXT,       -- 'google' | 'apple' | NULL (email/password)
     oauth_sub      TEXT,
     tier           TEXT        NOT NULL DEFAULT 'FREE',  -- FREE | PRO | PREMIUM | ADMIN
@@ -17,7 +18,11 @@ CREATE TABLE IF NOT EXISTS users (
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Upgrade pre-existing databases in place (db-init is re-runnable; NULLs are distinct so
+-- the unique index tolerates legacy rows that have no username yet).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS username TEXT;
 CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username_lower ON users (LOWER(username));
 CREATE INDEX IF NOT EXISTS idx_users_oauth ON users (oauth_provider, oauth_sub);
 
 -- Stock universe (2000 tickers)

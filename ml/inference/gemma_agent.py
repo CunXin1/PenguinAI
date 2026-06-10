@@ -15,9 +15,8 @@ import json
 import logging
 from dataclasses import dataclass
 
-import httpx
-
 from ml.core.config import ml_settings
+from ml.inference.llm import LLMBackend, get_llm_backend
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +59,22 @@ class GemmaSignalOutput:
 
 
 class GemmaAgent:
-    def __init__(self):
-        self._use_api = bool(ml_settings.GEMMA_API_URL)
+    """Two-step agentic harness over a swappable LLM backend.
+
+    Agent 1 (`assemble_context`) is pure Python — no model call. Agent 2
+    (`reason`) calls the configured backend (vLLM / Ollama / hosted API) with a
+    locked output schema, then validates + retries with backoff. The backend is
+    injectable for tests; in production it's resolved lazily by platform.
+    """
+
+    def __init__(self, backend: LLMBackend | None = None):
+        self._backend = backend
+
+    @property
+    def backend(self) -> LLMBackend:
+        if self._backend is None:
+            self._backend = get_llm_backend()
+        return self._backend
 
     # ── Agent 1: Factor Assembler ─────────────────────────────────────────────
     def assemble_context(
@@ -109,29 +122,42 @@ class GemmaAgent:
 
     # ── Agent 2: Quant Reasoner ───────────────────────────────────────────────
     async def reason(self, context: dict) -> GemmaSignalOutput:
-        """Agent 2: call Gemma 4 with locked JSON output schema."""
+        """Agent 2: call the LLM backend with a locked JSON output schema."""
         user_message = (
             f"Analyze the following financial signal data for {context['ticker']} "
             f"and output a signal JSON:\n\n{json.dumps(context, indent=2, default=str)}"
         )
+        messages = [
+            {"role": "system", "content": AGENT2_SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ]
 
+        backend = self.backend
         last_exc: Exception | None = None
         for attempt in range(3):
             try:
-                if self._use_api:
-                    raw = await self._call_external_api(user_message)
-                else:
-                    raw = await self._call_local_inference(user_message)
+                raw = await backend.chat(
+                    messages,
+                    schema=AGENT2_OUTPUT_SCHEMA,
+                    temperature=ml_settings.GEMMA_TEMPERATURE,
+                    max_tokens=ml_settings.GEMMA_MAX_TOKENS,
+                )
                 return self._validate_output(raw)
             except Exception as e:
                 last_exc = e
                 wait = 2**attempt
                 logger.warning(
-                    "Gemma inference attempt %d failed: %s — retrying in %ds", attempt + 1, e, wait
+                    "Gemma inference attempt %d via %s failed: %s — retrying in %ds",
+                    attempt + 1,
+                    backend.name,
+                    e,
+                    wait,
                 )
                 await asyncio.sleep(wait)
 
-        raise RuntimeError("Gemma inference failed after 3 attempts") from last_exc
+        raise RuntimeError(
+            f"Gemma inference failed after 3 attempts (backend={backend.name})"
+        ) from last_exc
 
     def _validate_output(self, raw: dict) -> GemmaSignalOutput:
         """Validate Gemma JSON output against expected schema before unpacking."""
@@ -161,48 +187,6 @@ class GemmaAgent:
         """End-to-end: assemble context then reason."""
         context = self.assemble_context(**kwargs)
         return await self.reason(context)
-
-    # ── Inference backends ────────────────────────────────────────────────────
-    async def _call_local_inference(self, user_message: str) -> dict:
-        """Call local vLLM server (default: http://localhost:8080)."""
-        url = ml_settings.GEMMA_API_URL or "http://localhost:8080/v1/chat/completions"
-        payload = {
-            "model": ml_settings.GEMMA_MODEL_PATH,
-            "messages": [
-                {"role": "system", "content": AGENT2_SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
-            "temperature": ml_settings.GEMMA_TEMPERATURE,
-            "max_tokens": ml_settings.GEMMA_MAX_TOKENS,
-            "response_format": {
-                "type": "json_schema",
-                "json_schema": {"name": "signal_output", "schema": AGENT2_OUTPUT_SCHEMA},
-            },
-        }
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
-            return json.loads(content)
-
-    async def _call_external_api(self, user_message: str) -> dict:
-        """Call external Gemma API (e.g. Google Vertex AI). Same OpenAI-compatible format."""
-        payload = {
-            "model": "gemma-4",
-            "messages": [
-                {"role": "system", "content": AGENT2_SYSTEM_PROMPT},
-                {"role": "user", "content": user_message},
-            ],
-            "temperature": ml_settings.GEMMA_TEMPERATURE,
-            "max_tokens": ml_settings.GEMMA_MAX_TOKENS,
-            "response_format": {"type": "json_object"},
-        }
-        headers = {"Authorization": f"Bearer {ml_settings.GEMMA_API_KEY}"}
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(ml_settings.GEMMA_API_URL, json=payload, headers=headers)
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"]
-            return json.loads(content)
 
 
 def _interpret_hawk_dove(score: float | None) -> str:

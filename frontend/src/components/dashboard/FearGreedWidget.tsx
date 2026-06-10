@@ -25,7 +25,7 @@ function PrevRow({ label, value }: { label: string; value?: number | null }) {
 }
 
 export function FearGreedWidget() {
-  const { data, isLoading } = useQuery<FearGreedCurrent>({
+  const { data, isLoading, isError } = useQuery<FearGreedCurrent>({
     queryKey: ["dashboardFearGreed"],
     queryFn: () => fgApi.current(),
     staleTime: 15 * 60 * 1000,
@@ -48,6 +48,10 @@ export function FearGreedWidget() {
 
       {isLoading ? (
         <div className="h-36 rounded bg-zinc-100 dark:bg-zinc-800/60 animate-pulse" />
+      ) : isError ? (
+        <p className="text-sm text-zinc-400 dark:text-zinc-600 py-10 text-center">
+          Unavailable right now.
+        </p>
       ) : (
         <>
           <div className="pt-2 pb-1">
