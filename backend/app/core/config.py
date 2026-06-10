@@ -121,6 +121,22 @@ class Settings(BaseSettings):
     GEMMA_API_KEY: str = ""
     FINBERT_MODEL: str = "ProsusAI/finbert"
 
+    # ── Chat assistant (LLM) ──────────────────────────────────────
+    # User-facing AI chat. Inference calls the model server configured in
+    # ml/core/config.py (Ollama on macOS dev, vLLM on GPU prod) over HTTP —
+    # see services/chat_llm.py. This is the ONLY surface where user free-text
+    # reaches an LLM; it is isolated from the signal pipeline and hardened.
+    CHAT_ENABLED: bool = True
+    CHAT_WINDOW_SECONDS: int = 5 * 3600  # quota window: 5 hours
+    CHAT_LIMIT_FREE: int = 5  # messages per window (FREE tier)
+    CHAT_LIMIT_PRO: int = 100  # messages per window (PRO tier)
+    CHAT_LIMIT_PREMIUM: int = 0  # PREMIUM/ADMIN: 0 = unlimited
+    CHAT_MAX_INPUT_CHARS: int = 2000  # per user message
+    CHAT_MAX_HISTORY: int = 20  # context turns kept (oldest trimmed)
+    CHAT_MAX_TOKENS: int = 1024  # model output cap
+    CHAT_TEMPERATURE: float = 0.7  # more conversational than signal reasoning (0.1)
+    CHAT_TIMEOUT_SECONDS: float = 60.0  # model server call timeout
+
     # ── Admin seed ─────────────────────────────────────────────────
     ADMIN_EMAIL: str = "admin@penguinai.com"
     ADMIN_PASSWORD: str = ""  # auto-generated on first startup if empty

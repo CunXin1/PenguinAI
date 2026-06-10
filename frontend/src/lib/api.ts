@@ -12,6 +12,9 @@ import type {
   CelebritySummary,
   CelebrityTopHolding,
   ChartRange,
+  ChatMessage,
+  ChatQuota,
+  ChatReply,
   DatabaseHealth,
   EarningsEvent,
   EndpointHealth,
@@ -323,6 +326,21 @@ export const fearGreed = {
     apiFetch<VolatilitySeries>(
       `/fear-greed/volatility?symbol=${symbol}&days=${days}`
     ),
+};
+
+// ── Chat assistant API ────────────────────────────────────────────────────────
+export const chat = {
+  /** Send the conversation; returns one assistant reply + updated quota.
+   *  Longer timeout than default — local LLM generation can take several seconds. */
+  send: (messages: ChatMessage[]) =>
+    apiFetch<ChatReply>("/chat", {
+      method: "POST",
+      body: JSON.stringify({ messages }),
+      timeoutMs: 60_000,
+    }),
+
+  /** Current remaining allowance (does not consume any). */
+  quota: () => apiFetch<ChatQuota>("/chat/quota"),
 };
 
 // ── Admin API ───────────────────────────────────────────────────────────────

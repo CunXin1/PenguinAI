@@ -32,11 +32,30 @@ services:
       - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD:-penguinai_dev}@timescaledb:5432/penguinai
       - REDIS_URL=redis://redis:6379/0
       - CELERY_EMBEDDED=false
+      # Realtime ingestion (Finnhub WS + Massive) runs as a lifespan-spawned
+      # subprocess inside this container. Finnhub/Massive work over the public
+      # internet; IBKR points at the host's TWS/Gateway (127.0.0.1 in a
+      # container is the container itself, so use host.docker.internal). If no
+      # TWS is running on the host, IBKR just retries harmlessly.
+      - REALTIME_ENABLED=true
+      - IBKR_HOST=${IBKR_HOST:-host.docker.internal}
     depends_on:
       timescaledb:
         condition: service_healthy
       redis:
         condition: service_healthy
+      # Pull the whole backend stack up whenever the API starts (so that
+      # `docker compose up -d api|frontend|nginx` also brings the schedulers,
+      # workers and scrapers — otherwise signals never refresh and background
+      # data never updates). These are start-order only (no health gate).
+      celery_beat:
+        condition: service_started
+      celery_worker:
+        condition: service_started
+      ml_worker:
+        condition: service_started
+      scraper:
+        condition: service_started
     restart: unless-stopped
     ports:
       - "8000:8000"

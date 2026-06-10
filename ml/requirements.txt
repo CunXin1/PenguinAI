@@ -1,6 +1,6 @@
-torch==2.5.1+cu124
-torchvision==0.20.1+cu124
---extra-index-url https://download.pytorch.org/whl/cu124
+# torch / torchvision are installed in ml/Dockerfile (not here) so the variant
+# can be chosen at build time: CPU wheels by default (builds on Mac/ARM + CPU
+# Linux), CUDA on a GPU host via --build-arg TORCH_SPEC / TORCH_INDEX_URL.
 
 transformers==4.47.1
 sentence-transformers==3.3.1

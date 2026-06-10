@@ -109,6 +109,28 @@ export interface TokenResponse {
   token_type: string;
 }
 
+// ── Chat assistant ──────────────────────────────────────────────────────────────
+export type ChatRole = "user" | "assistant";
+
+export interface ChatMessage {
+  role: ChatRole;
+  content: string;
+}
+
+/** Per-user quota snapshot. limit/remaining of 0/-1 mean "unlimited". */
+export interface ChatQuota {
+  tier: UserTier;
+  limit: number; // messages per window; 0 = unlimited
+  remaining: number; // remaining this window; -1 = unlimited
+  reset_seconds: number; // until the window resets
+  window_seconds: number; // window length
+}
+
+export interface ChatReply {
+  reply: string;
+  usage: ChatQuota;
+}
+
 // ── Watchlist ─────────────────────────────────────────────────────────────────
 export interface WatchlistItem {
   ticker: string;

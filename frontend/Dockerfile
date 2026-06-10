@@ -14,6 +14,10 @@ RUN npm run build
 FROM node:22-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+# Bind the standalone server to all interfaces. Docker injects HOSTNAME=<container-id>,
+# which server.js would otherwise use as its bind address — leaving 127.0.0.1 unserved so the
+# HEALTHCHECK below (and any loopback probe) always fails even though the app serves fine.
+ENV HOSTNAME=0.0.0.0
 # Assign the standalone build to the unprivileged built-in `node` user.
 COPY --from=builder --chown=node:node /app/.next/standalone ./
 COPY --from=builder --chown=node:node /app/.next/static ./.next/static

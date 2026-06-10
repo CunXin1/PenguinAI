@@ -26,6 +26,7 @@ from app.api.routes import (  # noqa: E402  (depends on the sys.path setup above
     admin,
     auth,
     celebrity_holdings,
+    chat,
     earnings,
     fear_greed,
     fomc,
@@ -638,6 +639,7 @@ app.include_router(
 )
 app.include_router(fomc.router, prefix="/api/fomc", tags=["fomc"])
 app.include_router(fear_greed.router, prefix="/api/fear-greed", tags=["fear-greed"])
+app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 
 

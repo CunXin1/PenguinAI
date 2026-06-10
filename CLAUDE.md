@@ -51,7 +51,44 @@ RAG (pgvector, ticker+time filtered) → Gemma 4 Agent 1 (assemble) →
 Gemma 4 Agent 2 (reason, JSON mode locked) → FOMC filter → signal_cache
 ```
 
-**Critical:** Gemma 4 prompts are 100% backend-assembled. Zero user free-text input anywhere. No prompt injection surface.
+**Critical:** In the *signal pipeline*, Gemma 4 prompts are 100% backend-assembled —
+zero user free-text, no prompt-injection surface. This invariant is scoped to the
+signal pipeline. The separate **LLM Chat Agent** (below) DOES take user input and has
+its own security model — never conflate the two surfaces.
+
+## LLM Chat Agent (PREMIUM) — building
+
+A SECOND, separate LLM surface from the signal pipeline: conversational, tool-calling,
+per-user. It shares the backend layer (`ml/inference/llm/`) but nothing else — keep the
+two harnesses separate. Unlike the signal pipeline, it intentionally accepts user free
+text, so it carries its own (non-negotiable) security model.
+
+**Tools (READ-ONLY).** The model requests a tool; the backend executes the handler and
+feeds the result back — multi-turn loop until a final answer.
+
+| Tool | Backs onto | Status |
+|------|-----------|--------|
+| `get_watchlist(user)` | `watchlists` | table exists |
+| `get_portfolio(user)` | portfolio table | **NOT built** — needs new `portfolio`/`positions` table + ingestion |
+| `get_quote` / `get_history(ticker, range)` | `bars_30m` / `bars_1d` / `market_data_1min` | exists |
+| `get_indicators(ticker)` | `indicators_30min` view | exists |
+| `get_earnings(ticker)` | `earnings` | exists |
+| `get_fundamentals(ticker)` | `fundamentals` | exists |
+| `get_news(ticker)` | `news_articles` (incl. Google News RSS) | exists |
+| `web_search(query)` | external search API | **NOT built** — needs a search provider |
+
+**Backend priority (go-forward LLM strategy):**
+1. **External API (preferred)** — reliable function calling, no local GPU. `LLM_BACKEND=api`.
+2. **Local Gemma 4 E4B (backup)** — served via **vLLM** (`--enable-auto-tool-choice`).
+   Note: Ollama's Gemma 4 tool-call parser is currently buggy, so tool-calling must use
+   vLLM, not Ollama. The swappable backend layer already supports this fallback chain.
+
+**Security (this is a NEW attack surface — all mandatory):**
+- `user_id` is ALWAYS injected server-side from the auth token, **never** from the model.
+  A user can never reach another user's holdings/watchlist, even via prompt injection.
+- Tools are **read-only**. No order execution, no writes, no destructive actions (Signals only).
+- External content (news, search results) is **untrusted data, never instructions** — sandbox it.
+- Tool args are whitelisted/validated before execution. PREMIUM tier-gated.
 
 ## Caching (dual-track)
 
@@ -119,7 +156,7 @@ Do not change this schema without updating `signal_cache` table, `schemas/signal
 ```
 FREE     → basic signals (top 100, daily refresh)
 PRO      → full 2000 stocks, real-time signals
-PREMIUM  → API key access (future), LLM chat (future, not in MVP)
+PREMIUM  → API key access (future), LLM chat agent (tool-calling, building — see "LLM Chat Agent")
 ADMIN    → internal monitoring, pipeline control
 ```
 
@@ -365,8 +402,8 @@ the repo root — never `cd ml` first.
 ## What NOT to do
 
 - Do not add LangChain or any LLM orchestration framework. Everything is native Python async.
-- Do not allow any user-provided free text to reach the LLM. All prompts are backend-assembled.
-- Do not write trading/order execution code. Signals only.
+- Do not let user free text reach the **signal pipeline** LLM — those prompts are 100% backend-assembled. (The separate **LLM Chat Agent** does accept user input; it gets its own injection mitigations, read-only tools, and server-side `user_id` scoping. Never give the chat agent write/execution tools.)
+- Do not write trading/order execution code. Signals only — this applies to chat-agent tools too (read-only).
 - Do not use Streamlit for the user-facing product. Streamlit is for internal ML monitoring only.
 - Do not run ML training inside the FastAPI process. Always dispatch to Celery ml_inference queue.
 - Do not store raw API keys in code. All secrets via `.env` / environment variables.
