@@ -236,7 +236,7 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-950/80 backdrop-blur">
-      <div className="max-w-7xl mx-auto px-4 h-14 flex items-center gap-2 sm:gap-4">
+      <div className="max-w-7xl 2xl:max-w-screen-2xl mx-auto px-4 h-14 flex items-center gap-2 sm:gap-4">
         <Link href="/" className="text-lg font-bold tracking-tight shrink-0">
           <span className="text-zinc-900 dark:text-white">Penguin</span>
           <span className="text-sky-500 dark:text-sky-400">AI</span>
@@ -245,7 +245,7 @@ export function Navbar() {
         {/* Global market open/closed badge — single source of truth (useMarketStatus). */}
         <MarketStatusBadge className="hidden sm:inline-flex shrink-0" />
 
-        {/* Nav: icons from sm, labels added at xl */}
+        {/* Nav: icons from sm; labels added at 2xl, where the bar widens to fit them */}
         <nav className="hidden sm:flex items-center gap-1">
           {NAV.map(({ href, label, icon: Icon }) => {
             const active = isActive(href);
@@ -255,14 +255,14 @@ export function Navbar() {
                 href={href}
                 title={label}
                 className={cn(
-                  "flex items-center gap-1 px-1.5 xl:px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors",
+                  "flex items-center gap-1 px-1.5 2xl:px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors",
                   active
                     ? "bg-zinc-200 dark:bg-zinc-800 text-zinc-900 dark:text-white"
                     : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800/50"
                 )}
               >
                 <Icon size={15} className="shrink-0" />
-                <span className="hidden xl:inline whitespace-nowrap">{label}</span>
+                <span className="hidden 2xl:inline whitespace-nowrap">{label}</span>
               </Link>
             );
           })}
