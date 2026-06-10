@@ -61,7 +61,7 @@ GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxx
 
 ## 2. Apple 登录(需付费账号,前端按钮当前已隐藏)
 
-> ⚠️ Apple 必须有 **Apple Developer Program($99/年)**,且 **不接受 `http://localhost`**——
+> 注意:Apple 必须有 **Apple Developer Program($99/年)**,且 **不接受 `http://localhost`**——
 > 本地测试要用 HTTPS 域名或 ngrok 之类隧道。没账号可以先跳过,Google 足够上线。
 > 前端按钮已用开关隐藏,凭据齐了再打开。
 

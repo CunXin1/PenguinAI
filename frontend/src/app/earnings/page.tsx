@@ -332,10 +332,10 @@ function UnifiedRow({ e, isOpen, onToggle, today }: { e: EarningsEvent; isOpen: 
     <div>
       <div onClick={onToggle} className="grid grid-cols-12 gap-2 items-center px-4 py-3 hover:bg-zinc-50 dark:hover:bg-zinc-800/30 transition-colors cursor-pointer">
         {/* ticker */}
-        <div className="col-span-4 sm:col-span-3"><TickerCell e={e} isOpen={isOpen} /></div>
+        <div className="col-span-5 sm:col-span-2"><TickerCell e={e} isOpen={isOpen} /></div>
 
         {/* EPS */}
-        <div className="col-span-3 sm:col-span-2 text-right">
+        <div className="col-span-4 sm:col-span-2 text-right">
           <p className="text-[10px] text-zinc-400 dark:text-zinc-600 uppercase tracking-wide">EPS</p>
           <p className="font-mono text-sm">
             {reported ? (
@@ -343,15 +343,15 @@ function UnifiedRow({ e, isOpen, onToggle, today }: { e: EarningsEvent; isOpen: 
                 <span className="font-semibold text-zinc-900 dark:text-zinc-100">${e.eps_actual!.toFixed(2)}</span>
                 <span className="text-zinc-400 dark:text-zinc-600"> / {e.eps_estimate != null ? `$${e.eps_estimate.toFixed(2)}` : "—"}</span>
               </>
+            ) : e.eps_estimate != null ? (
+              <span className="text-zinc-500 dark:text-zinc-400">Est ${e.eps_estimate.toFixed(2)}</span>
             ) : (
-              <span className="text-zinc-600 dark:text-zinc-400">
-                {e.eps_estimate != null ? `Est $${e.eps_estimate.toFixed(2)}` : "—"}
-              </span>
+              <span className="text-zinc-400 dark:text-zinc-600">—</span>
             )}
           </p>
         </div>
 
-        {/* Surprise */}
+        {/* EPS surprise / countdown */}
         <div className="hidden sm:flex col-span-2 justify-end">
           {reported ? (
             <span className={cn("px-2 py-0.5 rounded-md text-xs font-mono font-semibold border", beat ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30" : "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30")}>
@@ -373,31 +373,41 @@ function UnifiedRow({ e, isOpen, onToggle, today }: { e: EarningsEvent; isOpen: 
         {/* Revenue */}
         <div className="col-span-3 sm:col-span-2 text-right">
           <p className="text-[10px] text-zinc-400 dark:text-zinc-600 uppercase tracking-wide">Revenue</p>
-          <p className="font-mono text-sm text-zinc-600 dark:text-zinc-400">
+          <p className="font-mono text-sm">
             {reported && e.revenue_actual != null ? (
               <>
                 <span className="font-semibold text-zinc-900 dark:text-zinc-100">${compact(e.revenue_actual)}</span>
                 <span className="text-zinc-400 dark:text-zinc-600"> / {e.revenue_estimate != null ? `$${compact(e.revenue_estimate)}` : "—"}</span>
               </>
             ) : e.revenue_estimate != null ? (
-              <span>Est ${compact(e.revenue_estimate)}</span>
-            ) : "—"}
+              <span className="text-zinc-500 dark:text-zinc-400">Est ${compact(e.revenue_estimate)}</span>
+            ) : (
+              <span className="text-zinc-400 dark:text-zinc-600">—</span>
+            )}
           </p>
-          {reported && e.revenue_surprise_pct != null && (
-            <p
+        </div>
+
+        {/* Revenue surprise (its own column, same badge as EPS surprise) */}
+        <div className="hidden sm:flex col-span-2 justify-end">
+          {reported && e.revenue_surprise_pct != null ? (
+            <span
               className={cn(
-                "font-mono text-[11px] font-semibold",
-                e.revenue_surprise_pct >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400",
+                "px-2 py-0.5 rounded-md text-xs font-mono font-semibold border",
+                e.revenue_surprise_pct >= 0
+                  ? "text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border-emerald-500/30"
+                  : "text-red-600 dark:text-red-400 bg-red-500/10 border-red-500/30",
               )}
               title="Revenue surprise vs. estimate"
             >
-              {signedPct(e.revenue_surprise_pct, 1)} vs est
-            </p>
-          )}
+              {signedPct(e.revenue_surprise_pct, 1)}
+            </span>
+          ) : reported ? (
+            <span className="font-mono text-xs text-zinc-400 dark:text-zinc-600">—</span>
+          ) : null}
         </div>
 
         {/* Price reaction */}
-        <div className="hidden sm:flex col-span-3 items-center justify-end">
+        <div className="hidden sm:flex col-span-2 items-center justify-end">
           {reported && e.reaction_close_pct != null ? (
             <div className="flex flex-col items-end gap-0.5">
               <ReactionBadge value={e.reaction_close_pct} label="1-day close-to-close" />
@@ -546,11 +556,12 @@ export default function EarningsPage() {
         </div>
       ) : (
         <div className="hidden sm:grid grid-cols-12 gap-2 px-5 text-[10px] font-medium text-zinc-400 dark:text-zinc-600 uppercase tracking-wider">
-          <div className="col-span-3">Company</div>
+          <div className="col-span-2">Company</div>
           <div className="col-span-2 text-right">EPS (Act / Est)</div>
-          <div className="col-span-2 text-right">Surprise / Countdown</div>
+          <div className="col-span-2 text-right">EPS Surp / In</div>
           <div className="col-span-2 text-right">Revenue (Act / Est)</div>
-          <div className="col-span-3 text-right">Price Reaction</div>
+          <div className="col-span-2 text-right">Rev Surp</div>
+          <div className="col-span-2 text-right">Reaction</div>
         </div>
       )}
 

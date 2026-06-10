@@ -139,9 +139,7 @@ async def check_schema_exists() -> CheckResult:
             # TimescaleDB continuous aggregates appear in timescaledb_information
             try:
                 result = await conn.execute(
-                    text(
-                        "SELECT view_name FROM timescaledb_information.continuous_aggregates"
-                    )
+                    text("SELECT view_name FROM timescaledb_information.continuous_aggregates")
                 )
                 existing.update(row[0] for row in result)
             except Exception:
@@ -153,10 +151,7 @@ async def check_schema_exists() -> CheckResult:
                 name="schema",
                 blocking=True,
                 status=CheckStatus.FAILED,
-                message=(
-                    f"Missing tables: {missing}. "
-                    "Run 'make db-init' to apply db/schema/*.sql"
-                ),
+                message=(f"Missing tables: {missing}. Run 'make db-init' to apply db/schema/*.sql"),
                 duration_ms=(time.monotonic() - t0) * 1000,
                 detail={"missing": missing, "existing_count": len(existing)},
             )
@@ -566,9 +561,7 @@ async def run_startup_checks() -> StartupReport:
     logger.info("-" * 60)
     logger.info("Startup checks: %s (%.0fms)", report.overall_status.upper(), elapsed)
     for c in report.checks:
-        logger.info(
-            "  [%s] %-20s %s", _STATUS_ICON.get(c.status.value, "?"), c.name, c.message
-        )
+        logger.info("  [%s] %-20s %s", _STATUS_ICON.get(c.status.value, "?"), c.name, c.message)
     logger.info("-" * 60)
     return report
 

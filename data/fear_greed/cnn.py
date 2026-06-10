@@ -65,8 +65,14 @@ def _f(v: object) -> float | None:
         return None
 
 
-async def fetch_fear_greed(url: str = CNN_URL, timeout: float = 20.0) -> dict | None:
+async def fetch_fear_greed(
+    url: str = CNN_URL, timeout: float = 20.0, start_date: str | None = None
+) -> dict | None:
     """Fetch + parse the CNN Fear & Greed payload.
+
+    ``start_date`` (``YYYY-MM-DD``) is appended to the graphdata path to pull the
+    full history back to that day: CNN serves multi-year history this way, whereas
+    the bare endpoint returns only ~1 year. CNN data exists from ~2020-09-01.
 
     Returns a dict::
 
@@ -81,8 +87,9 @@ async def fetch_fear_greed(url: str = CNN_URL, timeout: float = 20.0) -> dict | 
     Returns ``None`` on any network / parse failure.
     """
     try:
+        target = f"{url.rstrip('/')}/{start_date}" if start_date else url
         async with httpx.AsyncClient(timeout=timeout, headers=_HEADERS) as client:
-            resp = await client.get(url)
+            resp = await client.get(target)
             if resp.status_code != 200:
                 logger.warning("CNN fear&greed returned HTTP %d", resp.status_code)
                 return None

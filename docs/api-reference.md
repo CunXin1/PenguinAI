@@ -881,7 +881,9 @@ close / 1 week / 1 month / 1 year ago.
 ---
 
 #### `GET /fear-greed/history`
-Daily Fear & Greed score series (ascending).
+Daily Fear & Greed score series (ascending). Real CNN data extends back to
+~2020-09 (backfilled via `scripts/backfill_fear_greed.py`); a `days` larger than
+the available history simply returns all of it.
 
 **Query params**: `days` — int, 7–3650 (default 365)
 

@@ -126,6 +126,21 @@ Market-cap weighted treemap with color-coded tiles by period performance.
 
 ---
 
+### Fear & Greed (`/fear-greed`)
+
+CNN-style market-sentiment dashboard: composite Fear & Greed gauge plus the VIX/VVIX volatility charts.
+
+**Features:**
+- Hero gauge: 0–100 gradient bar + previous close / 1W / 1M / 1Y comparison strip
+- Fear & Greed Over Time chart — range selector: 1M / 5M / 1Y / 5Y (real CNN data back to ~2020-09)
+- 7-component breakdown (momentum, strength, breadth, put/call, volatility, junk-bond, safe-haven)
+- VIX / VVIX volatility chart — range selector: 1M / 3M / 6M / 1Y / 5Y (VIX history back to 1990)
+- Source badge: "CNN Business", or "estimated from VIX" when CNN is unavailable
+
+**API endpoints:** `/fear-greed`, `/fear-greed/history?days={n}`, `/fear-greed/volatility?symbol={VIX|VVIX}&days={n}`
+
+---
+
 ### Watchlist (`/watchlist`)
 
 Personal list of tracked tickers with live prices and signal badges.

@@ -148,8 +148,8 @@ All rate limits configurable via `.env` (`RATE_LIMIT_*` vars). Redis-backed; fal
 
 ```
 Frontend (register form) → POST /register
-  → Pydantic validates (email, password strength, display_name ≤50)
-  → email.lower() normalized
+  → Pydantic validates (email, username [3-20 [a-z0-9_], required+unique], password strength, display_name ≤50)
+  → email.lower() normalized; username uniqueness checked case-insensitively
   → check duplicate → INSERT users (email_verified=false, token_version=0)
   → generate verify token (JWT, purpose=verify, 24h expiry)
   → TODO: send verification email (currently logged; returned in DEBUG mode)
@@ -172,7 +172,7 @@ User clicks email link → /auth/verify-email?token=xxx
 ```
 Frontend (login form) → POST /login
   → IP rate limit (10/min) + account rate limit (20/hr, keyed by email SHA256)
-  → email.lower() → SELECT user WHERE is_active=true
+  → identifier (email OR username) → SELECT user WHERE (lower(email)=id OR lower(username)=id) AND is_active=true
   → bcrypt verify (DUMMY_HASH if user not found — constant-time)
   → return JWT with { sub: user_id, ver: token_version }
 ```
@@ -276,6 +276,7 @@ The following are **not** in the Celery beat schedule — they run via backend l
 | Google News RSS | Free news fallback (no API key, no sentiment) | `data/news/ingest.py`, `backend/app/api/routes/news.py` | ✅ live (fallback) |
 | Finnhub — news | Company news (free tier, 60 req/min) | `data/news/ingest.py` (last resort only) | ✅ live (last resort) |
 | Federal Reserve | FOMC statements + hawk/dove scores (FinBERT) | `data/fomc/` (scraper + scorer + loader) → `fomc_statements` | ✅ live (`make fetch-fomc`) |
+| CNN — Fear & Greed | Stock-market Fear & Greed Index (7-factor) + VIX/VVIX volatility | `data/fear_greed/` (CNN + CBOE/Yahoo/FRED) → `fear_greed_index`/`volatility_index`; `fng-sched` thread (startup + hourly); multi-year real-CNN history backfilled via `scripts/backfill_fear_greed.py` (CNN graphdata serves history back to ~2020-09 when a start date is in the path) | ✅ live |
 | Twitter/X · Reddit | Social sentiment | `data/scrapers/*` (Playwright / PRAW) | 🚧 planned — not created |
 | Polygon.io | Historical minute bars (supplemental) | — | ❌ legacy (no loader; superseded by Massive) |
 

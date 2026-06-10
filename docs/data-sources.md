@@ -26,7 +26,7 @@ ingestion code lands).
 | Quiver Quant | Congressional trades (Pelosi, Tuberville, MTG, Crenshaw) | `celebrity_holdings` | ✅ Live | `data/celebrity/congress.py` (daily auto-fetch) |
 | arkfunds.io | ARK Invest daily trades (Cathie Wood) | `celebrity_holdings` | ✅ Live | `data/celebrity/ark.py` (daily auto-fetch) |
 | Federal Reserve FOMC | FOMC statements + hawk/dove scores | `fomc_statements` | ✅ Live | `data/fomc/` (scraper + scorer + loader + scheduler), wired in `main.py` as `fomc-sched` |
-| CNN Fear & Greed + CBOE/Yahoo/FRED | Fear & Greed Index + VIX/VVIX volatility | (in-memory / API) | ✅ Live | `data/fear_greed/` (cnn/cboe/yahoo/fred/volatility/loader/fallback/scheduler), `fng-sched` thread (startup + hourly), route `/api/fear-greed` |
+| CNN Fear & Greed + CBOE/Yahoo/FRED | Fear & Greed Index (7-factor) + VIX/VVIX volatility | `fear_greed_index`, `volatility_index` | ✅ Live | `data/fear_greed/` (cnn/cboe/yahoo/fred/volatility/loader/fallback/scheduler), `fng-sched` thread (startup + hourly), route `/api/fear-greed`. Multi-year real-CNN history (~2020-09→) backfilled via `scripts/backfill_fear_greed.py`; VIX-percentile `fallback.py` is used only when CNN is live-unreachable |
 | Polygon.io | Supplemental bars | — | ❌ Legacy placeholder (env key only, no loader) | superseded by Massive |
 
 > **Reality check.** `data/scrapers/` and `data/ingestion/polygon_loader.py` do
@@ -291,7 +291,7 @@ ORDER BY bars;
 | Google News RSS | 免费新闻备选（无 key，无情绪） | 同上 | ✅ 备用 | `data/news/ingest.py` |
 | Finnhub — 新闻 | 公司新闻（免费版，60 req/min） | 同上 | ✅ 最后手段 | `data/news/ingest.py` |
 | Federal Reserve FOMC | FOMC 声明 + 鹰鸽评分 | `fomc_statements` | ✅ 已接入 | `data/fomc/`（爬取+评分+加载+调度），`main.py` 中 `fomc-sched` 线程 |
-| CNN Fear & Greed + CBOE/Yahoo/FRED | 恐惧贪婪指数 + VIX/VVIX 波动率 | （内存 / API） | ✅ 已接入 | `data/fear_greed/`，`fng-sched` 线程（启动 + 每小时），路由 `/api/fear-greed` |
+| CNN Fear & Greed + CBOE/Yahoo/FRED | 恐惧贪婪指数（7 因子）+ VIX/VVIX 波动率 | `fear_greed_index`、`volatility_index` | ✅ 已接入 | `data/fear_greed/`，`fng-sched` 线程（启动 + 每小时），路由 `/api/fear-greed`。多年真实 CNN 历史（~2020-09 起）由 `scripts/backfill_fear_greed.py` 回填；`fallback.py` 的 VIX 百分位估算仅在 CNN 实时不可达时使用 |
 | Polygon.io | 补充 K 线 | — | ❌ 遗留占位（仅 env，无 loader） | 已被 Massive 取代 |
 
 > **现状提醒**：`data/scrapers/` 与 `polygon_loader.py` **不存在**。社媒表由 schema

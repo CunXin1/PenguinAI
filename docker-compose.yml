@@ -72,6 +72,55 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # ── Gemma 4 LLM (Agent 2 reasoner) — standalone Ollama service ──────────────
+  # Serves gemma4:e2b on the compose network at http://gemma:11434.
+  # Auto-pulls the model on first boot into the ollama_models volume.
+  #
+  # ⚠️ macOS: Docker Desktop has NO GPU passthrough, so this container is
+  #   CPU-only (slow). For Mac dev, prefer NATIVE Ollama (`make gemma-serve`,
+  #   Metal-accelerated) and point the worker at the host instead — set in .env:
+  #     OLLAMA_BASE_URL=http://host.docker.internal:11434
+  #   then you can skip this service.  On Linux + nvidia-container-toolkit,
+  #   uncomment the `deploy:` block for GPU acceleration.
+  gemma:
+    image: ollama/ollama:latest
+    volumes:
+      - ollama_models:/root/.ollama
+    expose:
+      - "11434"
+    # To reach it from the host (e.g. `make gemma-check`), publish the port:
+    # ports:
+    #   - "11434:11434"
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+      - OLLAMA_NUM_PARALLEL=4
+      - GEMMA_PULL_MODEL=${GEMMA_PULL_MODEL:-gemma4:e2b}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        ollama serve &
+        pid=$$!
+        until ollama ps >/dev/null 2>&1; do sleep 1; done
+        echo "Pulling $${GEMMA_PULL_MODEL} (first boot only)..."
+        ollama pull "$${GEMMA_PULL_MODEL}" || echo "pull failed; using cached models"
+        wait $$pid
+    healthcheck:
+      test: ["CMD", "ollama", "ps"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 600s
+    restart: unless-stopped
+    # GPU (Linux + nvidia-container-toolkit): uncomment
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
   celery_worker:
     build:
       context: .
@@ -101,11 +150,18 @@ services:
     environment:
       - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD:-penguinai_dev}@timescaledb:5432/penguinai
       - REDIS_URL=redis://redis:6379/0
+      # Reach the standalone gemma service over the compose network.
+      # On Mac with native Ollama instead, override in .env:
+      #   OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - LLM_BACKEND=ollama
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://gemma:11434}
     depends_on:
       timescaledb:
         condition: service_healthy
       redis:
         condition: service_healthy
+      gemma:
+        condition: service_started
     restart: unless-stopped
     # GPU: uncomment below on hosts with nvidia-container-toolkit
     # deploy:
@@ -153,3 +209,4 @@ services:
 volumes:
   timescaledb_data:
   redis_data:
+  ollama_models:

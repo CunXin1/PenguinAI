@@ -10,8 +10,9 @@ The signal pipeline transforms market data into a structured investment signal t
 > end-to-end, but several inputs are not populated yet and **degrade gracefully**:
 > the ML models aren't trained (`predict_*` → `None`), `social_posts` is empty
 > (sentiment/RAG → neutral/empty), and `celebrity_holdings` / `fomc_statements`
-> are empty (smart-money and macro filter no-op). Gemma 4 needs a running vLLM (or
-> `GEMMA_API_URL`) endpoint. See [TODO.md](../TODO.md) for the gaps.
+> are empty (smart-money and macro filter no-op). Gemma 4 needs a running LLM
+> backend (Ollama / vLLM / API) — see [llm-serving.md](./llm-serving.md); when it's
+> down the pipeline falls back to an ML-only signal. See [TODO.md](../TODO.md) for the gaps.
 
 ### Step-by-Step Breakdown
 
@@ -136,7 +137,11 @@ Pure Python function — no LLM call. Builds a structured JSON context from all 
 
 **File**: `ml/inference/gemma_agent.py:reason()`
 
-Sends the assembled context to Gemma 4 (local vLLM or external API) with a strict system prompt and JSON Schema locked output format.
+Sends the assembled context to Gemma 4 through a pluggable backend (Ollama on
+macOS / vLLM on Windows·Linux GPU / external API) with a strict system prompt and
+JSON Schema locked output format. The backend is selected by `LLM_BACKEND` and
+resolved in `ml/inference/llm/factory.py`. See [llm-serving.md](./llm-serving.md)
+for deployment, config, and finetune seams.
 
 **System prompt excerpt:**
 > "You are a strict quantitative analyst AI. Base your reasoning ENTIRELY on the data provided. Do not use outside knowledge."

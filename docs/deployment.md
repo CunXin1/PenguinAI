@@ -63,11 +63,14 @@ make flower       # Celery monitoring UI at :5555
 
 #### Developing Without GPU
 
-If you don't have a GPU locally, you can stub out ML inference for development:
+If you don't have a GPU locally, you have a few options:
 
-1. Set `GEMMA_API_URL` in `.env` to an external API endpoint
-2. Comment out `ml_worker` in `docker-compose.yml`
-3. Pre-populate `signal_cache` with test data via SQL
+1. **Ollama (macOS, Metal-accelerated)** — `make gemma-serve` runs Gemma 4 E2B
+   natively; the pipeline works end-to-end. See [llm-serving.md](./llm-serving.md).
+2. **External API** — set `LLM_BACKEND=api` + `GEMMA_API_URL` (+ `GEMMA_API_KEY`).
+3. **Skip the LLM entirely** — leave it down; `signal_engine` falls back to an
+   ML-only signal. Optionally comment out `ml_worker` and pre-populate
+   `signal_cache` with test data via SQL.
 
 ---
 

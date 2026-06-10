@@ -103,9 +103,9 @@ async def run_loader(database_url: str, *, fred_key: str | None = None) -> int:
         # ── Volatility first (multi-source, merged + cross-checked) ──
         # The full VIX/VVIX history is re-upserted every run by design: rows are
         # idempotent (ON CONFLICT) and tiny (1/day/symbol), and the *full* history
-        # is required by the VIX-percentile fallback (252-day window), the 5Y chart,
-        # and scripts/backfill_fear_greed.py. Hence there is deliberately no
-        # retention policy and no tail-trim — a retention window would break those.
+        # is required by the VIX-percentile fallback (252-day window) and the 5Y
+        # volatility chart. Hence there is deliberately no retention policy and no
+        # tail-trim — a retention window would break those.
         vol = await fetch_all_volatility(fred_key)
         vix_rows = [r for r in vol["rows"] if r["symbol"] == "VIX"]
         if vol["rows"]:
@@ -131,6 +131,27 @@ async def run_loader(database_url: str, *, fred_key: str | None = None) -> int:
     finally:
         await engine.dispose()
     return written
+
+
+async def backfill_fng_from_cnn(database_url: str, start_date: str = "2020-09-01") -> int:
+    """One-time backfill of the full CNN Fear & Greed history (from ``start_date``).
+
+    CNN's graphdata endpoint returns multi-year history when a start date is in the
+    URL path; the hourly :func:`run_loader` fetch only pulls ~1 year. The upsert is
+    ``DO UPDATE``, so real CNN readings overwrite any earlier estimates for those
+    days (e.g. VIX-proxy rows). Returns the number of daily rows written.
+    """
+    engine = create_async_engine(database_url)
+    try:
+        fng = await fetch_fear_greed(start_date=start_date)
+        if not fng:
+            logger.warning("fng backfill: CNN returned no data for start=%s", start_date)
+            return 0
+        n = await _upsert_fng(engine, fng)
+        logger.info("fng backfill: upserted %d daily CNN rows since %s", n, start_date)
+        return n
+    finally:
+        await engine.dispose()
 
 
 if __name__ == "__main__":
