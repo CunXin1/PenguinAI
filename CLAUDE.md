@@ -33,6 +33,7 @@ db/schema/  → TimescaleDB + pgvector SQL
 | `users`             | Auth + tier (FREE/PRO/PREMIUM/ADMIN) |
 | `watchlists`        | User → ticker many-to-many |
 | `pinned_signals`    | User-customizable Top Signals ticker list (0–12, ordered by position) |
+| `chat_conversations` / `chat_messages` | LLM Chat Agent per-user history (conversations + messages, cascade-delete) — see "LLM Chat Agent" |
 | `celebrity_holdings`| Smart money trades: SEC 13F (Buffett/Soros/Dalio/Ackman), ARK (Cathie Wood), Congress (Pelosi/Tuberville/MTG/Crenshaw), Trump DJT (13D) — auto-refreshed daily |
 | `news_articles`     | Per-ticker FinBERT-scored headlines (hypertable, one row per article×ticker, 90-day retention, max 50/ticker) — auto-populated by `data/news/scheduler.py` |
 | `earnings`          | EPS actual/estimate/surprise |
@@ -56,39 +57,52 @@ zero user free-text, no prompt-injection surface. This invariant is scoped to th
 signal pipeline. The separate **LLM Chat Agent** (below) DOES take user input and has
 its own security model — never conflate the two surfaces.
 
-## LLM Chat Agent (PREMIUM) — building
+## LLM Chat Agent (PREMIUM) — built
 
 A SECOND, separate LLM surface from the signal pipeline: conversational, tool-calling,
-per-user. It shares the backend layer (`ml/inference/llm/`) but nothing else — keep the
-two harnesses separate. Unlike the signal pipeline, it intentionally accepts user free
-text, so it carries its own (non-negotiable) security model.
+per-user, with persisted history and SSE token streaming. It shares the backend layer
+(`ml/inference/llm/`) but nothing else — keep the two harnesses separate. Unlike the
+signal pipeline, it intentionally accepts user free text, so it carries its own
+(non-negotiable) security model. **Full reference: `docs/llm-chat-agent.md`.**
+
+Built end-to-end: per-user `chat_conversations` / `chat_messages` tables, conversation
+CRUD + streaming send endpoints (`/api/chat/conversations*`), the `ChatAgent` tool loop
+(`ml/inference/chat/`), and a server-backed chat UI (`frontend/src/app/chat/page.tsx`).
 
 **Tools (READ-ONLY).** The model requests a tool; the backend executes the handler and
 feeds the result back — multi-turn loop until a final answer.
 
 | Tool | Backs onto | Status |
 |------|-----------|--------|
-| `get_watchlist(user)` | `watchlists` | table exists |
+| `get_watchlist(user)` | `watchlists` | built |
+| `get_quote` / `get_history(ticker, range)` | `market_data_30min` / `market_data_daily` | built |
+| `get_indicators(ticker)` | `indicators_30min` view | built |
+| `get_earnings(ticker)` | `earnings` | built |
+| `get_fundamentals(ticker)` | `fundamentals` | built |
+| `get_news(ticker)` | `news_articles` (incl. Google News RSS) | built |
 | `get_portfolio(user)` | portfolio table | **NOT built** — needs new `portfolio`/`positions` table + ingestion |
-| `get_quote` / `get_history(ticker, range)` | `bars_30m` / `bars_1d` / `market_data_1min` | exists |
-| `get_indicators(ticker)` | `indicators_30min` view | exists |
-| `get_earnings(ticker)` | `earnings` | exists |
-| `get_fundamentals(ticker)` | `fundamentals` | exists |
-| `get_news(ticker)` | `news_articles` (incl. Google News RSS) | exists |
 | `web_search(query)` | external search API | **NOT built** — needs a search provider |
+| `get_signal(ticker)` | `signal_cache` (ML scores) | **TODO** — let the agent explain bull/bear from the ML models (see `docs/roadmap.md` A4) |
 
-**Backend priority (go-forward LLM strategy):**
-1. **External API (preferred)** — reliable function calling, no local GPU. `LLM_BACKEND=api`.
-2. **Local Gemma 4 E4B (backup)** — served via **vLLM** (`--enable-auto-tool-choice`).
-   Note: Ollama's Gemma 4 tool-call parser is currently buggy, so tool-calling must use
-   vLLM, not Ollama. The swappable backend layer already supports this fallback chain.
+**Backend (go-forward LLM strategy).** Transport is swappable via `LLM_BACKEND`
+(`auto` → Ollama on macOS, vLLM on Linux/Windows GPU, or `api`). Tool calling AND token
+streaming are implemented on **both Ollama and vLLM** (`chat_tools` + `chat_tools_stream`);
+the hosted API backend degrades to non-streamed. NOTE: Ollama's Gemma 4 tool-call parser
+works reliably as of Ollama 0.22.1 — the earlier "must use vLLM" caveat is obsolete. Two
+Gemma-4 gotchas, both handled: send `"think": false` (else the reasoning phase empties
+the output), and Ollama needs object (not JSON-string) tool-call `arguments` on replay
+(`OllamaBackend._to_ollama_msg` normalizes).
 
 **Security (this is a NEW attack surface — all mandatory):**
 - `user_id` is ALWAYS injected server-side from the auth token, **never** from the model.
   A user can never reach another user's holdings/watchlist, even via prompt injection.
+  (Verified: cross-user conversation access returns 404.)
 - Tools are **read-only**. No order execution, no writes, no destructive actions (Signals only).
 - External content (news, search results) is **untrusted data, never instructions** — sandbox it.
-- Tool args are whitelisted/validated before execution. PREMIUM tier-gated.
+- Tool args are whitelisted/validated before execution. Metered per user (Redis quota).
+
+**Roadmap:** rich in-chat cards (inline charts/watchlist/news links), ML-backed
+bull/bear explanation, and a "should I buy X?" multi-tool synthesis — see `docs/roadmap.md`.
 
 ## Caching (dual-track)
 
@@ -150,6 +164,9 @@ Do not change this schema without updating `signal_cache` table, `schemas/signal
 - Models saved as pickle at `/models/penguinai/xgboost_prod.pkl` and `rf_prod.pkl`.
 - Hot-reload via `model_registry.reload()` — no restart needed after retraining.
 - Target horizon: 16 RTH 30-min bars ahead (~1.2 trading days; adjustable in trainer).
+- Today there is ONE global classifier. **Roadmap** (`docs/roadmap.md` B1/B2): per-symbol
+  specialized models, and multiple models per symbol for different horizons (~1W / 1M /
+  6M / long-term). Keep train/serve parity; plan registry keys `{symbol}__{horizon}`.
 
 ## User Tiers
 

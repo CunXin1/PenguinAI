@@ -155,6 +155,30 @@ class Settings(BaseSettings):
     # startup + daily after close. See app/core/freshness.py.
     FRESHNESS_ENABLED: bool = True
 
+    # ── Billing / invite codes ───────────────────────────────────
+    # Paid checkout is NOT wired yet (frontend shows "Coming Soon"). Until it is,
+    # tier upgrades happen only via redeemable invite codes — a private back door.
+    # Format: comma-separated `code` or `code:TIER` entries (TIER defaults to PRO).
+    #   INVITE_CODES="LETMEIN, FOUNDER:PREMIUM, vip2026:PRO"
+    # Codes are matched case-sensitively. Leave empty to disable redemption.
+    PRO_PRICE_USD: int = 10  # monthly price shown on the pricing page
+    INVITE_CODES: str = ""
+
+    def invite_code_map(self) -> dict[str, str]:
+        """Parse INVITE_CODES into {code: TIER}. Invalid tiers fall back to PRO."""
+        valid = {"PRO", "PREMIUM", "ADMIN"}
+        out: dict[str, str] = {}
+        for raw in self.INVITE_CODES.split(","):
+            entry = raw.strip()
+            if not entry:
+                continue
+            code, _, tier = entry.partition(":")
+            code = code.strip()
+            tier = tier.strip().upper() or "PRO"
+            if code:
+                out[code] = tier if tier in valid else "PRO"
+        return out
+
     # ── FOMC defaults ────────────────────────────────────────────
     FOMC_DEFAULT_TREND_LIMIT: int = 10
     FOMC_DEFAULT_STATEMENTS_LIMIT: int = 10

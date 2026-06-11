@@ -332,6 +332,15 @@ export function Navbar() {
                   >
                     <User size={15} /> Profile
                   </Link>
+                  {user?.tier === "FREE" && (
+                    <Link
+                      href="/pricing"
+                      onClick={() => setUserMenuOpen(false)}
+                      className="flex items-center gap-2 px-3 py-2 text-sm text-sky-600 dark:text-sky-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/50"
+                    >
+                      <Crown size={15} /> Upgrade to Pro
+                    </Link>
+                  )}
                   {user?.tier === "ADMIN" && (
                     <Link
                       href="/admin"
@@ -432,6 +441,16 @@ export function Navbar() {
 
             {isLoggedIn ? (
               <>
+                {user?.tier === "FREE" && (
+                  <Link
+                    href="/pricing"
+                    onClick={() => setMenuOpen(false)}
+                    className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium text-sky-600 dark:text-sky-400 hover:bg-zinc-100 dark:hover:bg-zinc-800/50 transition-colors"
+                  >
+                    <Crown size={17} className="shrink-0" />
+                    Upgrade to Pro
+                  </Link>
+                )}
                 {user?.tier === "ADMIN" && (
                   <Link
                     href="/admin"

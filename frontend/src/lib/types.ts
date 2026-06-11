@@ -110,6 +110,13 @@ export interface TokenResponse {
   token_type: string;
 }
 
+/** Result of redeeming an invite code (POST /api/billing/redeem). */
+export interface RedeemResponse {
+  message: string;
+  tier: UserTier;
+  user: User;
+}
+
 export interface RegisterResponse {
   message: string;
   email: string;

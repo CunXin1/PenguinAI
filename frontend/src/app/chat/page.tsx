@@ -423,7 +423,7 @@ export default function ChatPage() {
               {quota!.reset_seconds > 0 && ` — resets in ${fmtReset(quota!.reset_seconds)}`}.
             </div>
             <Link
-              href="/profile"
+              href="/pricing"
               className="shrink-0 px-3 py-1.5 rounded-lg bg-gradient-to-r from-sky-500 to-sky-600 hover:from-sky-400 hover:to-sky-500 text-white text-xs font-semibold transition-colors"
             >
               Upgrade

@@ -131,9 +131,12 @@ export default function ProfilePage() {
             </div>
           </div>
           {user.tier === "FREE" && (
-            <button className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-sky-500 to-sky-600 hover:from-sky-400 hover:to-sky-500 text-white text-sm font-semibold transition-colors">
+            <Link
+              href="/pricing"
+              className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-sky-500 to-sky-600 hover:from-sky-400 hover:to-sky-500 text-white text-sm font-semibold transition-colors"
+            >
               Upgrade
-            </button>
+            </Link>
           )}
         </div>
       </Card>

@@ -37,6 +37,7 @@ import type {
   MiniQuote,
   NewsApiArticle,
   Quote,
+  RedeemResponse,
   RegisterResponse,
   Signal,
   SignalListItem,
@@ -446,6 +447,16 @@ export const chat = {
       }
     }
   },
+};
+
+// ── Billing API ────────────────────────────────────────────────────────────
+export const billing = {
+  /** Redeem an invite code to unlock a paid tier (no payment — back-door path). */
+  redeem: (code: string) =>
+    apiFetch<RedeemResponse>("/billing/redeem", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
 };
 
 // ── Admin API ───────────────────────────────────────────────────────────────
