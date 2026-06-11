@@ -103,6 +103,12 @@ services:
   #   then you can skip this service.  On Linux + nvidia-container-toolkit,
   #   uncomment the `deploy:` block for GPU acceleration.
   gemma:
+    # Opt-in only: `docker compose --profile container-llm up`. On macOS this
+    # container is CPU-only AND its bundled Ollama is too old for Gemma 4 (412),
+    # so the default path uses the host's native Ollama via OLLAMA_BASE_URL=
+    # http://host.docker.internal:11434 (set in .env). Enable this profile on a
+    # Linux/GPU host and set OLLAMA_BASE_URL back to http://gemma:11434.
+    profiles: ["container-llm"]
     image: ollama/ollama:latest
     volumes:
       - ollama_models:/root/.ollama
@@ -185,13 +191,20 @@ services:
       #   OLLAMA_BASE_URL=http://host.docker.internal:11434
       - LLM_BACKEND=ollama
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://gemma:11434}
+    volumes:
+      # Trained model pickles live on the host (written by the daily pipeline);
+      # mount them so the worker can load xgboost_prod.pkl / rf_prod.pkl instead
+      # of falling back to NEUTRAL "models not available" signals. MODEL_DIR
+      # resolves to /app/models/penguinai inside the container.
+      - ./models:/app/models
     depends_on:
       timescaledb:
         condition: service_healthy
       redis:
         condition: service_healthy
-      gemma:
-        condition: service_started
+      # gemma is profile-gated (container-llm) and off by default; the worker
+      # talks to the host's Ollama via OLLAMA_BASE_URL. Re-add a gemma
+      # dependency here only when running with --profile container-llm.
     restart: unless-stopped
     # GPU: uncomment below on hosts with nvidia-container-toolkit
     # deploy:

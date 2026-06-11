@@ -89,6 +89,15 @@ class VerifyEmailRequest(BaseModel):
     token: str
 
 
+class ResendVerificationRequest(BaseModel):
+    email: EmailStr
+
+
+class RegisterResponse(BaseModel):
+    message: str
+    email: str
+
+
 class UserResponse(BaseModel):
     id: str
     email: str
@@ -96,6 +105,7 @@ class UserResponse(BaseModel):
     display_name: str | None
     tier: Literal["FREE", "PRO", "PREMIUM", "ADMIN"]
     email_verified: bool
+    oauth_provider: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

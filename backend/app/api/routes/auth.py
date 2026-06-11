@@ -20,6 +20,7 @@ from app.core.rate_limit import (
     forgot_password_rate_limit,
     login_rate_limit,
     register_rate_limit,
+    resend_verification_rate_limit,
     reset_password_rate_limit,
 )
 from app.core.security import (

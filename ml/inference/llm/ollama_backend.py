@@ -51,6 +51,12 @@ class OllamaBackend(LLMBackend):
             "model": self._model,
             "messages": messages,
             "stream": False,
+            # Gemma 4 is a reasoning model: left on, its <thinking> phase consumes
+            # the entire num_predict budget before any content is emitted, so a
+            # format-constrained call returns done_reason="length" with empty
+            # content (→ JSON parse error). Disable thinking so it emits the
+            # structured answer directly.
+            "think": False,
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,

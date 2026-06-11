@@ -32,6 +32,13 @@ async def get_current_user(
     if payload.get("ver", 0) != user.token_version:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token revoked")
 
+    # Hard email verification: an unverified account can hold a token (legacy/migration)
+    # but must not reach any protected resource until it confirms its address.
+    if not user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Email not verified"
+        )
+
     return user
 
 

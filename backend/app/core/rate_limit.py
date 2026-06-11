@@ -142,3 +142,8 @@ reset_password_rate_limit = RateLimit(
     window=settings.RATE_LIMIT_RESET_PW_WINDOW,
     key_prefix="rl:reset",
 )
+resend_verification_rate_limit = RateLimit(
+    times=settings.RATE_LIMIT_RESEND_TIMES,
+    window=settings.RATE_LIMIT_RESEND_WINDOW,
+    key_prefix="rl:resend",
+)
