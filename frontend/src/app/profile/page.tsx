@@ -1,14 +1,36 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
-import { Shield, Star, Bell, LogOut, Settings, Crown, Loader2 } from "lucide-react";
+import {
+  Shield,
+  Star,
+  Bell,
+  LogOut,
+  Settings,
+  Crown,
+  Loader2,
+  KeyRound,
+  Eye,
+  EyeOff,
+  CheckCircle2,
+} from "lucide-react";
 import { Card } from "@/components/ui/Card";
 import { DirectionBadge } from "@/components/ui/Badge";
 import { useAuth, userInitial } from "@/hooks/useAuth";
 import { useWatchlist } from "@/hooks/useWatchlist";
+import { auth } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { UserTier } from "@/lib/types";
+import type { User, UserTier } from "@/lib/types";
+
+const PASSWORD_CHECKS: { label: string; test: (p: string) => boolean }[] = [
+  { label: "8+ characters", test: (p) => p.length >= 8 },
+  { label: "Uppercase letter", test: (p) => /[A-Z]/.test(p) },
+  { label: "Lowercase letter", test: (p) => /[a-z]/.test(p) },
+  { label: "Number", test: (p) => /\d/.test(p) },
+  { label: "Special character", test: (p) => /[^A-Za-z0-9]/.test(p) },
+];
 
 const TIER_STYLE: Record<UserTier, string> = {
   FREE: "text-zinc-700 dark:text-zinc-300 bg-zinc-200 dark:bg-zinc-700/40 border-zinc-300 dark:border-zinc-600",
@@ -166,6 +188,9 @@ export default function ProfilePage() {
         )}
       </Card>
 
+      {/* Security */}
+      <SecurityCard user={user} />
+
       {/* Settings */}
       <Card className="p-2">
         <SettingRow icon={Bell} label="Notifications" sub="Signal alerts & price moves — coming soon" disabled />
@@ -178,6 +203,190 @@ export default function ProfilePage() {
           <p className="text-sm font-medium text-red-500 dark:text-red-400">Sign out</p>
         </button>
       </Card>
+    </div>
+  );
+}
+
+function SecurityCard({ user }: { user: User }) {
+  // OAuth-only accounts have no password to change — they sign in via the provider.
+  if (user.oauth_provider) {
+    return (
+      <Card className="p-5">
+        <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-2 mb-2">
+          <KeyRound size={15} className="text-zinc-500 dark:text-zinc-400" /> Security
+        </h2>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+          You sign in with{" "}
+          <span className="font-medium capitalize text-zinc-700 dark:text-zinc-300">
+            {user.oauth_provider}
+          </span>
+          . Manage your password from your {user.oauth_provider} account settings.
+        </p>
+      </Card>
+    );
+  }
+  return <ChangePasswordForm />;
+}
+
+function ChangePasswordForm() {
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [show, setShow] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const strongEnough = useMemo(() => PASSWORD_CHECKS.every((c) => c.test(next)), [next]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!current) return setError("Enter your current password");
+    if (!strongEnough) return setError("New password does not meet all requirements");
+    if (confirm !== next) return setError("Passwords do not match");
+
+    setLoading(true);
+    try {
+      const res = await auth.changePassword(current, next);
+      // The old token is revoked server-side (token_version bumped); keep this
+      // session alive by swapping in the fresh token returned by the endpoint.
+      if (res.access_token) localStorage.setItem("access_token", res.access_token);
+      setDone(true);
+      setCurrent("");
+      setNext("");
+      setConfirm("");
+      setTimeout(() => setDone(false), 6000);
+    } catch (err: any) {
+      const detail = err?.data?.detail;
+      if (typeof detail === "string") {
+        setError(detail);
+      } else if (Array.isArray(detail)) {
+        const msgs = detail.map((d: any) => d.msg?.replace(/^Value error, /, "") ?? "").filter(Boolean);
+        setError(msgs.join(". ") || "Validation failed");
+      } else {
+        setError("Something went wrong. Please try again.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card className="p-5">
+      <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 flex items-center gap-2 mb-4">
+        <KeyRound size={15} className="text-zinc-500 dark:text-zinc-400" /> Change password
+      </h2>
+
+      {done ? (
+        <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-lg px-3 py-2.5">
+          <CheckCircle2 size={16} />
+          Password changed. Other sessions have been signed out.
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+          <PasswordField
+            label="Current password"
+            value={current}
+            onChange={(v) => { setCurrent(v); setError(null); }}
+            show={show}
+            onToggleShow={() => setShow((s) => !s)}
+            autoComplete="current-password"
+          />
+          <div className="space-y-1.5">
+            <PasswordField
+              label="New password"
+              value={next}
+              onChange={(v) => { setNext(v); setError(null); }}
+              show={show}
+              onToggleShow={() => setShow((s) => !s)}
+              autoComplete="new-password"
+            />
+            {next.length > 0 && (
+              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5 pt-0.5">
+                {PASSWORD_CHECKS.map((c) => {
+                  const ok = c.test(next);
+                  return (
+                    <span
+                      key={c.label}
+                      className={cn(
+                        "text-[11px] transition-colors",
+                        ok ? "text-emerald-500" : "text-zinc-400 dark:text-zinc-500"
+                      )}
+                    >
+                      {ok ? "✓" : "•"} {c.label}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          <PasswordField
+            label="Confirm new password"
+            value={confirm}
+            onChange={(v) => { setConfirm(v); setError(null); }}
+            show={show}
+            onToggleShow={() => setShow((s) => !s)}
+            autoComplete="new-password"
+          />
+
+          {error && (
+            <p className="text-sm text-red-600 dark:text-red-400 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
+              {error}
+            </p>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="w-full py-2.5 rounded-lg bg-sky-500 hover:bg-sky-400 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm transition-colors flex items-center justify-center gap-2"
+          >
+            {loading && <Loader2 size={16} className="animate-spin" />}
+            {loading ? "Updating..." : "Update password"}
+          </button>
+        </form>
+      )}
+    </Card>
+  );
+}
+
+function PasswordField({
+  label,
+  value,
+  onChange,
+  show,
+  onToggleShow,
+  autoComplete,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  show: boolean;
+  onToggleShow: () => void;
+  autoComplete?: string;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <label className="text-xs font-medium text-zinc-600 dark:text-zinc-400">{label}</label>
+      <div className="relative">
+        <input
+          type={show ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder="••••••••"
+          required
+          autoComplete={autoComplete}
+          className="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-3 py-2.5 pr-10 text-sm text-zinc-900 dark:text-white placeholder-zinc-400 dark:placeholder-zinc-600 focus:outline-none focus:border-sky-500 transition-colors"
+        />
+        <button
+          type="button"
+          onClick={onToggleShow}
+          tabIndex={-1}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors"
+        >
+          {show ? <EyeOff size={16} /> : <Eye size={16} />}
+        </button>
+      </div>
     </div>
   );
 }

@@ -41,6 +41,8 @@ from app.schemas.user import (
     ForgotPasswordRequest,
     LoginRequest,
     RegisterRequest,
+    RegisterResponse,
+    ResendVerificationRequest,
     ResetPasswordRequest,
     TokenResponse,
     UserResponse,
@@ -52,7 +54,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     body: RegisterRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -89,8 +91,12 @@ async def register(
     verify_token = create_verify_token(email)
     await send_verification_email(email, verify_token)
 
-    access_token = create_access_token(str(user.id), user.token_version)
-    resp: dict = {"access_token": access_token, "token_type": "bearer"}
+    # Hard verification: no token is issued until the address is confirmed. The
+    # account exists (so the verify link can find it) but cannot sign in yet.
+    resp: dict = {
+        "message": "Account created. Check your email to verify your address before signing in.",
+        "email": email,
+    }
     if settings.DEBUG:
         resp["_debug_verify_token"] = verify_token
     return resp
@@ -127,16 +133,23 @@ async def verify_email(
 
 @router.post("/resend-verification", status_code=status.HTTP_200_OK)
 async def resend_verification(
-    current_user: CurrentUser,
+    body: ResendVerificationRequest,
     db: Annotated[AsyncSession, Depends(get_db)],
+    _rl: Annotated[None, Depends(resend_verification_rate_limit)],
 ):
-    if current_user.email_verified:
-        return {"message": "Email already verified."}
+    # Public (an unverified user has no token): take the email directly. Always
+    # return the same message regardless of whether the account exists or is
+    # already verified, so this can't be used to enumerate registered emails.
+    email = body.email.lower()
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
 
-    verify_token = create_verify_token(current_user.email)
-    await send_verification_email(current_user.email, verify_token)
+    resp: dict = {"message": "If this email needs verification, a new link is on its way."}
+    if not user or user.email_verified:
+        return resp
 
-    resp: dict = {"message": "Verification email sent."}
+    verify_token = create_verify_token(email)
+    await send_verification_email(email, verify_token)
     if settings.DEBUG:
         resp["_debug_verify_token"] = verify_token
     return resp
@@ -164,6 +177,15 @@ async def login(
     password_ok = verify_password(body.password, hashed)
     if not user or not user.password_hash or not password_ok:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+
+    # Hard verification: credentials are valid but the address is not confirmed yet.
+    # Carry the email back (the caller proved ownership via the password) so the
+    # frontend can route to the resend page even when login was by username.
+    if not user.email_verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "email_not_verified", "email": user.email},
+        )
 
     return TokenResponse(access_token=create_access_token(str(user.id), user.token_version))
 

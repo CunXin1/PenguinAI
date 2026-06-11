@@ -26,6 +26,7 @@ os.environ["RATE_LIMIT_REGISTER_TIMES"] = "1000000"
 os.environ["RATE_LIMIT_LOGIN_TIMES"] = "1000000"
 os.environ["RATE_LIMIT_FORGOT_PW_TIMES"] = "1000000"
 os.environ["RATE_LIMIT_RESET_PW_TIMES"] = "1000000"
+os.environ["RATE_LIMIT_RESEND_TIMES"] = "1000000"
 os.environ["RATE_LIMIT_ACCOUNT_LOGIN_TIMES"] = "1000000"
 
 # Register SQLite adapters for types that PostgreSQL handles natively.
@@ -203,7 +204,7 @@ async def test_user(db_session: AsyncSession) -> User:
         display_name="Free User",
         tier="FREE",
         is_active=True,
-        email_verified=False,
+        email_verified=True,
         token_version=0,
     )
     db_session.add(user)
@@ -222,7 +223,7 @@ async def pro_user(db_session: AsyncSession) -> User:
         display_name="Pro User",
         tier="PRO",
         is_active=True,
-        email_verified=False,
+        email_verified=True,
         token_version=0,
     )
     db_session.add(user)

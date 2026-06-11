@@ -101,12 +101,18 @@ export interface User {
   display_name: string | null;
   tier: UserTier;
   email_verified: boolean;
+  oauth_provider: string | null;
   created_at: string;
 }
 
 export interface TokenResponse {
   access_token: string;
   token_type: string;
+}
+
+export interface RegisterResponse {
+  message: string;
+  email: string;
 }
 
 // ── Chat assistant ──────────────────────────────────────────────────────────────

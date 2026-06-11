@@ -10,6 +10,10 @@ import { auth } from "@/lib/api";
 // button stays hidden until NEXT_PUBLIC_APPLE_OAUTH_ENABLED=true.
 const APPLE_OAUTH_ENABLED = process.env.NEXT_PUBLIC_APPLE_OAUTH_ENABLED === "true";
 
+// Carries the just-registered (or unverified) email to /auth/verify-pending,
+// which no longer has a session to read it from.
+const PENDING_EMAIL_KEY = "penguinai_pending_verify_email";
+
 type Mode = "login" | "register";
 
 interface PasswordCheck {
@@ -90,25 +94,33 @@ export default function LoginPage() {
 
     try {
       const identifier = email.trim();
-      const res =
-        mode === "login"
-          ? await auth.login(identifier, password)
-          : await auth.register(identifier.toLowerCase(), password, username.trim());
 
-      localStorage.setItem("access_token", res.access_token);
       if (mode === "register") {
+        // Hard verification: no token yet — stash the email and send the user to
+        // the "check your inbox" page until they confirm their address.
+        const res = await auth.register(identifier.toLowerCase(), password, username.trim());
+        sessionStorage.setItem(PENDING_EMAIL_KEY, res.email);
         router.push("/auth/verify-pending");
-      } else {
-        // ADMIN users go straight to the admin dashboard
-        try {
-          const me = await auth.me();
-          router.push(me.tier === "ADMIN" ? "/admin" : "/");
-        } catch {
-          router.push("/");
-        }
+        return;
+      }
+
+      const res = await auth.login(identifier, password);
+      localStorage.setItem("access_token", res.access_token);
+      // ADMIN users go straight to the admin dashboard
+      try {
+        const me = await auth.me();
+        router.push(me.tier === "ADMIN" ? "/admin" : "/");
+      } catch {
+        router.push("/");
       }
     } catch (err: any) {
       const detail = err?.data?.detail;
+      // Unverified address: route to the resend page rather than showing an error.
+      if (detail && typeof detail === "object" && !Array.isArray(detail) && detail.code === "email_not_verified") {
+        if (detail.email) sessionStorage.setItem(PENDING_EMAIL_KEY, detail.email);
+        router.push("/auth/verify-pending");
+        return;
+      }
       if (typeof detail === "string") {
         setError(detail);
       } else if (Array.isArray(detail)) {

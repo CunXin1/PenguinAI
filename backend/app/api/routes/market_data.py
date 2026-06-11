@@ -122,6 +122,10 @@ async def get_quotes(
     if not syms:
         return {"quotes": []}
 
+    # `base` is the PREVIOUS SESSION's close (the % change reference), taken from the
+    # last 1-min print strictly before the latest bar's ET session date — NOT the latest
+    # imported daily bar, which can be days stale and would yield a wrong sign/magnitude.
+    # Falls back to bars_1d.adj_close only for symbols with no prior-session minute data.
     rows = await db.execute(
         text("""
             WITH latest AS (
@@ -130,9 +134,18 @@ async def get_quotes(
                 WHERE ticker = ANY(:syms)
                 ORDER BY ticker, time DESC
             )
-            SELECT l.ticker, l.close AS price, l.time, d.adj_close AS base
+            SELECT l.ticker, l.close AS price, l.time,
+                   COALESCE(p.prev_close, d.adj_close) AS base
             FROM latest l
             JOIN instruments i ON i.symbol = l.ticker
+            LEFT JOIN LATERAL (
+                SELECT m.close AS prev_close
+                FROM market_data_1min m
+                WHERE m.ticker = l.ticker
+                  AND m.time < date_trunc('day', l.time AT TIME ZONE 'America/New_York')
+                               AT TIME ZONE 'America/New_York'
+                ORDER BY m.time DESC LIMIT 1
+            ) p ON TRUE
             LEFT JOIN LATERAL (
                 SELECT adj_close FROM bars_1d
                 WHERE instrument_id = i.instrument_id
@@ -173,6 +186,10 @@ async def get_mini(
     if not syms:
         return {"items": []}
 
+    # `base` = previous SESSION close (the % change reference): last 1-min print strictly
+    # before the latest bar's ET session date. Using the latest imported daily bar instead
+    # (which can be days stale) produced a wrong-signed change_pct on the index strip.
+    # Falls back to bars_1d.adj_close for symbols with no prior-session minute data.
     rows = await db.execute(
         text("""
             WITH latest AS (
@@ -181,9 +198,18 @@ async def get_mini(
                 WHERE ticker = ANY(:syms)
                 ORDER BY ticker, time DESC
             )
-            SELECT l.ticker, l.price, l.last_t, d.adj_close AS base
+            SELECT l.ticker, l.price, l.last_t,
+                   COALESCE(p.prev_close, d.adj_close) AS base
             FROM latest l
             JOIN instruments i ON i.symbol = l.ticker
+            LEFT JOIN LATERAL (
+                SELECT m.close AS prev_close
+                FROM market_data_1min m
+                WHERE m.ticker = l.ticker
+                  AND m.time < date_trunc('day', l.last_t AT TIME ZONE 'America/New_York')
+                               AT TIME ZONE 'America/New_York'
+                ORDER BY m.time DESC LIMIT 1
+            ) p ON TRUE
             LEFT JOIN LATERAL (
                 SELECT adj_close FROM bars_1d
                 WHERE instrument_id = i.instrument_id

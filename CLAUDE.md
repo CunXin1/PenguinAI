@@ -168,11 +168,11 @@ Tier check is done in `backend/app/api/deps.py:require_tier()`. Signal rows carr
 
 | Method | Path | Auth | Rate Limit | Purpose |
 |--------|------|------|------------|---------|
-| POST | `/api/auth/register` | — | 5/hr per IP | Create account, return JWT |
-| POST | `/api/auth/login` | — | 10/min per IP + 20/hr per account | Authenticate, return JWT |
-| GET | `/api/auth/me` | Bearer | — | Current user profile |
+| POST | `/api/auth/register` | — | 5/hr per IP | Create account + send verify email; **no JWT** (hard verification) |
+| POST | `/api/auth/login` | — | 10/min per IP + 20/hr per account | Authenticate, return JWT; **403 `email_not_verified`** if unverified |
+| GET | `/api/auth/me` | Bearer | — | Current user profile (rejects unverified tokens) |
 | POST | `/api/auth/verify-email` | — | — | Verify email with token |
-| POST | `/api/auth/resend-verification` | Bearer | — | Resend verification email |
+| POST | `/api/auth/resend-verification` | — | 5/hr per IP | Resend verify email (public, body `{email}`, anti-enumeration) |
 | POST | `/api/auth/forgot-password` | — | 5/hr per IP | Request password reset |
 | POST | `/api/auth/reset-password` | — | 5/hr per IP | Reset password with token |
 | POST | `/api/auth/change-password` | Bearer | — | Change password (returns new JWT) |
@@ -189,10 +189,18 @@ Frontend (register form) → POST /register
   → email.lower() normalized; username uniqueness checked case-insensitively
   → check duplicate → INSERT users (email_verified=false, token_version=0)
   → generate verify token (JWT, purpose=verify, 24h expiry)
-  → TODO: send verification email (currently logged; returned in DEBUG mode)
-  → return access_token
-  → Frontend stores token → redirect /auth/verify-pending
+  → send verification email (EMAIL_BACKEND=console logs it; =smtp delivers it; token also in DEBUG response)
+  → return { message, email }  — NO JWT issued (hard verification)
+  → Frontend stashes email in sessionStorage → redirect /auth/verify-pending
 ```
+
+**Hard email verification (mandatory gate):** an account exists in `users` before
+verification (so the verify link can find it) but cannot be *used* until verified:
+- `register` issues no token.
+- `login` returns 403 `{code: "email_not_verified", email}` for unverified accounts.
+- `get_current_user` (deps.py) rejects any token whose user is unverified (401).
+- `resend-verification` is public (body `{email}`), rate-limited, anti-enumeration.
+- OAuth users are pre-verified by the provider, so they pass the gate normally.
 
 ### Email Verification Flow
 
@@ -211,6 +219,7 @@ Frontend (login form) → POST /login
   → IP rate limit (10/min) + account rate limit (20/hr, keyed by email SHA256)
   → identifier (email OR username) → SELECT user WHERE (lower(email)=id OR lower(username)=id) AND is_active=true
   → bcrypt verify (DUMMY_HASH if user not found — constant-time)
+  → if not email_verified → 403 { code: "email_not_verified", email } (frontend routes to /auth/verify-pending)
   → return JWT with { sub: user_id, ver: token_version }
 ```
 

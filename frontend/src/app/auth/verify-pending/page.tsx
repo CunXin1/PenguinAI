@@ -1,35 +1,36 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { Loader2, Mail, RefreshCw } from "lucide-react";
+import { ArrowLeft, Loader2, Mail, RefreshCw } from "lucide-react";
 import { auth } from "@/lib/api";
-import { useAuth } from "@/hooks/useAuth";
+
+// Set by the login/register page before redirecting here. The user has no
+// session yet (hard verification), so the email can't come from /me.
+const PENDING_EMAIL_KEY = "penguinai_pending_verify_email";
 
 export default function VerifyPendingPage() {
-  const router = useRouter();
-  const { user, isLoggedIn } = useAuth();
+  const [email, setEmail] = useState<string | null>(null);
   const [resending, setResending] = useState(false);
   const [resent, setResent] = useState(false);
 
+  useEffect(() => {
+    setEmail(sessionStorage.getItem(PENDING_EMAIL_KEY));
+  }, []);
+
   const handleResend = async () => {
+    if (!email) return;
     setResending(true);
     try {
-      await auth.resendVerification();
+      await auth.resendVerification(email);
       setResent(true);
       setTimeout(() => setResent(false), 10000);
     } catch {
-      // ignore — user sees no change
+      // Anti-enumeration endpoint always succeeds; nothing to surface.
     } finally {
       setResending(false);
     }
   };
-
-  if (isLoggedIn && user?.email_verified) {
-    router.replace("/");
-    return null;
-  }
 
   return (
     <main className="min-h-screen flex items-center justify-center px-4">
@@ -55,40 +56,43 @@ export default function VerifyPendingPage() {
               </h2>
               <p className="text-sm text-zinc-500 dark:text-zinc-400 leading-relaxed">
                 We sent a verification link to{" "}
-                {user?.email ? (
-                  <span className="font-medium text-zinc-700 dark:text-zinc-300">{user.email}</span>
+                {email ? (
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300">{email}</span>
                 ) : (
                   "your email"
                 )}
-                . Click the link to activate your account.
+                . Click the link to activate your account, then sign in.
               </p>
             </div>
 
             <div className="space-y-3 pt-2">
-              <button
-                onClick={handleResend}
-                disabled={resending || resent}
-                className="w-full py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
-              >
-                {resending ? (
-                  <><Loader2 size={15} className="animate-spin" /> Sending...</>
-                ) : resent ? (
-                  "Email sent! Check your inbox"
-                ) : (
-                  <><RefreshCw size={15} /> Resend verification email</>
-                )}
-              </button>
+              {email && (
+                <button
+                  onClick={handleResend}
+                  disabled={resending || resent}
+                  className="w-full py-2.5 rounded-lg border border-zinc-200 dark:border-zinc-700 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800/50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center gap-2"
+                >
+                  {resending ? (
+                    <><Loader2 size={15} className="animate-spin" /> Sending...</>
+                  ) : resent ? (
+                    "Email sent! Check your inbox"
+                  ) : (
+                    <><RefreshCw size={15} /> Resend verification email</>
+                  )}
+                </button>
+              )}
 
               <Link
-                href="/"
-                className="block w-full py-2.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white font-semibold text-sm text-center transition-colors"
+                href="/auth/login"
+                className="inline-flex items-center justify-center gap-1.5 w-full py-2.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white font-semibold text-sm text-center transition-colors"
               >
-                Continue to dashboard
+                <ArrowLeft size={14} />
+                Back to sign in
               </Link>
             </div>
 
             <p className="text-[11px] text-zinc-400 dark:text-zinc-500 leading-relaxed">
-              You can use the platform while unverified, but some features may be limited.
+              You must verify your email before you can sign in. The link expires in 24 hours.
             </p>
           </div>
         </div>

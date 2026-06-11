@@ -396,6 +396,7 @@ _news_stop = threading.Event()
 _seed_stop = threading.Event()
 _fomc_stop = threading.Event()
 _fng_stop = threading.Event()
+_freshness_stop = threading.Event()
 
 
 def _run_marketcap_scheduler(stop_event: threading.Event):
@@ -554,9 +555,29 @@ async def lifespan(app: FastAPI):
     except ImportError:
         logger.warning("seed_market_data not available — market data seed disabled")
 
+    # Data freshness: roll the 1-min stream forward into bars_30m / bars_1d on startup
+    # + daily after close, so the 30-min/daily stores never drift stale between imports.
+    freshness_thread = None
+    try:
+        from app.core.freshness import run_freshness_scheduler
+
+        _freshness_stop.clear()
+        freshness_thread = threading.Thread(
+            target=run_freshness_scheduler,
+            args=(_freshness_stop,),
+            daemon=True,
+            name="freshness-sched",
+        )
+        freshness_thread.start()
+    except ImportError:
+        logger.warning("app.core.freshness not available — freshness backfill disabled")
+
     try:
         yield
     finally:
+        _freshness_stop.set()
+        if freshness_thread is not None:
+            freshness_thread.join(timeout=5)
         _seed_stop.set()
         if seed_thread is not None:
             seed_thread.join(timeout=5)

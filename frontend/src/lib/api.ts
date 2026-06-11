@@ -34,6 +34,7 @@ import type {
   MiniQuote,
   NewsApiArticle,
   Quote,
+  RegisterResponse,
   Signal,
   SignalListItem,
   SymbolRequestResult,
@@ -105,7 +106,7 @@ async function apiFetch<T>(path: string, options?: RequestInit & { timeoutMs?: n
 // ── Auth API ───────────────────────────────────────────────────────────────────
 export const auth = {
   register: (email: string, password: string, username: string, display_name?: string) =>
-    apiFetch<TokenResponse>("/auth/register", {
+    apiFetch<RegisterResponse>("/auth/register", {
       method: "POST",
       body: JSON.stringify({ email, username, password, display_name }),
     }),
@@ -142,9 +143,10 @@ export const auth = {
       body: JSON.stringify({ token }),
     }),
 
-  resendVerification: () =>
+  resendVerification: (email: string) =>
     apiFetch<{ message: string }>("/auth/resend-verification", {
       method: "POST",
+      body: JSON.stringify({ email }),
     }),
 
   /** Full-page redirect target to begin the OAuth flow. Navigate, don't fetch. */

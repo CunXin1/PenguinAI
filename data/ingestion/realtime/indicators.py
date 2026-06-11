@@ -44,21 +44,17 @@ _UPDATE_SQL = text(
 )
 
 
-def _compute(df: pd.DataFrame) -> pd.DataFrame:
-    """df ascending by time with [time(UTC), open, high, low, close, volume].
-    Adds rth + indicator columns (indicators only on RTH rows)."""
-    et = df["time"].dt.tz_convert(ET)
-    minutes = et.dt.hour * 60 + et.dt.minute
-    rth = (minutes >= _RTH_START) & (minutes < _RTH_END)
-    df = df.copy()
-    df["rth"] = rth.to_numpy()
-    for c in _IND_COLS[1:]:
-        df[c] = np.nan
+def common_indicator_block(
+    close: pd.Series, high: pd.Series, low: pd.Series, volume: pd.Series
+) -> dict[str, pd.Series]:
+    """The sma/ema/macd/rsi/bollinger/atr/obv family shared by bars_30m and bars_1d.
 
-    sub = df.loc[rth]
-    if sub.empty:
-        return df
-    close = sub["close"]
+    Inputs are index-aligned price/volume series (RTH 30-min rows for the intraday
+    store, the daily series for bars_1d). Recursive indicators (ema/rsi/atr/obv) use
+    ``adjust=False`` so there is no lookahead. This is the single source of truth —
+    the realtime 30-min compute below and the freshness backfill both call it, so the
+    formulas can never drift apart.
+    """
     block: dict[str, pd.Series] = {}
     for n in (20, 50, 200):
         block[f"sma_{n}"] = close.rolling(n, min_periods=n).mean()
@@ -78,11 +74,28 @@ def _compute(df: pd.DataFrame) -> pd.DataFrame:
     block["bb_pctb"] = (close - lo) / (up - lo)
     block["bb_bw"] = (up - lo) / mid
     prev = close.shift(1)
-    tr = pd.concat(
-        [sub["high"] - sub["low"], (sub["high"] - prev).abs(), (sub["low"] - prev).abs()], axis=1
-    ).max(axis=1)
+    tr = pd.concat([high - low, (high - prev).abs(), (low - prev).abs()], axis=1).max(axis=1)
     block["atr_14"] = tr.ewm(alpha=1.0 / 14, adjust=False).mean()
-    block["obv"] = (np.sign(close.diff().fillna(0.0)) * sub["volume"]).cumsum()
+    block["obv"] = (np.sign(close.diff().fillna(0.0)) * volume).cumsum()
+    return block
+
+
+def _compute(df: pd.DataFrame) -> pd.DataFrame:
+    """df ascending by time with [time(UTC), open, high, low, close, volume].
+    Adds rth + indicator columns (indicators only on RTH rows)."""
+    et = df["time"].dt.tz_convert(ET)
+    minutes = et.dt.hour * 60 + et.dt.minute
+    rth = (minutes >= _RTH_START) & (minutes < _RTH_END)
+    df = df.copy()
+    df["rth"] = rth.to_numpy()
+    for c in _IND_COLS[1:]:
+        df[c] = np.nan
+
+    sub = df.loc[rth]
+    if sub.empty:
+        return df
+    close = sub["close"]
+    block = common_indicator_block(close, sub["high"], sub["low"], sub["volume"])
     day = et.loc[sub.index].dt.normalize()
     tp = (sub["high"] + sub["low"] + sub["close"]) / 3.0
     cum_pv = (tp * sub["volume"]).groupby(day).cumsum()
@@ -92,6 +105,15 @@ def _compute(df: pd.DataFrame) -> pd.DataFrame:
     for k, s in block.items():
         df.loc[sub.index, k] = s.to_numpy()
     return df
+
+
+# Public alias: the freshness backfill rolls the 1-min stream up into 30-min bars and
+# reuses this exact RTH/indicator computation for train/serve parity with bars_30m.
+def compute_bar_indicators(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute the bars_30m indicator family (rth + sma/ema/macd/rsi/bb/atr/obv/
+    vwap_day/ret_1bar) on a [time, open, high, low, close, volume] frame. Returns a
+    copy with the indicator columns added on RTH rows."""
+    return _compute(df)
 
 
 async def update_indicators(engine, ticker: str, *, tail: int = 8, full: bool = False) -> int:

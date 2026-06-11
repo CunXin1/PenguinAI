@@ -149,6 +149,11 @@ class Settings(BaseSettings):
     # FEAR_GREED_REFRESH_MIN is read directly from the environment by
     # data/fear_greed/scheduler.py.
 
+    # ── Data freshness backfill ──────────────────────────────────
+    # Keeps bars_30m / bars_1d current by rolling the 1-min stream forward on
+    # startup + daily after close. See app/core/freshness.py.
+    FRESHNESS_ENABLED: bool = True
+
     # ── FOMC defaults ────────────────────────────────────────────
     FOMC_DEFAULT_TREND_LIMIT: int = 10
     FOMC_DEFAULT_STATEMENTS_LIMIT: int = 10
