@@ -122,6 +122,9 @@ async def complete_chat(history: list[dict]) -> str:
                         "model": model,
                         "messages": messages,
                         "stream": False,
+                        # Gemma 4 is a reasoning model — without this its <thinking>
+                        # phase can eat the whole token budget and return empty text.
+                        "think": False,
                         "options": {
                             "temperature": settings.CHAT_TEMPERATURE,
                             "num_predict": settings.CHAT_MAX_TOKENS,

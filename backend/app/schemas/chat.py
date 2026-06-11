@@ -10,7 +10,9 @@ injection surface minimal even here:
   * every turn is length-capped and the history depth is bounded.
 """
 
+from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -58,4 +60,60 @@ class ChatUsage(BaseModel):
 
 class ChatReply(BaseModel):
     reply: str
+    usage: ChatUsage
+
+
+# ── Per-user conversation history (server-backed) ─────────────────────────────
+class MessageOut(BaseModel):
+    """One stored message in a conversation."""
+
+    id: UUID
+    role: Literal["user", "assistant"]
+    content: str
+    tools_used: list[str] = []
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationOut(BaseModel):
+    """Conversation summary for the sidebar list."""
+
+    id: UUID
+    title: str
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class ConversationDetail(ConversationOut):
+    """A conversation with its full message history."""
+
+    messages: list[MessageOut] = []
+
+
+class SendMessageRequest(BaseModel):
+    """A single user turn posted to a conversation."""
+
+    content: str = Field(min_length=1)
+    focus_ticker: str | None = Field(default=None, max_length=12)
+
+    @field_validator("content")
+    @classmethod
+    def _validate_content(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Message content cannot be empty")
+        if len(v) > settings.CHAT_MAX_INPUT_CHARS:
+            raise ValueError(f"Message too long (max {settings.CHAT_MAX_INPUT_CHARS} characters)")
+        return v
+
+
+class SendMessageReply(BaseModel):
+    """The assistant's stored reply plus updated quota."""
+
+    message: MessageOut
+    conversation_id: UUID
+    title: str
     usage: ChatUsage

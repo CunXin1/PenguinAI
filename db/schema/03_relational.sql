@@ -57,6 +57,30 @@ CREATE TABLE IF NOT EXISTS pinned_signals (
     PRIMARY KEY (user_id, ticker)
 );
 
+-- ── LLM Chat Agent (PREMIUM): per-user conversation history ──────────────────
+-- One row per chat thread. Owned by a user; deleting the user removes them.
+CREATE TABLE IF NOT EXISTS chat_conversations (
+    id          UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id     UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title       TEXT        NOT NULL DEFAULT 'New chat',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- List a user's threads most-recent-first.
+CREATE INDEX IF NOT EXISTS idx_chat_conv_user ON chat_conversations (user_id, updated_at DESC);
+
+-- Individual messages within a conversation (user + assistant turns).
+CREATE TABLE IF NOT EXISTS chat_messages (
+    id              UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    conversation_id UUID        NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,
+    role            TEXT        NOT NULL,            -- 'user' | 'assistant'
+    content         TEXT        NOT NULL,
+    tools_used      TEXT[]      NOT NULL DEFAULT '{}',  -- tool names the assistant invoked for this turn
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- Replay a conversation in order.
+CREATE INDEX IF NOT EXISTS idx_chat_msg_conv ON chat_messages (conversation_id, created_at);
+
 -- Signal cache (pre-computed top-100 + on-demand cold stocks)
 CREATE TABLE IF NOT EXISTS signal_cache (
     ticker         TEXT        PRIMARY KEY,

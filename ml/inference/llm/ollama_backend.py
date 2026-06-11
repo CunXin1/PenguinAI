@@ -18,7 +18,12 @@ import logging
 import httpx
 
 from ml.core.config import ml_settings
-from ml.inference.llm.base import ChatMessage, LLMBackend
+from ml.inference.llm.base import (
+    AssistantTurn,
+    ChatMessage,
+    LLMBackend,
+    parse_assistant_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +77,68 @@ class OllamaBackend(LLMBackend):
             resp.raise_for_status()
             content = resp.json()["message"]["content"]
         return json.loads(content)
+
+    async def chat_tools(
+        self,
+        messages: list[ChatMessage],
+        *,
+        tools: list[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+    ) -> AssistantTurn:
+        """Tool-calling completion via Ollama's /api/chat `tools` parameter.
+
+        Recent Ollama (>=0.4) parses Gemma 4 tool calls reliably — it returns
+        ``message.tool_calls`` (arguments as an object) which parse_assistant_message
+        normalizes. ``think`` is disabled so the model emits the final answer (or
+        the tool call) directly instead of spending the budget on reasoning.
+        """
+        payload: dict = {
+            "model": self._model,
+            "messages": [self._to_ollama_msg(m) for m in messages],
+            "stream": False,
+            "think": False,
+            "tools": tools,
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+            },
+        }
+        async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
+            resp = await client.post(f"{self._base_url}/api/chat", json=payload)
+            resp.raise_for_status()
+            msg = resp.json().get("message", {})
+        return parse_assistant_message(msg)
+
+    @staticmethod
+    def _to_ollama_msg(msg: dict) -> dict:
+        """Adapt an OpenAI-format history message to Ollama's chat shape.
+
+        The shared chat agent emits OpenAI-standard messages where a replayed
+        assistant tool call carries ``function.arguments`` as a JSON *string*.
+        Ollama expects an *object* there and silently returns an empty reply
+        otherwise, so parse it back. Tool-result messages also get a ``tool_name``
+        alias. Plain user/assistant/system turns pass through untouched.
+        """
+        if msg.get("tool_calls"):
+            calls = []
+            for tc in msg["tool_calls"]:
+                fn = tc.get("function", {})
+                args = fn.get("arguments", {})
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except (json.JSONDecodeError, TypeError):
+                        args = {}
+                calls.append({"function": {"name": fn.get("name", ""), "arguments": args}})
+            return {"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls}
+        if msg.get("role") == "tool":
+            return {
+                "role": "tool",
+                "tool_name": msg.get("name") or msg.get("tool_name") or "",
+                "content": msg.get("content", ""),
+            }
+        return msg
 
     async def health(self) -> bool:
         try:

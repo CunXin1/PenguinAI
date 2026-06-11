@@ -254,7 +254,7 @@ POST /change-password { current_password, new_password } (requires Bearer)
 - **Timing attack prevention:** bcrypt always runs against DUMMY_HASH when user not found
 - **Email normalization:** `.lower()` at all entry points (register, login, forgot-password)
 - **SECRET_KEY:** auto-generates ephemeral key if insecure; CRITICAL log in non-DEBUG mode
-- **Email verification:** JWT-based token, 24h expiry, `email_verified` column on users table
+- **Email verification (enforced):** JWT token, 24h expiry, `email_verified` column. Hard gate — unverified accounts cannot log in or hold a usable token (see Registration Flow). `EMAIL_BACKEND=console|smtp` (default console logs the link; set smtp + `SMTP_*` to actually deliver).
 
 ### Key Files
 

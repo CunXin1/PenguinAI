@@ -93,13 +93,12 @@ async def register(
 
     # Hard verification: no token is issued until the address is confirmed. The
     # account exists (so the verify link can find it) but cannot sign in yet.
-    resp: dict = {
-        "message": "Account created. Check your email to verify your address before signing in.",
-        "email": email,
-    }
-    if settings.DEBUG:
-        resp["_debug_verify_token"] = verify_token
-    return resp
+    # (In dev the link is visible via EMAIL_BACKEND=console; resend echoes a
+    # _debug_verify_token under DEBUG — register can't, RegisterResponse strips it.)
+    return RegisterResponse(
+        message="Account created. Check your email to verify your address before signing in.",
+        email=email,
+    )
 
 
 @router.post("/verify-email", status_code=status.HTTP_200_OK)

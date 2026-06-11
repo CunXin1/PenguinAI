@@ -137,6 +137,36 @@ export interface ChatReply {
   usage: ChatQuota;
 }
 
+/** A stored message in a server-backed conversation. */
+export interface StoredMessage {
+  id: string;
+  role: ChatRole;
+  content: string;
+  tools_used: string[];
+  created_at: string;
+}
+
+/** Conversation summary for the history sidebar. */
+export interface Conversation {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A conversation with its full message history. */
+export interface ConversationDetail extends Conversation {
+  messages: StoredMessage[];
+}
+
+/** Response from posting a message to a conversation. */
+export interface SendMessageReply {
+  message: StoredMessage;
+  conversation_id: string;
+  title: string;
+  usage: ChatQuota;
+}
+
 // ── Watchlist ─────────────────────────────────────────────────────────────────
 export interface WatchlistItem {
   ticker: string;

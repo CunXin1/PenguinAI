@@ -1,4 +1,4 @@
-.PHONY: up down logs backend frontend ml-worker gemma-serve gemma-check ibkr-stream minute-parquet fetch-earnings fetch-fomc fetch-fear-greed backfill-fear-greed fetch-congress fetch-13f fetch-ark fetch-celebrities lint type-check test test-backend test-frontend db-init bootstrap status dev
+.PHONY: up down logs backend frontend ml-worker gemma-serve gemma-check ibkr-stream minute-parquet fetch-earnings fetch-fomc fetch-fear-greed backfill-fear-greed fetch-congress fetch-13f fetch-ark fetch-celebrities lint type-check test test-backend test-frontend db-init bootstrap verify-existing-users status dev
 
 # ── Docker Compose ────────────────────────────────────────────────────────────
 up:
@@ -130,6 +130,11 @@ import-30min:
 
 bootstrap:
 	python scripts/bootstrap_universe.py
+
+# One-off: mark all pre-existing accounts as email-verified so the hard
+# verification gate doesn't lock out users created before it landed.
+verify-existing-users:
+	python scripts/verify_existing_users.py
 
 # ── Celery monitoring ─────────────────────────────────────────────────────────
 flower:

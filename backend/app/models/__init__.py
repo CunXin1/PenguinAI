@@ -1,3 +1,4 @@
+from app.models.chat import ChatConversation, ChatMessage  # noqa: F401
 from app.models.pinned_signal import PinnedSignal  # noqa: F401
 from app.models.signal_cache import SignalCache  # noqa: F401
 from app.models.symbol_request import SymbolRequest  # noqa: F401

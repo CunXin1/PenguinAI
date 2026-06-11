@@ -29,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -182,6 +182,10 @@ async def _backfill_1d(db, symbol: str, iid: int) -> int:
             text("SELECT max(ts) FROM bars_1d WHERE instrument_id = :iid"), {"iid": iid}
         )
     ).scalar()
+    # Cutoff as a native ET date. Passed as a date object (asyncpg binds it directly,
+    # no ::date cast) and placed BEFORE the interpolated _RTH_FILTER below — a named
+    # param that follows that quote/colon-heavy fragment isn't parsed by text().
+    last_date = last_ts.astimezone(ET).date() if last_ts else date(1900, 1, 1)
 
     # New settled sessions rolled up from the 1-min stream. The daily bar's ts matches
     # the import convention: the session's last RTH 30-min bucket (15:30 ET / 19:30 UTC).
@@ -205,17 +209,13 @@ async def _backfill_1d(db, symbol: str, iid: int) -> int:
                        count(DISTINCT time_bucket('30 minutes', time)) AS rth_bars
                 FROM market_data_1min, settled
                 WHERE ticker = :sym
-                  AND {_RTH_FILTER}
+                  AND (time AT TIME ZONE 'America/New_York')::date > :last_date
                   AND (time AT TIME ZONE 'America/New_York')::date <= settled.through
-                  AND (
-                        :last_ts::timestamptz IS NULL
-                        OR (time AT TIME ZONE 'America/New_York')::date
-                           > (:last_ts::timestamptz AT TIME ZONE 'America/New_York')::date
-                      )
+                  AND {_RTH_FILTER}
                 GROUP BY (time AT TIME ZONE 'America/New_York')::date
                 ORDER BY ts
             """),
-            {"sym": symbol, "last_ts": last_ts},
+            {"sym": symbol, "last_date": last_date},
         )
     ).mappings().all()
     if not new_rows:
@@ -252,7 +252,7 @@ async def _backfill_1d(db, symbol: str, iid: int) -> int:
         df[f"ret_{h}d"] = df["close"].pct_change(h)
     df["gap_overnight"] = df["open"] / prev_close - 1.0
 
-    rth_by_ts = {pd.Timestamp(r["ts"], tz="UTC"): int(r["rth_bars"]) for r in new_rows}
+    rth_by_ts = {pd.Timestamp(r["ts"]): int(r["rth_bars"]) for r in new_rows}
     new = df[df["ts"].isin(rth_by_ts.keys())]
     if new.empty:
         return 0
@@ -264,7 +264,7 @@ async def _backfill_1d(db, symbol: str, iid: int) -> int:
         ts = d["ts"].to_pydatetime()
         rec = {
             "ts": ts, "instrument_id": iid,
-            "rth_bars": rth_by_ts.get(d["ts"], None),
+            "rth_bars": rth_by_ts.get(d["ts"]),
             "raw_close": _clean(d["close"]),
             "adj_open": _clean(d["open"]), "adj_high": _clean(d["high"]),
             "adj_low": _clean(d["low"]), "adj_close": _clean(d["close"]),
@@ -297,17 +297,17 @@ async def _massive_fallback(db, symbol: str, iid: int, stop: threading.Event) ->
         return 0, 0
     base_url = os.getenv("MASSIVE_BASE_URL", "https://api.massive.com")
 
-    from datetime import date
-
     import httpx
 
     from app.core.seed_market_data import _fetch_and_write_1d, _fetch_and_write_30m
 
     if stop.is_set():
         return 0, 0
+    # Short catch-up window: just enough to close the typical few-day gap (the
+    # symbol's bulk history is already loaded from parquet). OHLCV only.
     today = date.today()
-    from_30m = (today - timedelta(days=_WARMUP_30M_DAYS)).isoformat()
-    from_1d = (today - timedelta(days=500)).isoformat()
+    from_30m = (today - timedelta(days=20)).isoformat()
+    from_1d = (today - timedelta(days=20)).isoformat()
     to = today.isoformat()
     n30 = n1d = 0
     async with httpx.AsyncClient(
@@ -329,6 +329,19 @@ async def _massive_fallback(db, symbol: str, iid: int, stop: threading.Event) ->
 # ---------------------------------------------------------------------------
 
 
+async def _is_stale(db, iid: int) -> bool:
+    """True when bars_30m has no rows or its latest bar is more than ~2 days old —
+    the gate for the (costly) Massive fallback so fresh symbols aren't re-fetched."""
+    last = (
+        await db.execute(
+            text("SELECT max(ts) FROM bars_30m WHERE instrument_id = :iid"), {"iid": iid}
+        )
+    ).scalar()
+    if last is None:
+        return True
+    return last < datetime.now(last.tzinfo) - timedelta(days=2)
+
+
 async def check_and_backfill_once(stop: threading.Event) -> dict:
     tickers = _get_seed_tickers()
     factory, engine = _make_session()
@@ -339,6 +352,7 @@ async def check_and_backfill_once(stop: threading.Event) -> dict:
         for sym in tickers:
             if stop.is_set():
                 break
+            n30 = n1d = 0
             try:
                 async with factory() as db:
                     iid = await _ensure_instrument(db, sym, _asset_type(sym))
@@ -348,14 +362,27 @@ async def check_and_backfill_once(stop: threading.Event) -> dict:
                             {"s": sym},
                         )
                     ).scalar()
+
                     if has_1min:
-                        n30 = await _backfill_30m(db, sym, iid)
-                        n1d = await _backfill_1d(db, sym, iid)
-                    else:
+                        # 30-min and daily commit independently so one failing never
+                        # rolls back the other.
+                        try:
+                            n30 = await _backfill_30m(db, sym, iid)
+                            await db.commit()
+                        except Exception:
+                            await db.rollback()
+                            logger.warning("freshness: 30m backfill failed for %s", sym, exc_info=True)
+                        try:
+                            n1d = await _backfill_1d(db, sym, iid)
+                            await db.commit()
+                        except Exception:
+                            await db.rollback()
+                            logger.warning("freshness: daily backfill failed for %s", sym, exc_info=True)
+                    elif await _is_stale(db, iid):
                         n30, n1d = await _massive_fallback(db, sym, iid, stop)
+                        await db.commit()
                         if n30 or n1d:
                             massive += 1
-                    await db.commit()
                 checked += 1
                 bars_30m += n30
                 bars_1d += n1d

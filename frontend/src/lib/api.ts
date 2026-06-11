@@ -15,6 +15,9 @@ import type {
   ChatMessage,
   ChatQuota,
   ChatReply,
+  Conversation,
+  ConversationDetail,
+  SendMessageReply,
   DatabaseHealth,
   EarningsEvent,
   EndpointHealth,
@@ -343,6 +346,30 @@ export const chat = {
 
   /** Current remaining allowance (does not consume any). */
   quota: () => apiFetch<ChatQuota>("/chat/quota"),
+
+  // ── Server-backed per-user conversation history ──────────────────────────
+  /** List the caller's conversations, most recently updated first. */
+  listConversations: () => apiFetch<Conversation[]>("/chat/conversations"),
+
+  /** Create a new empty conversation. */
+  createConversation: () =>
+    apiFetch<Conversation>("/chat/conversations", { method: "POST" }),
+
+  /** Fetch a conversation with its full message history. */
+  getConversation: (id: string) =>
+    apiFetch<ConversationDetail>(`/chat/conversations/${id}`),
+
+  /** Delete a conversation and its messages. */
+  deleteConversation: (id: string) =>
+    apiFetch<void>(`/chat/conversations/${id}`, { method: "DELETE" }),
+
+  /** Post a user turn; the agent runs read-only tools + replies. Long timeout for local LLM. */
+  sendMessage: (id: string, content: string, focusTicker?: string | null) =>
+    apiFetch<SendMessageReply>(`/chat/conversations/${id}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content, focus_ticker: focusTicker ?? null }),
+      timeoutMs: 120_000,
+    }),
 };
 
 // ── Admin API ───────────────────────────────────────────────────────────────
