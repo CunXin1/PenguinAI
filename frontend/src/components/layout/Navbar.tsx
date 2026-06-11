@@ -12,6 +12,7 @@ import {
   Gauge,
   Star,
   Newspaper,
+  Sparkles,
   User,
   Search,
   Menu,
@@ -39,6 +40,7 @@ const NAV = [
   { href: "/fear-greed", label: "Fear & Greed", icon: Gauge },
   { href: "/watchlist", label: "Watchlist", icon: Star },
   { href: "/news", label: "News", icon: Newspaper },
+  { href: "/chat", label: "Assistant", icon: Sparkles },
 ];
 
 /* ── Autocomplete dropdown (shared by desktop + mobile) ──────────────────── */
@@ -236,7 +238,7 @@ export function Navbar() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-zinc-200 dark:border-zinc-800 bg-white/80 dark:bg-zinc-950/80 backdrop-blur">
-      <div className="max-w-7xl min-[1400px]:max-w-screen-2xl mx-auto px-4 h-14 flex items-center gap-2 sm:gap-3">
+      <div className="max-w-7xl min-[1400px]:max-w-screen-2xl mx-auto px-4 min-[1400px]:px-6 2xl:px-12 h-14 flex items-center gap-2 sm:gap-3">
         <Link href="/" className="text-lg font-bold tracking-tight shrink-0">
           <span className="text-zinc-900 dark:text-white">Penguin</span>
           <span className="text-sky-500 dark:text-sky-400">AI</span>
@@ -274,7 +276,7 @@ export function Navbar() {
         <div ref={desktopDropdownRef} className="relative">
           <form
             onSubmit={submitSearch}
-            className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-2 sm:px-3 py-1.5 w-16 sm:w-24 md:w-32 lg:w-40 xl:w-44 focus-within:border-sky-500/60 transition-colors"
+            className="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 px-2 sm:px-3 py-1.5 w-16 sm:w-24 md:w-32 lg:w-40 focus-within:border-sky-500/60 transition-colors"
           >
             <Search size={14} className="text-zinc-500 shrink-0" />
             <input

@@ -14,7 +14,12 @@ import logging
 import httpx
 
 from ml.core.config import ml_settings
-from ml.inference.llm.base import ChatMessage, LLMBackend
+from ml.inference.llm.base import (
+    AssistantTurn,
+    ChatMessage,
+    LLMBackend,
+    parse_assistant_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +81,32 @@ class APIBackend(LLMBackend):
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
         return json.loads(content)
+
+    async def chat_tools(
+        self,
+        messages: list[ChatMessage],
+        *,
+        tools: list[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+    ) -> AssistantTurn:
+        payload = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "tools": tools,
+            "tool_choice": "auto",
+        }
+        headers = {}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            resp = await client.post(self._endpoint(), json=payload, headers=headers)
+            resp.raise_for_status()
+            msg = resp.json()["choices"][0]["message"]
+        return parse_assistant_message(msg)
 
     async def health(self) -> bool:
         return bool(self._base_url)

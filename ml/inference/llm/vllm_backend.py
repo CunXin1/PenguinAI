@@ -18,7 +18,12 @@ import logging
 import httpx
 
 from ml.core.config import ml_settings
-from ml.inference.llm.base import ChatMessage, LLMBackend
+from ml.inference.llm.base import (
+    AssistantTurn,
+    ChatMessage,
+    LLMBackend,
+    parse_assistant_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +70,30 @@ class VLLMBackend(LLMBackend):
             resp.raise_for_status()
             content = resp.json()["choices"][0]["message"]["content"]
         return json.loads(content)
+
+    async def chat_tools(
+        self,
+        messages: list[ChatMessage],
+        *,
+        tools: list[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+    ) -> AssistantTurn:
+        """Tool-calling via vLLM. Requires the server started with
+        `--enable-auto-tool-choice` and a tool parser for Gemma 4."""
+        payload = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "tools": tools,
+            "tool_choice": "auto",
+        }
+        async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
+            resp = await client.post(f"{self._base_url}/chat/completions", json=payload)
+            resp.raise_for_status()
+            msg = resp.json()["choices"][0]["message"]
+        return parse_assistant_message(msg)
 
     async def health(self) -> bool:
         try:

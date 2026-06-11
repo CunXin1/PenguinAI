@@ -45,17 +45,18 @@ services:
       redis:
         condition: service_healthy
       # Pull the whole backend stack up whenever the API starts (so that
-      # `docker compose up -d api|frontend|nginx` also brings the schedulers,
-      # workers and scrapers — otherwise signals never refresh and background
-      # data never updates). These are start-order only (no health gate).
+      # `docker compose up -d api|frontend|nginx` also brings the schedulers and
+      # workers — otherwise signals never refresh and background data never
+      # updates). These are start-order only (no health gate).
       celery_beat:
         condition: service_started
       celery_worker:
         condition: service_started
       ml_worker:
         condition: service_started
-      scraper:
-        condition: service_started
+      # NOTE: `scraper` is intentionally omitted — data.scrapers.runner does not
+      # exist yet (the Twitter/Reddit scrapers are stubs). Re-add it here and
+      # uncomment the service below once the runner is implemented.
     restart: unless-stopped
     ports:
       - "8000:8000"
@@ -144,6 +145,11 @@ services:
     build:
       context: .
       dockerfile: ml/Dockerfile
+      args:
+        # CPU torch by default (builds on Mac/ARM). GPU host: set TORCH_SPEC +
+        # TORCH_INDEX_URL in .env to install the cu124 wheels instead.
+        TORCH_SPEC: ${TORCH_SPEC:-torch==2.5.1 torchvision==0.20.1}
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-}
     command: celery -A ml.tasks.celery_app worker --loglevel=info --queues=default -c 4
     env_file:
       - path: .env
@@ -162,6 +168,11 @@ services:
     build:
       context: .
       dockerfile: ml/Dockerfile
+      args:
+        # CPU torch by default (builds on Mac/ARM). GPU host: set TORCH_SPEC +
+        # TORCH_INDEX_URL in .env to install the cu124 wheels instead.
+        TORCH_SPEC: ${TORCH_SPEC:-torch==2.5.1 torchvision==0.20.1}
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-}
     command: celery -A ml.tasks.celery_app worker --loglevel=info --queues=ml_inference -c 1
     env_file:
       - path: .env
@@ -195,6 +206,11 @@ services:
     build:
       context: .
       dockerfile: ml/Dockerfile
+      args:
+        # CPU torch by default (builds on Mac/ARM). GPU host: set TORCH_SPEC +
+        # TORCH_INDEX_URL in .env to install the cu124 wheels instead.
+        TORCH_SPEC: ${TORCH_SPEC:-torch==2.5.1 torchvision==0.20.1}
+        TORCH_INDEX_URL: ${TORCH_INDEX_URL:-}
     command: celery -A ml.tasks.celery_app beat --loglevel=info
     env_file:
       - path: .env
@@ -207,23 +223,27 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  scraper:
-    build:
-      context: .
-      dockerfile: data/Dockerfile
-    command: python -m data.scrapers.runner
-    env_file:
-      - path: .env
-        required: false
-    environment:
-      - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD:-penguinai_dev}@timescaledb:5432/penguinai
-      - REDIS_URL=redis://redis:6379/0
-    depends_on:
-      timescaledb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    restart: unless-stopped
+  # DISABLED until the social scrapers are implemented: `data.scrapers.runner`
+  # does not exist yet (data/scrapers/ only has stub twitter/reddit modules), so
+  # this container crash-loops. Uncomment once the runner is built, and re-add
+  # `scraper` to the api `depends_on` block above.
+  # scraper:
+  #   build:
+  #     context: .
+  #     dockerfile: data/Dockerfile
+  #   command: python -m data.scrapers.runner
+  #   env_file:
+  #     - path: .env
+  #       required: false
+  #   environment:
+  #     - DATABASE_URL=postgresql+asyncpg://penguinai:${DB_PASSWORD:-penguinai_dev}@timescaledb:5432/penguinai
+  #     - REDIS_URL=redis://redis:6379/0
+  #   depends_on:
+  #     timescaledb:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   restart: unless-stopped
 
 volumes:
   timescaledb_data:

@@ -47,6 +47,28 @@ class MLSettings(BaseSettings):
     # backend layer (model is now selected per-backend above).
     GEMMA_MODEL_PATH: str = "/models/gemma4"
 
+    # ── Chat assistant (user-facing LLM, PREMIUM) ────────────────────────────
+    # Uses the same backend layer (LLM_BACKEND). Quota metered per user/tier.
+    CHAT_ENABLED: bool = True
+    CHAT_WINDOW_SECONDS: int = 18000  # quota window (5 hours)
+    CHAT_LIMIT_FREE: int = 5  # messages/window for FREE
+    CHAT_LIMIT_PRO: int = 100  # messages/window for PRO
+    CHAT_LIMIT_PREMIUM: int = 0  # PREMIUM/ADMIN: 0 = unlimited
+    CHAT_MAX_INPUT_CHARS: int = 2000  # per user message
+    CHAT_MAX_HISTORY: int = 20  # context turns kept
+    CHAT_MAX_TOKENS: int = 1024  # model output cap
+    CHAT_TEMPERATURE: float = 0.7
+    CHAT_TIMEOUT_SECONDS: int = 60
+
+    def chat_limit_for_tier(self, tier: str) -> int:
+        """Per-window message quota for a tier (0 = unlimited)."""
+        return {
+            "FREE": self.CHAT_LIMIT_FREE,
+            "PRO": self.CHAT_LIMIT_PRO,
+            "PREMIUM": self.CHAT_LIMIT_PREMIUM,
+            "ADMIN": 0,
+        }.get(tier.upper(), self.CHAT_LIMIT_FREE)
+
     def vllm_model(self) -> str:
         """Resolved vLLM model id (HF id or local path)."""
         return self.VLLM_MODEL or f"google/gemma-4-{self.GEMMA_MODEL_VARIANT.upper()}-it"
