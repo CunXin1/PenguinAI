@@ -370,6 +370,82 @@ export const chat = {
       body: JSON.stringify({ content, focus_ticker: focusTicker ?? null }),
       timeoutMs: 120_000,
     }),
+
+  /** Stream a user turn over SSE: tokens arrive as they're generated.
+   *  Handlers fire for each tool invocation, each text delta, the final done
+   *  (with persisted id/title/quota), or an error. */
+  sendMessageStream: async (
+    id: string,
+    content: string,
+    handlers: {
+      onDelta?: (text: string) => void;
+      onTool?: (name: string) => void;
+      onDone?: (data: {
+        message_id: string;
+        title: string;
+        tools_used: string[];
+        usage: ChatQuota;
+      }) => void;
+      onError?: (detail: string, status?: number) => void;
+    },
+    focusTicker?: string | null
+  ): Promise<void> => {
+    let res: Response;
+    try {
+      res = await fetch(`${BASE_URL}/chat/conversations/${id}/messages/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ content, focus_ticker: focusTicker ?? null }),
+      });
+    } catch {
+      handlers.onError?.("Network error — please try again.", 0);
+      return;
+    }
+    if (!res.ok || !res.body) {
+      let detail = "The assistant is unavailable.";
+      try {
+        const d = await res.json();
+        detail = d.detail ?? detail;
+      } catch {
+        /* non-JSON error body */
+      }
+      handlers.onError?.(detail, res.status);
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const frames = buffer.split("\n\n");
+      buffer = frames.pop() ?? "";
+      for (const frame of frames) {
+        const line = frame.trim();
+        if (!line.startsWith("data:")) continue;
+        let ev: { type: string; [k: string]: unknown };
+        try {
+          ev = JSON.parse(line.slice(5).trim());
+        } catch {
+          continue;
+        }
+        if (ev.type === "delta") handlers.onDelta?.(ev.text as string);
+        else if (ev.type === "tool") handlers.onTool?.(ev.name as string);
+        else if (ev.type === "done")
+          handlers.onDone?.(
+            ev as unknown as {
+              message_id: string;
+              title: string;
+              tools_used: string[];
+              usage: ChatQuota;
+            }
+          );
+        else if (ev.type === "error") handlers.onError?.(ev.detail as string);
+      }
+    }
+  },
 };
 
 // ── Admin API ───────────────────────────────────────────────────────────────

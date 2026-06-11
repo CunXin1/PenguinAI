@@ -59,3 +59,26 @@ async def run_chat_agent(
     if not content:
         raise ChatAgentUnavailable("The assistant returned an empty response.")
     return content, result.get("tool_calls_made", [])
+
+
+async def run_chat_agent_stream(
+    *,
+    user_message: str,
+    user_id: Any,
+    tier: str,
+    db: AsyncSession,
+    history: list[dict],
+    focus_ticker: str | None = None,
+):
+    """Streaming variant of :func:`run_chat_agent`.
+
+    Async-generates the agent's events (``tool`` / ``delta`` / ``done`` / ``error``)
+    for the route to relay over SSE. The route owns persistence + quota refund based
+    on the terminal ``done``/``error`` event.
+    """
+    from ml.inference.chat.agent import chat_agent
+    from ml.inference.chat.context import ChatContext
+
+    ctx = ChatContext(user_id=str(user_id), tier=tier, db=db, focus_ticker=focus_ticker)
+    async for event in chat_agent.chat_stream(user_message, ctx, history=history):
+        yield event

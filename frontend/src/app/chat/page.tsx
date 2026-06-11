@@ -30,12 +30,13 @@ const SUGGESTIONS = [
   "Summarize recent news for TSLA.",
 ];
 
-/** A rendered message — stored, or a pending optimistic turn. */
+/** A rendered message — stored, or a pending/streaming optimistic turn. */
 type Msg = {
   role: "user" | "assistant";
   content: string;
   tools_used?: string[];
   id?: string;
+  streaming?: boolean;
 };
 
 function fmtReset(sec: number): string {
@@ -122,6 +123,16 @@ export default function ChatPage() {
     [conversations, activeId, newChat]
   );
 
+  // Append a text delta to the in-flight assistant message (the last one).
+  const appendDelta = useCallback((text: string) => {
+    setMessages((m) => {
+      const c = [...m];
+      const last = c[c.length - 1];
+      if (last?.role === "assistant") c[c.length - 1] = { ...last, content: last.content + text };
+      return c;
+    });
+  }, []);
+
   const send = useCallback(
     async (text: string) => {
       const content = text.trim();
@@ -130,7 +141,12 @@ export default function ChatPage() {
       setInput("");
       setSending(true);
       setError(null);
-      setMessages((m) => [...m, { role: "user", content }]);
+      // Optimistic user turn + an empty assistant bubble that fills as tokens stream.
+      setMessages((m) => [
+        ...m,
+        { role: "user", content },
+        { role: "assistant", content: "", streaming: true },
+      ]);
 
       try {
         // Lazily create a thread on the first message so empty threads never pile up.
@@ -142,43 +158,61 @@ export default function ChatPage() {
           setConversations((cs) => [conv, ...cs]);
         }
 
-        const res = await chatApi.sendMessage(convId, content);
-        setMessages((m) => [
-          ...m,
-          {
-            role: "assistant",
-            content: res.message.content,
-            tools_used: res.message.tools_used,
-            id: res.message.id,
+        await chatApi.sendMessageStream(convId, content, {
+          onDelta: appendDelta,
+          onTool: (name) =>
+            setMessages((m) => {
+              const c = [...m];
+              const last = c[c.length - 1];
+              if (last?.role === "assistant")
+                c[c.length - 1] = { ...last, tools_used: [...(last.tools_used ?? []), name] };
+              return c;
+            }),
+          onDone: (d) => {
+            setMessages((m) => {
+              const c = [...m];
+              const last = c[c.length - 1];
+              if (last?.role === "assistant")
+                c[c.length - 1] = {
+                  ...last,
+                  streaming: false,
+                  id: d.message_id,
+                  tools_used: d.tools_used ?? last.tools_used,
+                };
+              return c;
+            });
+            if (d.usage) setQuota(d.usage);
+            setConversations((cs) => {
+              const rest = cs.filter((c) => c.id !== convId);
+              const existing = cs.find((c) => c.id === convId);
+              const now = new Date().toISOString();
+              return [
+                {
+                  id: convId!,
+                  title: d.title,
+                  created_at: existing?.created_at ?? now,
+                  updated_at: now,
+                },
+                ...rest,
+              ];
+            });
           },
-        ]);
-        setQuota(res.usage);
-        // Bump the thread to the top and apply its (possibly new) title.
-        setConversations((cs) => {
-          const rest = cs.filter((c) => c.id !== convId);
-          const existing = cs.find((c) => c.id === convId);
-          const now = new Date().toISOString();
-          return [
-            {
-              id: convId!,
-              title: res.title,
-              created_at: existing?.created_at ?? now,
-              updated_at: now,
-            },
-            ...rest,
-          ];
+          onError: (detail, status) => {
+            setError(detail);
+            // Server persisted nothing on failure — drop the optimistic pair.
+            setMessages((m) => m.slice(0, -2));
+            if (status === 429) chatApi.quota().then(setQuota).catch(() => {});
+          },
         });
       } catch (e) {
-        const err = e as { status?: number; message?: string };
+        const err = e as { message?: string };
         setError(err.message ?? "Something went wrong. Please try again.");
-        // The server didn't persist on failure — drop the optimistic user turn.
-        setMessages((m) => (m[m.length - 1]?.role === "user" ? m.slice(0, -1) : m));
-        if (err.status === 429) chatApi.quota().then(setQuota).catch(() => {});
+        setMessages((m) => m.slice(0, -2));
       } finally {
         setSending(false);
       }
     },
-    [activeId, sending, exhausted]
+    [activeId, sending, exhausted, appendDelta]
   );
 
   // ── Auth states ──────────────────────────────────────────────
@@ -341,7 +375,17 @@ export default function ChatPage() {
                         : "bg-zinc-100 dark:bg-zinc-800/70 text-zinc-800 dark:text-zinc-200 rounded-bl-sm"
                     )}
                   >
-                    {m.content}
+                    {m.content ? (
+                      m.content
+                    ) : m.streaming ? (
+                      <span className="flex items-center gap-1.5 py-0.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:-0.3s]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:-0.15s]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce" />
+                      </span>
+                    ) : (
+                      ""
+                    )}
                   </div>
                   {m.role === "assistant" && m.tools_used && m.tools_used.length > 0 && (
                     <div className="flex flex-wrap items-center gap-1 pl-1">
@@ -358,16 +402,6 @@ export default function ChatPage() {
                 </div>
               </div>
             ))
-          )}
-
-          {sending && (
-            <div className="flex justify-start">
-              <div className="bg-zinc-100 dark:bg-zinc-800/70 rounded-2xl rounded-bl-sm px-4 py-3 flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:-0.3s]" />
-                <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:-0.15s]" />
-                <span className="w-1.5 h-1.5 rounded-full bg-zinc-400 animate-bounce" />
-              </div>
-            </div>
           )}
 
           {error && (

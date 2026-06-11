@@ -17,10 +17,12 @@ assembled server-side (``ml.inference.chat``) and are never client-controllable.
 The agent's tools are READ-ONLY and scoped to the authenticated user.
 """
 
+import json
 import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -39,7 +41,11 @@ from app.schemas.chat import (
     SendMessageReply,
     SendMessageRequest,
 )
-from app.services.chat_agent import ChatAgentUnavailable, run_chat_agent
+from app.services.chat_agent import (
+    ChatAgentUnavailable,
+    run_chat_agent,
+    run_chat_agent_stream,
+)
 from app.services.chat_llm import ChatUnavailable, complete_chat
 
 logger = logging.getLogger(__name__)
@@ -218,4 +224,102 @@ async def send_message(
         conversation_id=conv.id,
         title=conv.title,
         usage=ChatUsage(**usage),
+    )
+
+
+def _sse(event: dict) -> str:
+    """Serialize one Server-Sent Event frame."""
+    return f"data: {json.dumps(event)}\n\n"
+
+
+@router.post("/conversations/{conversation_id}/messages/stream")
+async def send_message_stream(
+    conversation_id: UUID,
+    req: SendMessageRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """Same as send_message, but streams the reply token-by-token over SSE.
+
+    Frames: ``{type:tool,name}`` · ``{type:delta,text}`` · ``{type:done,...}`` ·
+    ``{type:error,detail}``. The user + assistant turns are persisted only once the
+    stream finishes successfully; a failure refunds the quota and persists nothing.
+    """
+    _ensure_enabled()
+    conv = await _owned_conversation(conversation_id, user, db)
+    usage = await consume_quota(user)  # raises 429 before any model work
+
+    prior = (
+        await db.execute(
+            select(ChatMessage)
+            .where(ChatMessage.conversation_id == conv.id)
+            .order_by(ChatMessage.created_at)
+            .limit(settings.CHAT_MAX_HISTORY)
+        )
+    ).scalars().all()
+    history = [{"role": m.role, "content": m.content} for m in prior]
+    is_first = not prior
+
+    async def event_stream():
+        full_content = ""
+        tools_used: list[str] = []
+        try:
+            async for ev in run_chat_agent_stream(
+                user_message=req.content,
+                user_id=user.id,
+                tier=user.tier,
+                db=db,
+                history=history,
+                focus_ticker=req.focus_ticker,
+            ):
+                if ev["type"] in ("tool", "delta"):
+                    yield _sse(ev)
+                elif ev["type"] == "done":
+                    full_content = (ev.get("content") or "").strip()
+                    tools_used = ev.get("tools_used", [])
+                elif ev["type"] == "error":
+                    await refund_quota(user)
+                    yield _sse(ev)
+                    return
+        except Exception as e:  # noqa: BLE001 — transport failure mid-stream
+            logger.warning("chat stream failed: %s", e)
+            await refund_quota(user)
+            yield _sse({"type": "error", "detail": "The assistant is temporarily unavailable."})
+            return
+
+        if not full_content:
+            await refund_quota(user)
+            yield _sse({"type": "error", "detail": "The assistant returned an empty response."})
+            return
+
+        # Persist both turns; auto-title on the first message; bump updated_at.
+        db.add(ChatMessage(conversation_id=conv.id, role="user", content=req.content))
+        assistant_msg = ChatMessage(
+            conversation_id=conv.id,
+            role="assistant",
+            content=full_content,
+            tools_used=tools_used or [],
+        )
+        db.add(assistant_msg)
+        if is_first:
+            conv.title = _title_from(req.content)
+        conv.updated_at = func.now()
+        await db.flush()
+        await db.refresh(assistant_msg)
+
+        yield _sse(
+            {
+                "type": "done",
+                "message_id": str(assistant_msg.id),
+                "conversation_id": str(conv.id),
+                "title": conv.title,
+                "tools_used": tools_used,
+                "usage": usage,
+            }
+        )
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

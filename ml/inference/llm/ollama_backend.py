@@ -110,6 +110,56 @@ class OllamaBackend(LLMBackend):
             msg = resp.json().get("message", {})
         return parse_assistant_message(msg)
 
+    async def chat_tools_stream(
+        self,
+        messages: list[ChatMessage],
+        *,
+        tools: list[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+    ):
+        """Streaming variant of :meth:`chat_tools`.
+
+        Async-generates incremental events for ONE round:
+          ``{"type": "delta", "text": ...}`` for each content token, then a final
+          ``{"type": "final", "turn": AssistantTurn}`` carrying the accumulated text
+          and any tool calls. With ``think`` disabled, Gemma 4 emits either content
+          deltas (final answer) or a tool-call chunk (no content) — never both — so
+          the caller streams text directly and loops on tool calls.
+        """
+        payload: dict = {
+            "model": self._model,
+            "messages": [self._to_ollama_msg(m) for m in messages],
+            "stream": True,
+            "think": False,
+            "tools": tools,
+            "options": {"temperature": temperature, "num_predict": max_tokens},
+        }
+        content_parts: list[str] = []
+        tool_calls: list[dict] = []
+        async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
+            async with client.stream("POST", f"{self._base_url}/api/chat", json=payload) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    chunk = json.loads(line)
+                    msg = chunk.get("message", {})
+                    if msg.get("content"):
+                        content_parts.append(msg["content"])
+                        yield {"type": "delta", "text": msg["content"]}
+                    if msg.get("tool_calls"):
+                        tool_calls.extend(msg["tool_calls"])
+                    if chunk.get("done"):
+                        break
+        yield {
+            "type": "final",
+            "turn": parse_assistant_message(
+                {"content": "".join(content_parts), "tool_calls": tool_calls}
+            ),
+        }
+
     @staticmethod
     def _to_ollama_msg(msg: dict) -> dict:
         """Adapt an OpenAI-format history message to Ollama's chat shape.

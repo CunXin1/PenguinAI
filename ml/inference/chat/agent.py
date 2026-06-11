@@ -140,5 +140,103 @@ class ChatAgent:
             "messages": messages,
         }
 
+    async def chat_stream(
+        self,
+        user_message: str,
+        ctx: ChatContext,
+        history: list[dict] | None = None,
+    ):
+        """Streaming variant of :meth:`chat`.
+
+        Async-generates events for the caller to forward over SSE:
+          - ``{"type": "tool", "name": ...}`` when a tool is invoked
+          - ``{"type": "delta", "text": ...}`` for each token of the final answer
+          - ``{"type": "done", "content": ..., "tools_used": [...]}`` at the end
+          - ``{"type": "error", "detail": ...}`` on a guard failure
+
+        Tool rounds emit no text (Gemma returns tool_calls with empty content); only
+        the final answer round streams deltas. Falls back to non-streaming if the
+        backend lacks ``chat_tools_stream`` (e.g. vLLM/API), yielding one delta.
+        """
+        if not ml_settings.CHAT_ENABLED:
+            yield {"type": "error", "detail": "Chat is currently disabled."}
+            return
+        user_message = (user_message or "").strip()
+        if not user_message:
+            yield {"type": "error", "detail": "Please enter a message."}
+            return
+        if len(user_message) > ml_settings.CHAT_MAX_INPUT_CHARS:
+            yield {"type": "error", "detail": f"Message too long (max {ml_settings.CHAT_MAX_INPUT_CHARS})."}
+            return
+
+        messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
+        if ctx.focus_ticker:
+            messages.append(
+                {"role": "system", "content": f"The user is currently viewing {ctx.focus_ticker}."}
+            )
+        if history:
+            messages.extend(history[-ml_settings.CHAT_MAX_HISTORY :])
+        messages.append({"role": "user", "content": user_message})
+
+        tools = self.registry.openai_schemas()
+        tool_calls_made: list[str] = []
+        stream_fn = getattr(self.backend, "chat_tools_stream", None)
+
+        for _ in range(MAX_TOOL_ROUNDS):
+            content_parts: list[str] = []
+            turn: AssistantTurn | None = None
+
+            if stream_fn is not None:
+                async for ev in stream_fn(
+                    messages,
+                    tools=tools,
+                    temperature=ml_settings.CHAT_TEMPERATURE,
+                    max_tokens=ml_settings.CHAT_MAX_TOKENS,
+                ):
+                    if ev["type"] == "delta":
+                        content_parts.append(ev["text"])
+                        yield {"type": "delta", "text": ev["text"]}
+                    elif ev["type"] == "final":
+                        turn = ev["turn"]
+            else:  # backend has no streaming — one non-streamed round, emit as a delta
+                turn = await self.backend.chat_tools(
+                    messages,
+                    tools=tools,
+                    temperature=ml_settings.CHAT_TEMPERATURE,
+                    max_tokens=ml_settings.CHAT_MAX_TOKENS,
+                )
+                if not turn.tool_calls and turn.content:
+                    yield {"type": "delta", "text": turn.content}
+
+            assert turn is not None
+            if not turn.tool_calls:
+                yield {
+                    "type": "done",
+                    "content": turn.content or "".join(content_parts),
+                    "tools_used": tool_calls_made,
+                }
+                return
+
+            messages.append(self._assistant_msg(turn))
+            for tc in turn.tool_calls:
+                tool_calls_made.append(tc.name)
+                yield {"type": "tool", "name": tc.name}
+                result = await self.registry.dispatch(tc.name, tc.arguments, ctx)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.id,
+                        "name": tc.name,
+                        "content": json.dumps(result, default=str),
+                    }
+                )
+
+        yield {
+            "type": "done",
+            "content": "I wasn't able to complete that request — too many tool steps.",
+            "tools_used": tool_calls_made,
+            "error": "max_rounds",
+        }
+
 
 chat_agent = ChatAgent()
