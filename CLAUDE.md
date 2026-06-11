@@ -322,7 +322,7 @@ The following are **not** in the Celery beat schedule — they run via backend l
 | Google News RSS | Free news fallback (no API key, no sentiment) | `data/news/ingest.py`, `backend/app/api/routes/news.py` | ✅ live (fallback) |
 | Finnhub — news | Company news (free tier, 60 req/min) | `data/news/ingest.py` (last resort only) | ✅ live (last resort) |
 | Federal Reserve | FOMC statements + hawk/dove scores (FinBERT) | `data/fomc/` (scraper + scorer + loader) → `fomc_statements` | ✅ live (`make fetch-fomc`) |
-| CNN — Fear & Greed | Stock-market Fear & Greed Index (7-factor) + VIX/VVIX volatility | `data/fear_greed/` (CNN + CBOE/Yahoo/FRED) → `fear_greed_index`/`volatility_index`; `fng-sched` thread (startup + hourly); multi-year real-CNN history backfilled via `scripts/backfill_fear_greed.py` (CNN graphdata serves history back to ~2020-09 when a start date is in the path) | ✅ live |
+| CNN — Fear & Greed | Stock-market Fear & Greed Index (7-factor) + VIX/VVIX volatility | `data/fear_greed/` (CNN + CBOE/Yahoo/FRED) → `fear_greed_index`/`volatility_index`; `fng-sched` thread (startup + session-aware: 8 min regular session, 15 min pre/after, 60 min off-session, forced pull at open/close boundaries; staleness guard; publishes health to `app.state.fng_health` → admin data-source panel, flags CNN-down/VIX-proxy fallback); multi-year real-CNN history backfilled via `scripts/backfill_fear_greed.py` (CNN graphdata serves history back to ~2020-09 when a start date is in the path) | ✅ live |
 | Twitter/X · Reddit | Social sentiment | `data/scrapers/*` (Playwright / PRAW) | 🚧 planned — not created |
 | Polygon.io | Historical minute bars (supplemental) | — | ❌ legacy (no loader; superseded by Massive) |
 

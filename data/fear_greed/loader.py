@@ -93,12 +93,28 @@ async def _upsert_vol(engine, rows: list[dict]) -> int:
     return written
 
 
-async def run_loader(database_url: str, *, fred_key: str | None = None) -> int:
-    """Fetch all sources and upsert. Returns total rows written."""
+async def run_loader(database_url: str, *, fred_key: str | None = None) -> dict:
+    """Fetch all sources and upsert.
+
+    Returns a result dict::
+
+        {"rows": int,            # total rows written (vol + fng)
+         "ok": bool,             # True if a Fear & Greed reading was obtained
+         "source": str | None,   # 'cnn' (live) or 'computed' (VIX-proxy fallback)
+         "score": float | None,  # latest F&G score
+         "rating": str | None}   # latest F&G rating
+
+    ``source == "computed"`` means CNN was unreachable and the index was derived
+    from the VIX percentile fallback — the signal a caller uses to flag the CNN
+    endpoint as degraded.
+    """
     if fred_key is None:
         fred_key = os.getenv("FRED_API_KEY", "")
     engine = create_async_engine(database_url)
     written = 0
+    fng_source: str | None = None
+    fng_score: float | None = None
+    fng_rating: str | None = None
     try:
         # ── Volatility first (multi-source, merged + cross-checked) ──
         # The full VIX/VVIX history is re-upserted every run by design: rows are
@@ -123,14 +139,37 @@ async def run_loader(database_url: str, *, fred_key: str | None = None) -> int:
             fng = compute_fng_from_vix(vix_rows)
         if fng:
             n = await _upsert_fng(engine, fng)
+            fng_source = fng.get("source", "cnn")
+            fng_score = fng["score"]
+            fng_rating = fng["rating"]
             logger.info("fear&greed: upserted %d daily rows (score=%.1f %s, source=%s)",
-                        n, fng["score"], fng["rating"], fng.get("source", "cnn"))
+                        n, fng_score, fng_rating, fng_source)
             written += n
         else:
             logger.warning("fear&greed: no data from CNN or VIX fallback")
     finally:
         await engine.dispose()
-    return written
+    return {
+        "rows": written,
+        "ok": fng_source is not None,
+        "source": fng_source,
+        "score": fng_score,
+        "rating": fng_rating,
+    }
+
+
+async def latest_fng_time(database_url: str) -> datetime | None:
+    """Return the timestamp of the newest ``fear_greed_index`` row (or None)."""
+    engine = create_async_engine(database_url)
+    try:
+        async with engine.connect() as conn:
+            row = (await conn.execute(text("SELECT max(time) FROM fear_greed_index"))).scalar()
+        return row
+    except Exception:
+        logger.warning("fear&greed: latest-time probe failed", exc_info=True)
+        return None
+    finally:
+        await engine.dispose()
 
 
 async def backfill_fng_from_cnn(database_url: str, start_date: str = "2020-09-01") -> int:
@@ -184,5 +223,8 @@ if __name__ == "__main__":
     if "+asyncpg" not in _db:
         _db = _db.replace("postgresql://", "postgresql+asyncpg://")
 
-    _n = asyncio.run(run_loader(_db))
-    logger.info("fear&greed loader: %d rows written", _n)
+    _res = asyncio.run(run_loader(_db))
+    logger.info(
+        "fear&greed loader: %d rows written (score=%s source=%s)",
+        _res["rows"], _res["score"], _res["source"],
+    )

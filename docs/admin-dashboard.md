@@ -173,10 +173,14 @@ Celery 信号处理器（在 `ml/tasks/celery_app.py` 中注册）在任务开�
 
 **展示内容**:
 1. **实时源卡片** — IBKR、Finnhub、Massive、30m Bar Closer 的连接状态、uptime、重启次数
-2. **数据新鲜度网格** — 每个关键表的最新时间戳（相对时间显示，如 "2h ago"）
-3. **Symbol 覆盖** — 实时 1min 流的 symbol 数、instruments 总数、活跃 ticker 数
+2. **Fear & Greed (CNN) 健康卡** — `fng-sched` 调度器状态：`healthy` / `degraded`（CNN 不可达，
+   改用 VIX 代理回退）/ `down`（连续失败 ≥3 次）/ `unknown`，并显示数据源（live CNN vs VIX proxy）、
+   当前分值、最后成功时间、当前时段与刷新间隔、下次运行、连续失败数与最后错误。CNN 端点坏掉即在此显示
+3. **数据新鲜度网格** — 每个关键表的最新时间戳（相对时间显示，如 "2h ago"）
+4. **Symbol 覆盖** — 实时 1min 流的 symbol 数、instruments 总数、活跃 ticker 数
 
-数据来源：实时服务状态从 `_watchdog.health.services` 读取，新鲜度通过 `SELECT max(timestamp_col)` 查询。
+数据来源：实时服务状态从 `_watchdog.health.services` 读取；Fear & Greed 健康从 `app.state.fng_health`
+（由调度器线程发布）读取，状态由 `datasources.py:_fng_status` 推导；新鲜度通过 `SELECT max(timestamp_col)` 查询。
 
 ---
 

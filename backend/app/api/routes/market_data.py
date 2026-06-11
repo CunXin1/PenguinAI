@@ -144,6 +144,8 @@ async def get_quotes(
                 WHERE m.ticker = l.ticker
                   AND m.time < date_trunc('day', l.time AT TIME ZONE 'America/New_York')
                                AT TIME ZONE 'America/New_York'
+                  AND (m.time AT TIME ZONE 'America/New_York')::time >= time '09:30'
+                  AND (m.time AT TIME ZONE 'America/New_York')::time <  time '16:00'
                 ORDER BY m.time DESC LIMIT 1
             ) p ON TRUE
             LEFT JOIN LATERAL (
@@ -208,6 +210,8 @@ async def get_mini(
                 WHERE m.ticker = l.ticker
                   AND m.time < date_trunc('day', l.last_t AT TIME ZONE 'America/New_York')
                                AT TIME ZONE 'America/New_York'
+                  AND (m.time AT TIME ZONE 'America/New_York')::time >= time '09:30'
+                  AND (m.time AT TIME ZONE 'America/New_York')::time <  time '16:00'
                 ORDER BY m.time DESC LIMIT 1
             ) p ON TRUE
             LEFT JOIN LATERAL (

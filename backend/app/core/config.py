@@ -145,9 +145,10 @@ class Settings(BaseSettings):
 
     # ── Fear & Greed / Volatility ────────────────────────────────
     # No settings here by design: source URLs are module constants in
-    # data/fear_greed/{cnn,cboe}.py (single source of truth), and
-    # FEAR_GREED_REFRESH_MIN is read directly from the environment by
-    # data/fear_greed/scheduler.py.
+    # data/fear_greed/{cnn,cboe}.py (single source of truth). The session-aware
+    # scheduler reads FEAR_GREED_RTH_MIN (regular-session cadence, default 8) and
+    # FEAR_GREED_STALE_MIN (force-refresh threshold, default 90) directly from the
+    # environment in data/fear_greed/scheduler.py.
 
     # ── Data freshness backfill ──────────────────────────────────
     # Keeps bars_30m / bars_1d current by rolling the 1-min stream forward on

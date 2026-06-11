@@ -26,7 +26,7 @@ ingestion code lands).
 | Quiver Quant | Congressional trades (Pelosi, Tuberville, MTG, Crenshaw) | `celebrity_holdings` | ✅ Live | `data/celebrity/congress.py` (daily auto-fetch) |
 | arkfunds.io | ARK Invest daily trades (Cathie Wood) | `celebrity_holdings` | ✅ Live | `data/celebrity/ark.py` (daily auto-fetch) |
 | Federal Reserve FOMC | FOMC statements + hawk/dove scores | `fomc_statements` | ✅ Live | `data/fomc/` (scraper + scorer + loader + scheduler), wired in `main.py` as `fomc-sched` |
-| CNN Fear & Greed + CBOE/Yahoo/FRED | Fear & Greed Index (7-factor) + VIX/VVIX volatility | `fear_greed_index`, `volatility_index` | ✅ Live | `data/fear_greed/` (cnn/cboe/yahoo/fred/volatility/loader/fallback/scheduler), `fng-sched` thread (startup + hourly), route `/api/fear-greed`. Multi-year real-CNN history (~2020-09→) backfilled via `scripts/backfill_fear_greed.py`; VIX-percentile `fallback.py` is used only when CNN is live-unreachable |
+| CNN Fear & Greed + CBOE/Yahoo/FRED | Fear & Greed Index (7-factor) + VIX/VVIX volatility | `fear_greed_index`, `volatility_index` | ✅ Live | `data/fear_greed/` (cnn/cboe/yahoo/fred/volatility/loader/fallback/scheduler), `fng-sched` thread (startup + session-aware cadence, see §8), route `/api/fear-greed`. Multi-year real-CNN history (~2020-09→) backfilled via `scripts/backfill_fear_greed.py`; VIX-percentile `fallback.py` is used only when CNN is live-unreachable |
 | Polygon.io | Supplemental bars | — | ❌ Legacy placeholder (env key only, no loader) | superseded by Massive |
 
 > **Reality check.** `data/scrapers/` and `data/ingestion/polygon_loader.py` do
@@ -244,6 +244,41 @@ Cold tickers are fetched on-demand via the API, cached 10 min, not stored.
 **API**: `/api/news/market` (general feed), `/api/news/hot` (DB-backed), `/api/news/{ticker}`
 (hot=DB→fallback, cold=API-only). All return unified JSON with `sentiment` + `sentiment_score`.
 
+### 8. Fear & Greed *(live)*
+
+**Files**: `data/fear_greed/cnn.py` (CNN graphdata fetch) · `loader.py` (upsert +
+result dict) · `scheduler.py` (lifespan thread) · `fallback.py` (VIX-percentile proxy) ·
+route `backend/app/api/routes/fear_greed.py`.
+
+**Why a session-aware cadence**: CNN's live dial (`fear_and_greed.score`) updates
+several times during the regular session, while the historical array is one point
+per day. A flat hourly poll under-sampled the live value, so the dashboard could
+lag CNN's headline number by a point or two. The endpoint is CNN's own front-end
+JSON (CDN-cached, no published rate limit), so polling more often is cheap and safe.
+
+**Refresh cadence** (`fng-sched` thread, NYSE calendar via `app.core.market_clock.get_session_phase`):
+
+| Session phase | Interval |
+|---------------|----------|
+| REGULAR (09:30–close ET) | 8 min (`FEAR_GREED_RTH_MIN`, default 8) |
+| PRE_MARKET | 15 min — captures the reading right before the open |
+| AFTER_HOURS | 15 min — captures the finalized reading after the close |
+| OVERNIGHT / CLOSED | 60 min — heartbeat; the value is static off-session |
+
+On top of the interval: a **startup** fetch (covers a restart), a **forced pull on
+every session-phase boundary** (so the open and close each get a fresh value exactly
+on time), and a **staleness guard** — if the last *successful* fetch is older than
+`FEAR_GREED_STALE_MIN` (default 90 min), a fetch is forced without waiting for the
+cadence. The API route caches the current reading for 180 s to match the 8-min cadence.
+
+**Health monitoring**: the scheduler publishes its state to `app.state.fng_health`
+(last success, source, score, consecutive failures, current phase, next run), surfaced
+by the admin data-source endpoint (`GET /api/admin/datasources/status` → `fear_greed`)
+and the **Data Sources** panel. Status is derived as: `healthy` (recent live CNN),
+`degraded` (CNN unreachable → running on the VIX-proxy fallback, i.e. `source == "computed"`,
+or data stale), `down` (≥3 consecutive failures / never succeeded), `unknown` (not run yet).
+This is how a broken CNN endpoint shows up in the admin panel.
+
 ### Data Quality Considerations
 
 **Adjusted vs. raw bars** — `bars_30m` / `bars_1d` store both `raw_*` and `adj_*`
@@ -291,7 +326,7 @@ ORDER BY bars;
 | Google News RSS | 免费新闻备选（无 key，无情绪） | 同上 | ✅ 备用 | `data/news/ingest.py` |
 | Finnhub — 新闻 | 公司新闻（免费版，60 req/min） | 同上 | ✅ 最后手段 | `data/news/ingest.py` |
 | Federal Reserve FOMC | FOMC 声明 + 鹰鸽评分 | `fomc_statements` | ✅ 已接入 | `data/fomc/`（爬取+评分+加载+调度），`main.py` 中 `fomc-sched` 线程 |
-| CNN Fear & Greed + CBOE/Yahoo/FRED | 恐惧贪婪指数（7 因子）+ VIX/VVIX 波动率 | `fear_greed_index`、`volatility_index` | ✅ 已接入 | `data/fear_greed/`，`fng-sched` 线程（启动 + 每小时），路由 `/api/fear-greed`。多年真实 CNN 历史（~2020-09 起）由 `scripts/backfill_fear_greed.py` 回填；`fallback.py` 的 VIX 百分位估算仅在 CNN 实时不可达时使用 |
+| CNN Fear & Greed + CBOE/Yahoo/FRED | 恐惧贪婪指数（7 因子）+ VIX/VVIX 波动率 | `fear_greed_index`、`volatility_index` | ✅ 已接入 | `data/fear_greed/`，`fng-sched` 线程（启动 + 按交易时段刷新，见下节），路由 `/api/fear-greed`。多年真实 CNN 历史（~2020-09 起）由 `scripts/backfill_fear_greed.py` 回填；`fallback.py` 的 VIX 百分位估算仅在 CNN 实时不可达时使用 |
 | Polygon.io | 补充 K 线 | — | ❌ 遗留占位（仅 env，无 loader） | 已被 Massive 取代 |
 
 > **现状提醒**：`data/scrapers/` 与 `polygon_loader.py` **不存在**。社媒表由 schema
@@ -309,6 +344,33 @@ ORDER BY bars;
   取复权（`adj_*`）序列。
 - 清洗/构建脚本在 `backend/scripts/market_data/`；完整数据字典与复现步骤见
   **`data/docs/`**（从 `data/docs/README.md` 开始）。
+
+### 恐惧贪婪指数：刷新策略与健康监控
+
+**为什么按交易时段刷新**：CNN 的实时指针（`fear_and_greed.score`）在盘中每隔几分钟
+更新一次，而历史数组每天只有一个点。原先固定每小时拉一次对实时值采样不足，前端会比
+CNN 首页数字慢一两点。这个端点是 CNN 自家前端用的 JSON（CDN 缓存，无公开限额），所以
+提高频率既便宜又安全。
+
+**刷新节奏**（`fng-sched` 线程，经 `app.core.market_clock.get_session_phase` 用 NYSE 日历判定时段）：
+
+| 时段 | 间隔 |
+|------|------|
+| REGULAR（盘中 09:30–收盘 ET） | 8 分钟（`FEAR_GREED_RTH_MIN`，默认 8） |
+| PRE_MARKET 盘前 | 15 分钟 — 抓取开盘前的最新值 |
+| AFTER_HOURS 盘后 | 15 分钟 — 抓取收盘后定稿值 |
+| OVERNIGHT / CLOSED 隔夜/休市 | 60 分钟 — 心跳；非交易时段值静止 |
+
+在间隔之外还有：**启动即拉一次**（覆盖重启）、**每次时段切换强制拉一次**（开盘、收盘
+各精确补一笔），以及**陈旧保护** —— 距上次*成功*拉取超过 `FEAR_GREED_STALE_MIN`
+（默认 90 分钟）则不等节奏立即补拉。API 路由对当前读数缓存 180 秒，与 8 分钟节奏对齐。
+
+**健康监控**：调度器把状态发布到 `app.state.fng_health`（最后成功时间、数据源、分值、
+连续失败次数、当前时段、下次运行），由 admin 数据源接口
+（`GET /api/admin/datasources/status` → `fear_greed`）和 **Data Sources** 面板呈现。
+状态判定：`healthy`（近期实时 CNN 正常）、`degraded`（CNN 不可达 → 改用 VIX 代理回退，
+即 `source == "computed"`，或数据陈旧）、`down`（连续失败 ≥3 次 / 从未成功）、`unknown`
+（尚未运行）。CNN 端点坏掉就是通过这里在 admin 面板显示出来的。
 
 ### 数据质量注意事项
 

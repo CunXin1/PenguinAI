@@ -21,7 +21,7 @@ router = APIRouter()
 
 # ── In-process TTL cache (same pattern as the FOMC route) ─────────────────────
 _cache: dict[str, tuple[float, object]] = {}
-_TTL = 300.0  # 5 min — the scheduler refreshes hourly
+_TTL = 180.0  # 3 min — aligns with the 8-min RTH scheduler cadence (see data.fear_greed)
 
 
 def _get_cached(key: str):

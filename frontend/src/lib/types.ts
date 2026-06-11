@@ -572,10 +572,25 @@ export interface DataFreshness {
   latest_ts: string | null;
 }
 
+export interface FearGreedSourceHealth {
+  status: "healthy" | "degraded" | "down" | "unknown";
+  source: string | null; // 'cnn' | 'computed' (VIX-proxy fallback)
+  score: number | null;
+  rating: string | null;
+  phase: string | null;
+  interval_min: number | null;
+  consecutive_failures: number;
+  last_success_at: string | null;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  last_error: string | null;
+}
+
 export interface AdminDataSourceStatus {
   realtime: RealtimeSourceStatus[];
   freshness: DataFreshness[];
   coverage: Record<string, number>;
+  fear_greed?: FearGreedSourceHealth | null;
 }
 
 export interface ModelFileInfo {

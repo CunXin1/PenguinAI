@@ -116,9 +116,25 @@ class DataFreshness(BaseModel):
     latest_ts: datetime | None = None
 
 
+class FearGreedSourceHealth(BaseModel):
+    status: str  # healthy | degraded | down | unknown
+    source: str | None = None  # 'cnn' | 'computed' (VIX-proxy fallback)
+    score: float | None = None
+    rating: str | None = None
+    phase: str | None = None
+    interval_min: int | None = None
+    consecutive_failures: int = 0
+    last_success_at: str | None = None
+    last_run_at: str | None = None
+    next_run_at: str | None = None
+    last_error: str | None = None
+
+
 class DataSourceStatus(BaseModel):
     realtime: list[RealtimeSourceStatus]
     freshness: list[DataFreshness]
+    coverage: dict[str, int] = {}
+    fear_greed: FearGreedSourceHealth | None = None
 
 
 # ── Section F: Model Performance ──────────────────────────────────────────────

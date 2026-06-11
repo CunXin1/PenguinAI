@@ -76,6 +76,65 @@ export function DataSourceStatus() {
         ))}
       </div>
 
+      {/* Fear & Greed scheduler health */}
+      {data.fear_greed && (
+        <div>
+          <p className="text-[11px] text-zinc-500 uppercase tracking-wider mb-2">
+            Fear &amp; Greed (CNN)
+          </p>
+          <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-3 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <StatusDot status={data.fear_greed.status} />
+                <span className="text-xs font-medium text-zinc-800 dark:text-zinc-200 capitalize">
+                  {data.fear_greed.status}
+                </span>
+                <span className="text-[10px] text-zinc-500">
+                  {data.fear_greed.source === "computed"
+                    ? "VIX proxy (CNN down)"
+                    : data.fear_greed.source === "cnn"
+                      ? "live CNN"
+                      : "—"}
+                </span>
+              </div>
+              {data.fear_greed.score != null && (
+                <span className="text-xs font-mono text-zinc-700 dark:text-zinc-300">
+                  {Math.round(data.fear_greed.score)}
+                  {data.fear_greed.rating ? ` · ${data.fear_greed.rating}` : ""}
+                </span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-zinc-500">
+              <span>
+                last ok{" "}
+                <span className="text-zinc-600 dark:text-zinc-400">
+                  {data.fear_greed.last_success_at ? timeAgo(data.fear_greed.last_success_at) : "—"}
+                </span>
+              </span>
+              {data.fear_greed.phase && (
+                <span>
+                  phase <span className="text-zinc-600 dark:text-zinc-400">{data.fear_greed.phase}</span>
+                  {data.fear_greed.interval_min != null && ` · every ${data.fear_greed.interval_min}m`}
+                </span>
+              )}
+              {data.fear_greed.next_run_at && (
+                <span>
+                  next <span className="text-zinc-600 dark:text-zinc-400">{timeAgo(data.fear_greed.next_run_at)}</span>
+                </span>
+              )}
+              {data.fear_greed.consecutive_failures > 0 && (
+                <span className="text-amber-600 dark:text-amber-400">
+                  {data.fear_greed.consecutive_failures} consecutive failures
+                </span>
+              )}
+            </div>
+            {data.fear_greed.last_error && (
+              <p className="text-[10px] text-red-500 dark:text-red-400">{data.fear_greed.last_error}</p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Data freshness */}
       <div>
         <p className="text-[11px] text-zinc-500 uppercase tracking-wider mb-2">Data Freshness</p>

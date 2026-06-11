@@ -95,6 +95,77 @@ class VLLMBackend(LLMBackend):
             msg = resp.json()["choices"][0]["message"]
         return parse_assistant_message(msg)
 
+    async def chat_tools_stream(
+        self,
+        messages: list[ChatMessage],
+        *,
+        tools: list[dict],
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+    ):
+        """Streaming variant of :meth:`chat_tools` over the OpenAI SSE protocol.
+
+        Async-generates ``{"type": "delta", "text": ...}`` per content token, then a
+        ``{"type": "final", "turn": AssistantTurn}``. OpenAI-style tool calls stream
+        as fragments keyed by ``index`` (name once, arguments concatenated across
+        chunks), so they are reassembled before the final parse. Mirrors the Ollama
+        backend so the chat agent streams identically on either transport.
+        """
+        payload = {
+            "model": self._model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "tools": tools,
+            "tool_choice": "auto",
+            "stream": True,
+        }
+        content_parts: list[str] = []
+        tool_acc: dict[int, dict] = {}
+        async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
+            async with client.stream(
+                "POST", f"{self._base_url}/chat/completions", json=payload
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    line = line.strip()
+                    if not line.startswith("data:"):
+                        continue
+                    data = line[len("data:") :].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        choices = json.loads(data).get("choices") or []
+                    except json.JSONDecodeError:
+                        continue
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {})
+                    if delta.get("content"):
+                        content_parts.append(delta["content"])
+                        yield {"type": "delta", "text": delta["content"]}
+                    for tc in delta.get("tool_calls") or []:
+                        slot = tool_acc.setdefault(
+                            tc.get("index", 0), {"id": "", "name": "", "arguments": ""}
+                        )
+                        if tc.get("id"):
+                            slot["id"] = tc["id"]
+                        fn = tc.get("function", {})
+                        if fn.get("name"):
+                            slot["name"] = fn["name"]
+                        if fn.get("arguments"):
+                            slot["arguments"] += fn["arguments"]
+        tool_calls = [
+            {"id": s["id"], "function": {"name": s["name"], "arguments": s["arguments"]}}
+            for _, s in sorted(tool_acc.items())
+        ]
+        yield {
+            "type": "final",
+            "turn": parse_assistant_message(
+                {"content": "".join(content_parts), "tool_calls": tool_calls}
+            ),
+        }
+
     async def health(self) -> bool:
         try:
             async with httpx.AsyncClient(timeout=5.0, trust_env=False) as client:

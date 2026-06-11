@@ -523,15 +523,20 @@ async def lifespan(app: FastAPI):
     except ImportError:
         logger.warning("data.fomc.scheduler not available — FOMC scheduler disabled")
 
-    # Fear & Greed + VIX/VVIX: startup fetch + hourly refresh (CNN + CBOE/Yahoo/FRED)
+    # Fear & Greed + VIX/VVIX: startup fetch + session-aware refresh (8 min during
+    # the regular session; 15 min pre/after; 60 min off-session). The scheduler
+    # publishes its health into app.state.fng_health for the admin data-source panel.
     fng_thread = None
+    app.state.fng_health = {}
     try:
+        from app.core.market_clock import get_session_phase
         from data.fear_greed.scheduler import run_scheduler as _run_fng
 
         _fng_stop.clear()
         fng_thread = threading.Thread(
             target=_run_fng,
             args=(_fng_stop, settings.DATABASE_URL),
+            kwargs={"health": app.state.fng_health, "phase_fn": get_session_phase},
             daemon=True,
             name="fng-sched",
         )

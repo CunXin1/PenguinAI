@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
@@ -10,6 +11,32 @@ from app.api.deps import get_db, require_tier
 
 router = APIRouter()
 AdminUser = Depends(require_tier("ADMIN"))
+
+# Last successful F&G fetch older than this reads as stale (the cadence is ≤60 min).
+_FNG_STALE_S = 2 * 3600
+
+
+def _fng_status(h: dict | None) -> str:
+    """Derive a health label for the Fear & Greed source from its published state.
+
+    healthy  — recent CNN success
+    degraded — CNN unreachable (running on the VIX-proxy fallback) or data stale
+    down     — repeated failures / never succeeded
+    unknown  — scheduler hasn't run yet
+    """
+    if not h or not h.get("last_run_at"):
+        return "unknown"
+    if h.get("consecutive_failures", 0) >= 3 or not h.get("last_success_at"):
+        return "down"
+    if h.get("source") == "computed":
+        return "degraded"
+    try:
+        age = (datetime.now(UTC) - datetime.fromisoformat(h["last_success_at"])).total_seconds()
+        if age > _FNG_STALE_S:
+            return "degraded"
+    except (ValueError, TypeError):
+        pass
+    return "healthy"
 
 _FRESHNESS_QUERIES: list[tuple[str, str]] = [
     ("market_data_1min", "SELECT max(time) FROM market_data_1min"),
@@ -85,8 +112,25 @@ async def datasource_status(
     except Exception:
         coverage["tickers_active"] = 0
 
+    # 4. Fear & Greed scheduler health (CNN endpoint up? on fallback? stale?)
+    fng_health = getattr(request.app.state, "fng_health", None)
+    fear_greed = {
+        "status": _fng_status(fng_health),
+        "source": (fng_health or {}).get("source"),
+        "score": (fng_health or {}).get("score"),
+        "rating": (fng_health or {}).get("rating"),
+        "phase": (fng_health or {}).get("phase"),
+        "interval_min": (fng_health or {}).get("interval_min"),
+        "consecutive_failures": (fng_health or {}).get("consecutive_failures", 0),
+        "last_success_at": (fng_health or {}).get("last_success_at"),
+        "last_run_at": (fng_health or {}).get("last_run_at"),
+        "next_run_at": (fng_health or {}).get("next_run_at"),
+        "last_error": (fng_health or {}).get("last_error"),
+    }
+
     return {
         "realtime": realtime,
         "freshness": freshness,
         "coverage": coverage,
+        "fear_greed": fear_greed,
     }
