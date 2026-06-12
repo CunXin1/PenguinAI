@@ -12,6 +12,7 @@ python-multipart==0.0.32
 celery[redis]==5.6.3
 redis==5.2.1
 httpx==0.28.1
+openai-agents==0.17.5  # PREMIUM chat agent harness (pulls openai SDK); tool-calling over local Gemma via OpenAI-compat
 python-dotenv==1.0.1
 pandas>=2.2
 exchange-calendars>=4.5

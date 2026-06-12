@@ -11,9 +11,12 @@ from pathlib import Path
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import TimeSeriesSplit
 
-from ml.models.xgboost_trainer import DEFAULT_PARQUET_ROOT, load_training_data
+from ml.models.xgboost_trainer import (
+    DEFAULT_PARQUET_ROOT,
+    load_training_data,
+    purged_walk_forward_splits,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +32,7 @@ def train(
         output_path = Path(ml_settings.MODEL_DIR) / "rf_prod.pkl"
 
     logger.info("Loading training data for Random Forest...")
-    X, y = load_training_data(parquet_root, tickers=tickers, horizon_bars=horizon_bars)
+    X, y, cv_meta = load_training_data(parquet_root, tickers=tickers, horizon_bars=horizon_bars)
 
     model = RandomForestClassifier(
         n_estimators=300,
@@ -40,10 +43,9 @@ def train(
         class_weight="balanced",
     )
 
-    tscv = TimeSeriesSplit(n_splits=5)
     auc_scores = []
 
-    for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
+    for fold, (train_idx, val_idx) in enumerate(purged_walk_forward_splits(cv_meta, n_splits=5)):
         X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
         y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
         model.fit(X_train.fillna(0), y_train)

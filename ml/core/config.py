@@ -60,6 +60,14 @@ class MLSettings(BaseSettings):
     CHAT_TEMPERATURE: float = 0.7
     CHAT_TIMEOUT_SECONDS: int = 60
 
+    # OpenAI Agents SDK runner (replaces the hand-rolled tool loop when on).
+    CHAT_AGENT_SDK: bool = False
+    # Per-role model tiers for the SDK agent. Blank → the resolved backend model.
+    #   main: user-facing orchestrator / synthesis (can point at a bigger model or API)
+    #   narrow: single-ticker sub-agents (structured output) — local small model is fine
+    CHAT_MAIN_MODEL: str = ""
+    CHAT_NARROW_MODEL: str = ""
+
     def chat_limit_for_tier(self, tier: str) -> int:
         """Per-window message quota for a tier (0 = unlimited)."""
         return {

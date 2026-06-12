@@ -40,7 +40,7 @@ async def run_chat_agent(
     route can refund the quota and return 503.
     """
     # Imported lazily so a stripped/test backend without `ml` still imports this module.
-    from ml.inference.chat.agent import chat_agent
+    from ml.core.config import ml_settings
     from ml.inference.chat.context import ChatContext
 
     ctx = ChatContext(
@@ -50,7 +50,14 @@ async def run_chat_agent(
         focus_ticker=focus_ticker,
     )
     try:
-        result = await chat_agent.chat(user_message, ctx, history=history)
+        if ml_settings.CHAT_AGENT_SDK:
+            from ml.inference.agents import run as sdk_run
+
+            result = await sdk_run(user_message, ctx, history=history)
+        else:
+            from ml.inference.chat.agent import chat_agent
+
+            result = await chat_agent.chat(user_message, ctx, history=history)
     except Exception as e:  # noqa: BLE001 — transport/parse errors map to 503
         logger.warning("chat agent failed: %s", e)
         raise ChatAgentUnavailable("The assistant is temporarily unavailable.") from e
@@ -76,9 +83,17 @@ async def run_chat_agent_stream(
     for the route to relay over SSE. The route owns persistence + quota refund based
     on the terminal ``done``/``error`` event.
     """
-    from ml.inference.chat.agent import chat_agent
+    from ml.core.config import ml_settings
     from ml.inference.chat.context import ChatContext
 
     ctx = ChatContext(user_id=str(user_id), tier=tier, db=db, focus_ticker=focus_ticker)
-    async for event in chat_agent.chat_stream(user_message, ctx, history=history):
-        yield event
+    if ml_settings.CHAT_AGENT_SDK:
+        from ml.inference.agents import run_stream as sdk_run_stream
+
+        async for event in sdk_run_stream(user_message, ctx, history=history):
+            yield event
+    else:
+        from ml.inference.chat.agent import chat_agent
+
+        async for event in chat_agent.chat_stream(user_message, ctx, history=history):
+            yield event
