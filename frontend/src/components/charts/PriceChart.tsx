@@ -8,7 +8,7 @@ import { marketData } from "@/lib/api";
 import { Card } from "@/components/ui/Card";
 import { useMarketStatus } from "@/lib/market-status";
 import { cn, money, signedPct } from "@/lib/utils";
-import type { CandleBar, ChartRange, SessionPhase } from "@/lib/types";
+import type { CandleBar, ChartRange, SeriesIndicatorPoint, SessionPhase } from "@/lib/types";
 
 type SeriesType = "area" | "candles";
 
@@ -48,8 +48,68 @@ const REFRESH_MS = 15_000;
 // and they don't refetch on every visit.
 const DAILY_STALE_MS = 5 * 60_000;
 
+// ── Indicator catalog ─────────────────────────────────────────────────────────
+// Each chip is a logical indicator mapping to one or more DB columns (from
+// /series?indicators=…) and a render target: a price-pane overlay line, an
+// oscillator sub-pane, or the volume histogram (which uses bar volume directly).
+type IndicatorKey =
+  | "vwap" | "ema12" | "ema26" | "sma20" | "sma50" | "sma200"
+  | "bb" | "macd" | "rsi" | "volume";
+
+interface IndicatorDef {
+  label: string;
+  cols: string[]; // DB columns to request (empty → derived from bars, e.g. volume)
+  pane: "price" | "oscillator" | "volume";
+  color: string; // chip accent + (single-line) series color
+}
+
+const INDICATORS: Record<IndicatorKey, IndicatorDef> = {
+  vwap: { label: "VWAP", cols: ["vwap_day"], pane: "price", color: "#a855f7" },
+  ema12: { label: "EMA 12", cols: ["ema_12"], pane: "price", color: "#3b82f6" },
+  ema26: { label: "EMA 26", cols: ["ema_26"], pane: "price", color: "#f59e0b" },
+  sma20: { label: "SMA 20", cols: ["sma_20"], pane: "price", color: "#06b6d4" },
+  sma50: { label: "SMA 50", cols: ["sma_50"], pane: "price", color: "#eab308" },
+  sma200: { label: "SMA 200", cols: ["sma_200"], pane: "price", color: "#ec4899" },
+  bb: { label: "Bollinger", cols: ["bb_upper", "bb_mid", "bb_lower"], pane: "price", color: "#71717a" },
+  macd: { label: "MACD", cols: ["macd", "macd_signal", "macd_hist"], pane: "oscillator", color: "#3b82f6" },
+  rsi: { label: "RSI", cols: ["rsi_14"], pane: "oscillator", color: "#a855f7" },
+  volume: { label: "Volume", cols: [], pane: "volume", color: "#71717a" },
+};
+
+// Per-range: which chips are offered, and which start enabled. Mirrors the agreed
+// design — each timeframe shows indicators meaningful at its bar granularity.
+const RANGE_INDICATORS: Record<ChartRange, { available: IndicatorKey[]; defaults: IndicatorKey[] }> = {
+  "1D": { available: ["vwap", "ema12", "ema26", "rsi", "bb", "volume"], defaults: ["vwap"] },
+  "1W": { available: ["vwap", "ema12", "ema26", "macd", "rsi", "bb", "volume"], defaults: ["vwap", "ema12", "ema26"] },
+  "1M": { available: ["sma20", "sma50", "ema12", "ema26", "macd", "rsi", "bb", "volume"], defaults: ["sma20", "sma50", "macd"] },
+  "3M": { available: ["sma20", "sma50", "sma200", "ema12", "ema26", "macd", "rsi", "bb", "volume"], defaults: ["sma20", "sma50", "macd", "rsi"] },
+  "1Y": { available: ["sma50", "sma200", "ema12", "ema26", "macd", "rsi", "bb", "volume"], defaults: ["sma50", "sma200", "macd"] },
+};
+
+const STORE_KEY = "penguinai_chart_indicators_v1";
+
+function loadSelections(): Partial<Record<ChartRange, IndicatorKey[]>> {
+  if (typeof window === "undefined") return {};
+  try {
+    return JSON.parse(window.localStorage.getItem(STORE_KEY) || "{}");
+  } catch {
+    return {};
+  }
+}
+
+/** DB columns to fetch for a range = union of all its AVAILABLE chips' columns
+ *  (not just the enabled ones), so toggling a chip never triggers a refetch. */
+function rangeIndicatorCols(range: ChartRange): string[] {
+  const cols = new Set<string>();
+  for (const k of RANGE_INDICATORS[range].available) {
+    for (const c of INDICATORS[k].cols) cols.add(c);
+  }
+  return [...cols];
+}
+
 interface SeriesData {
   bars: CandleBar[];
+  indicators: Record<string, SeriesIndicatorPoint[]>;
   prev_close: number | null;
 }
 
@@ -58,11 +118,12 @@ function seriesQuery(ticker: string, range: ChartRange) {
   return {
     queryKey: ["series", ticker, range] as const,
     queryFn: async (): Promise<SeriesData> => {
-      const res = await marketData.series(ticker, range);
+      const res = await marketData.series(ticker, range, rangeIndicatorCols(range));
       return {
         bars: (res?.bars ?? []).filter(
           (b) => Number.isFinite(b.time) && Number.isFinite(b.close)
         ),
+        indicators: res?.indicators ?? {},
         prev_close: res?.prev_close ?? null,
       };
     },
@@ -87,6 +148,34 @@ export function PriceChart({
   const [type, setType] = useState<SeriesType>(defaultType);
   const cfg = RANGES.find((r) => r.key === range)!;
   const { isOpen, sessionPhase } = useMarketStatus();
+
+  // Per-range enabled indicators, persisted to localStorage (defaults on first visit).
+  const [selByRange, setSelByRange] = useState<Record<ChartRange, IndicatorKey[]>>(() => {
+    const saved = loadSelections();
+    const out = {} as Record<ChartRange, IndicatorKey[]>;
+    (Object.keys(RANGE_INDICATORS) as ChartRange[]).forEach((r) => {
+      out[r] = saved[r] ?? RANGE_INDICATORS[r].defaults;
+    });
+    return out;
+  });
+  const selected = selByRange[range];
+
+  const toggleIndicator = (k: IndicatorKey) => {
+    setSelByRange((prev) => {
+      const on = new Set(prev[range]);
+      if (on.has(k)) on.delete(k);
+      else on.add(k);
+      // Keep stable ordering by the range's declared availability.
+      const nextForRange = RANGE_INDICATORS[range].available.filter((a) => on.has(a));
+      const next = { ...prev, [range]: nextForRange };
+      try {
+        window.localStorage.setItem(STORE_KEY, JSON.stringify(next));
+      } catch {
+        /* ignore quota / privacy-mode errors */
+      }
+      return next;
+    });
+  };
 
   const qc = useQueryClient();
 
@@ -116,6 +205,7 @@ export function PriceChart({
   }, [T]);
 
   const bars = data?.bars ?? [];
+  const indicators = data?.indicators ?? {};
   const prevClose = data?.prev_close ?? null;
   const hasData = bars.length > 0;
   const last = bars[bars.length - 1]?.close ?? 0;
@@ -131,6 +221,8 @@ export function PriceChart({
   // daily ranges are historical, and a closed market shows the last close frozen.
   const intradayLive = cfg.intraday && isOpen;
   const statusLabel = cfg.intraday ? PHASE_LABELS[sessionPhase] : "Daily";
+
+  const available = RANGE_INDICATORS[range].available;
 
   return (
     <Card className="p-4 sm:p-5">
@@ -219,15 +311,44 @@ export function PriceChart({
         </div>
       </div>
 
+      {/* Indicator chips — colored when active; act as the chart's legend */}
+      <div className="flex flex-wrap gap-1 mb-2">
+        {available.map((k) => {
+          const on = selected.includes(k);
+          const def = INDICATORS[k];
+          return (
+            <button
+              key={k}
+              onClick={() => toggleIndicator(k)}
+              aria-pressed={on}
+              className={cn(
+                "inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border transition-colors",
+                on
+                  ? "bg-zinc-100 dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100 border-zinc-300 dark:border-zinc-600"
+                  : "text-zinc-400 dark:text-zinc-500 border-transparent hover:text-zinc-700 dark:hover:text-zinc-300"
+              )}
+            >
+              <span
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ backgroundColor: on ? def.color : "transparent", border: on ? undefined : `1px solid ${def.color}` }}
+              />
+              {def.label}
+            </button>
+          );
+        })}
+      </div>
+
       {hasData ? (
         <Canvas
-        bars={bars}
-        type={type}
-        up={up}
-        intraday={cfg.intraday}
-        range={range}
-        height={height}
-      />
+          bars={bars}
+          indicators={indicators}
+          selected={selected}
+          type={type}
+          up={up}
+          intraday={cfg.intraday}
+          range={range}
+          height={height}
+        />
       ) : (
         <div
           className="grid place-items-center text-sm text-zinc-400 dark:text-zinc-600"
@@ -248,9 +369,63 @@ export function PriceChart({
   );
 }
 
+// ── Indicator draw specs (resolved from the enabled chips) ─────────────────────
+interface DrawSpec {
+  id: string; // unique series id (col name, or "volume")
+  kind: "line" | "hist";
+  col?: string; // indicators[col] source; absent → volume (from bars)
+  color: string;
+  pane: number; // 0 = price pane; ≥1 = oscillator sub-pane
+  lineWidth?: number;
+  guides?: number[]; // horizontal reference lines (RSI 30/70)
+  signedColor?: boolean; // histogram colored by sign (MACD hist)
+}
+
+/** Turn the enabled indicator keys into concrete series specs + total pane count.
+ *  Oscillators each get their own sub-pane (price stays pane 0). */
+function buildDrawSpecs(selected: IndicatorKey[]): { specs: DrawSpec[]; paneCount: number } {
+  const specs: DrawSpec[] = [];
+  let nextPane = 1;
+
+  // Price-pane overlays first.
+  for (const k of selected) {
+    const def = INDICATORS[k];
+    if (def.pane !== "price") continue;
+    for (const col of def.cols) {
+      specs.push({
+        id: col,
+        kind: "line",
+        col,
+        color: def.color,
+        pane: 0,
+        lineWidth: col === "bb_mid" ? 1 : col.startsWith("bb_") ? 1 : 2,
+      });
+    }
+  }
+  // Volume (bottom of price pane).
+  if (selected.includes("volume")) {
+    specs.push({ id: "volume", kind: "hist", color: INDICATORS.volume.color, pane: 0 });
+  }
+  // Oscillators each in their own sub-pane.
+  for (const k of selected) {
+    if (INDICATORS[k].pane !== "oscillator") continue;
+    const pane = nextPane++;
+    if (k === "macd") {
+      specs.push({ id: "macd_hist", kind: "hist", col: "macd_hist", color: "#71717a", pane, signedColor: true });
+      specs.push({ id: "macd", kind: "line", col: "macd", color: "#3b82f6", pane, lineWidth: 2 });
+      specs.push({ id: "macd_signal", kind: "line", col: "macd_signal", color: "#f59e0b", pane, lineWidth: 1 });
+    } else if (k === "rsi") {
+      specs.push({ id: "rsi_14", kind: "line", col: "rsi_14", color: "#a855f7", pane, lineWidth: 2, guides: [30, 70] });
+    }
+  }
+  return { specs, paneCount: nextPane };
+}
+
 // ── Chart canvas (lightweight-charts v5) ──────────────────────────────────────
 function Canvas({
   bars,
+  indicators,
+  selected,
   type,
   up,
   intraday,
@@ -258,6 +433,8 @@ function Canvas({
   height,
 }: {
   bars: CandleBar[];
+  indicators: Record<string, SeriesIndicatorPoint[]>;
+  selected: IndicatorKey[];
   type: SeriesType;
   up: boolean;
   intraday: boolean;
@@ -268,13 +445,21 @@ function Canvas({
   const legendRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Area"> | ISeriesApi<"Candlestick"> | null>(null);
+  // Indicator/volume overlay series, keyed by DrawSpec.id, rebuilt on each recreate.
+  const indSeriesRef = useRef<Map<string, { series: ISeriesApi<"Line"> | ISeriesApi<"Histogram">; spec: DrawSpec }>>(
+    new Map()
+  );
   const barsRef = useRef<CandleBar[]>(bars);
   barsRef.current = bars;
+  const indRef = useRef<Record<string, SeriesIndicatorPoint[]>>(indicators);
+  indRef.current = indicators;
   // Identity of the data currently drawn — lets us skip redundant setData on
   // identical 15s polls so the user's pan/zoom position is never yanked.
   const sigRef = useRef("");
   const rangeRef = useRef(range);
   const [isDark, setIsDark] = useState(true);
+  // Recreate the chart when the enabled indicator set changes (panes/series differ).
+  const selKey = selected.join(",");
 
   // Track theme so chart chrome follows the light/dark toggle.
   useEffect(() => {
@@ -314,7 +499,8 @@ function Canvas({
     chartRef.current?.timeScale()?.fitContent();
   };
 
-  // Create chart + series. Recreated when theme / series-type / range-granularity change.
+  // Create chart + series. Recreated when theme / series-type / range-granularity /
+  // enabled-indicator-set change.
   useEffect(() => {
     const el = elRef.current;
     if (!el) return;
@@ -402,7 +588,46 @@ function Canvas({
           : chart.addSeries(LWC.AreaSeries, { lineWidth: 2, priceLineVisible: false });
       seriesRef.current = series;
 
+      // Build indicator / volume / oscillator series from the enabled chips.
+      const { specs, paneCount } = buildDrawSpecs(selected);
+      const map = new Map<string, { series: ISeriesApi<"Line"> | ISeriesApi<"Histogram">; spec: DrawSpec }>();
+      for (const spec of specs) {
+        if (spec.kind === "hist") {
+          const s = chart.addSeries(
+            LWC.HistogramSeries,
+            spec.id === "volume"
+              ? { priceFormat: { type: "volume" }, priceScaleId: "vol", color: "rgba(113,113,122,0.5)" }
+              : { color: spec.color, priceLineVisible: false, lastValueVisible: false },
+            spec.pane
+          );
+          if (spec.id === "volume") {
+            // Tuck the volume histogram into the bottom 18% of the price pane.
+            s.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+          }
+          map.set(spec.id, { series: s, spec });
+        } else {
+          const s = chart.addSeries(
+            LWC.LineSeries,
+            { color: spec.color, lineWidth: (spec.lineWidth ?? 2) as never, priceLineVisible: false, lastValueVisible: false },
+            spec.pane
+          );
+          for (const g of spec.guides ?? []) {
+            s.createPriceLine({ price: g, color: theme.border, lineWidth: 1, lineStyle: LWC.LineStyle.Dashed, axisLabelVisible: true });
+          }
+          map.set(spec.id, { series: s, spec });
+        }
+      }
+      indSeriesRef.current = map;
+
+      // Give the price pane the lion's share; split the rest among oscillators.
+      if (paneCount > 1) {
+        const panes = chart.panes();
+        panes[0]?.setStretchFactor(3 * (paneCount - 1));
+        for (let i = 1; i < paneCount; i++) panes[i]?.setStretchFactor(1);
+      }
+
       applyData(series, barsRef.current, type, up);
+      applyIndicators(map, indRef.current, barsRef.current);
       sigRef.current = sigOf(barsRef.current);
       rangeRef.current = range;
       frameView();
@@ -431,9 +656,10 @@ function Canvas({
       chartRef.current?.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      indSeriesRef.current = new Map();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDark, type, intraday]);
+  }, [isDark, type, intraday, selKey]);
 
   // Push new data without rebuilding the chart (so 15s polls don't flicker).
   useEffect(() => {
@@ -445,6 +671,7 @@ function Canvas({
     if (sig === sigRef.current && !rangeChanged) return;
     sigRef.current = sig;
     applyData(s, bars, type, up);
+    applyIndicators(indSeriesRef.current, indicators, bars);
     if (rangeChanged) {
       rangeRef.current = range;
       // Range changed (e.g. cached 1Y↔3M with the chart still mounted): re-frame to
@@ -454,7 +681,7 @@ function Canvas({
     const seed = bars[bars.length - 1];
     if (seed && legendRef.current) legendRef.current.innerHTML = legendHTML(seed, type, fmt(seed.time));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bars, type, up, range]);
+  }, [bars, indicators, type, up, range]);
 
   return (
     <div className="relative w-full" style={{ height }}>
@@ -485,6 +712,42 @@ function applyData(
       bottomColor: up ? "rgba(16,185,129,0)" : "rgba(244,63,94,0)",
     });
     series.setData(bars.map((b) => ({ time: b.time, value: b.close })) as Parameters<typeof series.setData>[0]);
+  }
+}
+
+/** Feed each indicator/volume series its data. Lines read from indicators[col];
+ *  the volume histogram reads bar volume colored by candle direction; the MACD
+ *  histogram is colored by sign. */
+function applyIndicators(
+  map: Map<string, { series: ISeriesApi<"Line"> | ISeriesApi<"Histogram">; spec: DrawSpec }>,
+  indicators: Record<string, SeriesIndicatorPoint[]>,
+  bars: CandleBar[]
+) {
+  for (const { series, spec } of map.values()) {
+    if (spec.id === "volume") {
+      series.setData(
+        bars.map((b) => ({
+          time: b.time,
+          value: (b as CandleBar & { volume?: number }).volume ?? 0,
+          color: b.close >= b.open ? "rgba(16,185,129,0.35)" : "rgba(244,63,94,0.35)",
+        })) as Parameters<typeof series.setData>[0]
+      );
+      continue;
+    }
+    const pts = (spec.col && indicators[spec.col]) || [];
+    if (spec.signedColor) {
+      series.setData(
+        pts.map((p) => ({
+          time: p.time,
+          value: p.value,
+          color: p.value >= 0 ? "rgba(16,185,129,0.5)" : "rgba(244,63,94,0.5)",
+        })) as Parameters<typeof series.setData>[0]
+      );
+    } else {
+      series.setData(
+        pts.map((p) => ({ time: p.time, value: p.value })) as Parameters<typeof series.setData>[0]
+      );
+    }
   }
 }
 

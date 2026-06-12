@@ -172,6 +172,75 @@ async def _backfill_30m(db, symbol: str, iid: int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# 10-min backfill (1-min rollup + indicators) — powers the 1W chart range
+# ---------------------------------------------------------------------------
+# bars_10m shares bars_30m's exact column layout, so the same insert list and the
+# same compute_bar_indicators rollup apply — only the bucket interval differs.
+
+
+async def _backfill_10m(db, symbol: str, iid: int) -> int:
+    last_ts = (
+        await db.execute(
+            text("SELECT max(ts) FROM bars_10m WHERE instrument_id = :iid"), {"iid": iid}
+        )
+    ).scalar()
+
+    rows = (
+        await db.execute(
+            text(f"""
+                WITH mx AS (SELECT max(time) AS m FROM market_data_1min WHERE ticker = :sym)
+                SELECT time_bucket('10 minutes', time) AS ts,
+                       first(open, time)  AS open,
+                       max(high)          AS high,
+                       min(low)           AS low,
+                       last(close, time)  AS close,
+                       sum(volume)        AS volume
+                FROM market_data_1min, mx
+                WHERE ticker = :sym
+                  AND time >= now() - make_interval(days => :warmup)
+                  AND {_RTH_FILTER}
+                GROUP BY ts
+                HAVING time_bucket('10 minutes', time) + interval '10 minutes' <= (SELECT m FROM mx)
+                ORDER BY ts
+            """),
+            {"sym": symbol, "warmup": _WARMUP_30M_DAYS},
+        )
+    ).mappings().all()
+    if len(rows) < 2:
+        return 0
+
+    df = pd.DataFrame(rows)
+    df["time"] = pd.to_datetime(df["ts"], utc=True)
+    for c in ("open", "high", "low", "close", "volume"):
+        df[c] = df[c].astype("float64")
+    out = compute_bar_indicators(df)
+
+    new = out if last_ts is None else out[out["time"] > last_ts]
+    new = new[new["rth"]]
+    if new.empty:
+        return 0
+
+    sql = text(_upsert_sql("bars_10m", _30M_INSERT_COLS))
+    params = []
+    for r in new.itertuples(index=False):
+        d = r._asdict()
+        o, h, lo, c, v = d["open"], d["high"], d["low"], d["close"], d["volume"]
+        # Recent live bars have no split/dividend events, so raw == adj.
+        rec = {
+            "ts": d["time"].to_pydatetime(), "instrument_id": iid, "rth": True,
+            "raw_open": o, "raw_high": h, "raw_low": lo, "raw_close": c, "raw_volume": int(v),
+            "adj_open": o, "adj_high": h, "adj_low": lo, "adj_close": c, "adj_volume": int(v),
+        }
+        for col in _30M_INSERT_COLS:
+            if col not in rec:
+                rec[col] = _clean(d[col])
+        params.append(rec)
+
+    await db.execute(sql, params)
+    return len(params)
+
+
+# ---------------------------------------------------------------------------
 # Daily backfill (1-min → session rollup + indicators + multi-horizon returns)
 # ---------------------------------------------------------------------------
 
@@ -345,14 +414,14 @@ async def _is_stale(db, iid: int) -> bool:
 async def check_and_backfill_once(stop: threading.Event) -> dict:
     tickers = _get_seed_tickers()
     factory, engine = _make_session()
-    bars_30m = bars_1d = massive = 0
+    bars_30m = bars_10m = bars_1d = massive = 0
     updated: list[str] = []
     checked = 0
     try:
         for sym in tickers:
             if stop.is_set():
                 break
-            n30 = n1d = 0
+            n30 = n10 = n1d = 0
             try:
                 async with factory() as db:
                     iid = await _ensure_instrument(db, sym, _asset_type(sym))
@@ -364,14 +433,20 @@ async def check_and_backfill_once(stop: threading.Event) -> dict:
                     ).scalar()
 
                     if has_1min:
-                        # 30-min and daily commit independently so one failing never
-                        # rolls back the other.
+                        # 30-min, 10-min and daily commit independently so one
+                        # failing never rolls back the others.
                         try:
                             n30 = await _backfill_30m(db, sym, iid)
                             await db.commit()
                         except Exception:
                             await db.rollback()
                             logger.warning("freshness: 30m backfill failed for %s", sym, exc_info=True)
+                        try:
+                            n10 = await _backfill_10m(db, sym, iid)
+                            await db.commit()
+                        except Exception:
+                            await db.rollback()
+                            logger.warning("freshness: 10m backfill failed for %s", sym, exc_info=True)
                         try:
                             n1d = await _backfill_1d(db, sym, iid)
                             await db.commit()
@@ -385,8 +460,9 @@ async def check_and_backfill_once(stop: threading.Event) -> dict:
                             massive += 1
                 checked += 1
                 bars_30m += n30
+                bars_10m += n10
                 bars_1d += n1d
-                if n30 or n1d:
+                if n30 or n10 or n1d:
                     updated.append(sym)
             except Exception:
                 logger.warning("freshness: backfill failed for %s", sym, exc_info=True)
@@ -394,13 +470,13 @@ async def check_and_backfill_once(stop: threading.Event) -> dict:
         await engine.dispose()
 
     logger.info(
-        "freshness: checked %d symbols, +%d 30-min bars, +%d daily bars%s (updated: %s)",
-        checked, bars_30m, bars_1d,
+        "freshness: checked %d symbols, +%d 30-min bars, +%d 10-min bars, +%d daily bars%s (updated: %s)",
+        checked, bars_30m, bars_10m, bars_1d,
         f", {massive} via Massive" if massive else "",
         ", ".join(updated) if updated else "none — all fresh",
     )
     return {
-        "checked": checked, "bars_30m": bars_30m, "bars_1d": bars_1d,
+        "checked": checked, "bars_30m": bars_30m, "bars_10m": bars_10m, "bars_1d": bars_1d,
         "massive": massive, "updated": updated,
     }
 

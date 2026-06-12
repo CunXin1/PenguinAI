@@ -54,6 +54,37 @@ CREATE TABLE IF NOT EXISTS bars_30m (
 SELECT create_hypertable('bars_30m', by_range('ts', INTERVAL '1 month'), if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS bars_30m_instrument_ts_desc_idx ON bars_30m (instrument_id, ts DESC);
 
+-- ── 10-minute bars + indicators (powers the 1W chart range) ──────────────────
+-- Column layout mirrors bars_30m exactly. NOT loaded from parquet — derived by
+-- rolling market_data_1min up to 10-min buckets + recomputing the SAME indicator
+-- family (backend/app/core/freshness.py:_backfill_10m), so it stays consistent
+-- with bars_30m/bars_1d without a separate import source.
+CREATE TABLE IF NOT EXISTS bars_10m (
+    ts            TIMESTAMPTZ      NOT NULL,
+    instrument_id BIGINT           NOT NULL REFERENCES instruments(instrument_id),
+    rth           BOOLEAN,
+    raw_open      DOUBLE PRECISION, raw_high  DOUBLE PRECISION, raw_low DOUBLE PRECISION,
+    raw_close     DOUBLE PRECISION, raw_volume BIGINT,
+    adj_open      DOUBLE PRECISION, adj_high  DOUBLE PRECISION, adj_low DOUBLE PRECISION,
+    adj_close     DOUBLE PRECISION, adj_volume BIGINT,
+    -- Trend
+    sma_20        DOUBLE PRECISION, sma_50    DOUBLE PRECISION, sma_200 DOUBLE PRECISION,
+    ema_12        DOUBLE PRECISION, ema_26    DOUBLE PRECISION, ema_50  DOUBLE PRECISION,
+    -- Momentum
+    macd          DOUBLE PRECISION, macd_signal DOUBLE PRECISION, macd_hist DOUBLE PRECISION,
+    rsi_14        DOUBLE PRECISION,
+    -- Volatility (Bollinger + ATR)
+    bb_mid        DOUBLE PRECISION, bb_upper  DOUBLE PRECISION, bb_lower DOUBLE PRECISION,
+    bb_pctb       DOUBLE PRECISION, bb_bw     DOUBLE PRECISION,
+    atr_14        DOUBLE PRECISION,
+    -- Volume / intraday / returns
+    obv           DOUBLE PRECISION, vwap_day  DOUBLE PRECISION,
+    ret_1bar      DOUBLE PRECISION,
+    PRIMARY KEY (ts, instrument_id)
+);
+SELECT create_hypertable('bars_10m', by_range('ts', INTERVAL '1 week'), if_not_exists => TRUE);
+CREATE INDEX IF NOT EXISTS bars_10m_instrument_ts_desc_idx ON bars_10m (instrument_id, ts DESC);
+
 -- ── Daily bars + indicators + multi-horizon returns (macro context) ──────────
 CREATE TABLE IF NOT EXISTS bars_1d (
     ts            TIMESTAMPTZ      NOT NULL,   -- day's last RTH bar, UTC

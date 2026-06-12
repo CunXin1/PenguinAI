@@ -281,3 +281,59 @@ async def test_heatmap_returns_tiles_and_indices(client):
     assert "indices" in body
     assert body["market_open"] is False
     assert body["period"] == "1D"
+
+
+# ---------------------------------------------------------------------------
+# _period_change — 1D is always vs PRIOR CLOSE; stale ticks must not leak in
+# ---------------------------------------------------------------------------
+
+from app.api.routes.market_data import _period_change  # noqa: E402
+from app.core.market_clock import ET  # noqa: E402
+
+# NY date 2026-06-12; yesterday's settled bar stamped 2026-06-11.
+_TODAY_NY = datetime(2026, 6, 12, 16, 0, tzinfo=UTC).astimezone(ET).date()
+_YESTERDAY_TS = datetime(2026, 6, 11, 16, 0, tzinfo=UTC)  # NY 2026-06-11, prior session
+_TODAY_TS = datetime(2026, 6, 12, 20, 0, tzinfo=UTC)  # NY 2026-06-12 16:00, settled today
+
+
+def test_period_change_open_uses_live_vs_prior_close():
+    """Market open: live price vs the last settled close (prior close)."""
+    m = {"last_close": 100.0, "prev_close": 98.0, "last_ts": _YESTERDAY_TS}
+    sess = {"live": 103.0, "rth_close": None}
+    price, chg = _period_change(m, "1D", is_open=True, sess=sess, today_ny=_TODAY_NY)
+    assert price == 103.0
+    assert chg == 3.0  # (103 - 100) / 100
+
+
+def test_period_change_just_closed_freezes_at_rth_close():
+    """Just closed, today not yet settled into bars_1d: freeze at today's 16:00 close."""
+    m = {"last_close": 100.0, "prev_close": 98.0, "last_ts": _YESTERDAY_TS}
+    sess = {"live": 103.5, "rth_close": 102.0}  # after-hours drifted to 103.5; RTH close 102
+    price, chg = _period_change(m, "1D", is_open=False, sess=sess, today_ny=_TODAY_NY)
+    assert price == 102.0  # frozen at the regular-session close, not after-hours
+    assert chg == 2.0  # (102 - 100) / 100
+
+
+def test_period_change_settled_today_is_static():
+    """Today already settled into bars_1d → static close vs prior close, ignores stream."""
+    m = {"last_close": 102.0, "prev_close": 100.0, "last_ts": _TODAY_TS}
+    sess = {"live": 105.0, "rth_close": 102.0}  # after-hours print must NOT move it
+    price, chg = _period_change(m, "1D", is_open=False, sess=sess, today_ny=_TODAY_NY)
+    assert price == 102.0
+    assert chg == 2.0  # (102 - 100) / 100
+
+
+def test_period_change_no_fresh_ticks_falls_back_not_stale():
+    """Open but no today-session prints → fall back to last settled session, never a
+    stale tick. Bug #1 guard: ``sess`` is empty because the query scoped to today."""
+    m = {"last_close": 100.0, "prev_close": 98.0, "last_ts": _YESTERDAY_TS}
+    price, chg = _period_change(m, "1D", is_open=True, sess=None, today_ny=_TODAY_NY)
+    assert price == 100.0
+    assert chg == round((100.0 - 98.0) / 98.0 * 100, 2)  # last settled session, frozen
+
+
+def test_period_change_longer_period_uses_stored_return():
+    m = {"last_close": 100.0, "ret_21d": 0.05}
+    price, chg = _period_change(m, "1M", is_open=False, sess=None, today_ny=_TODAY_NY)
+    assert price == 100.0
+    assert chg == 5.0

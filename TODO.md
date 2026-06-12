@@ -9,6 +9,20 @@
       `LLM_BACKEND=auto` 按平台自选，E2B 现用 E4B 后续切 `GEMMA_MODEL_VARIANT`。部署见 `ml/serving/`，
       验证 `make gemma-check`。保留 finetune seam（vLLM LoRA / Ollama Modelfile ADAPTER）。
   - [ ] 拉起真实 Gemma 服务跑通线上（当前未起服务时自动降级为 ML-only fallback）
+- [x] 修复 CV 泄漏 — `TimeSeriesSplit` 换成 `purged_walk_forward_splits`（全局按时间排序 + 重叠标签
+      embargo），两个 trainer 都用。短跨度方向真实 AUC≈0.50（旧 leaky 虚高）。见 `docs/ml-specialization.md`。
+- [x] 分篮子 × 多跨度模型（B1/B2 起步）— `nasdaq10` 篮子，1周(30m,涨跌)/1月/3月(日线,beat_spy)，
+      XGB+RF；`load_training_data(timeframe,target_type)` + `DAILY_FEATURE_SQL`；
+      `ml/scripts/train_basket_models.py`。3 月 beat-SPY AUC 0.56（真实 edge）。
+  - [ ] **B-综合（高优先，解决 Top Signal 全挤 50%）**：把 keyed horizon 模型喂进
+        `signal_engine`/`gemma_agent`，让 Gemma 综合 全跨度ML + 新闻/FinBERT + 指标 + 价量 + 财报 +
+        宏观 成一个信号；confidence 重标定为跨源/跨跨度一致性，而非单个贴近 0.5 的概率。
+  - [ ] registry 按 `{basket}__{tf}__{label}` 多模型 serving + 篮子外回退全局；用上 `basket_for(ticker)`。
+  - [ ] 1 天档：等 1min / 聚合 10min bar 数据就绪再训（trainer 已支持任意 timeframe）。
+  - [ ] 前端跨度切换按钮（信号页 1周/1月/3月，复用 PriceChart segmented 样式）。
+  - [ ] 完整 universe + 更长历史（since 2015）重训，让 AUC 站稳；规划 smallcap/wholemarket 篮子。
+- [x] 存储精度策略 — 价格/指标按类别 round（价格量纲 4 位、rsi 2 位、obv 整数），写入端 + 一次性 DB
+      backfill（`backend/scripts/market_data/round_existing_precision.py`）。单一源 `ROUND_DECIMALS`。
 - [ ] 实现 Reddit scraper（PRAW）+ Twitter scraper（Playwright），填充 social_posts
 - [ ] 实现 fetch_fundamentals（yfinance / Massive），填充 fundamentals 表
 - [ ] 补全 ml/tests（trainer、model_registry、celery tasks 测试覆盖）

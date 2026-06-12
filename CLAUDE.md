@@ -158,15 +158,37 @@ Do not change this schema without updating `signal_cache` table, `schemas/signal
 
 ## ML Models
 
-- XGBoost: primary classifier. GPU training (`device="cuda"`). TimeSeriesSplit CV (no leakage).
-- RandomForest: secondary, ensemble diversity. `class_weight="balanced"`.
-- Feature names are the single source of truth in `ml/models/xgboost_trainer.py:FEATURE_COLS`.
-- Models saved as pickle at `/models/penguinai/xgboost_prod.pkl` and `rf_prod.pkl`.
-- Hot-reload via `model_registry.reload()` — no restart needed after retraining.
-- Target horizon: 16 RTH 30-min bars ahead (~1.2 trading days; adjustable in trainer).
-- Today there is ONE global classifier. **Roadmap** (`docs/roadmap.md` B1/B2): per-symbol
-  specialized models, and multiple models per symbol for different horizons (~1W / 1M /
-  6M / long-term). Keep train/serve parity; plan registry keys `{symbol}__{horizon}`.
+Full reference: `docs/ml-specialization.md`. Roadmap context: `docs/roadmap.md` B1/B2.
+
+- XGBoost: primary classifier. GPU training (`device="cuda"`). RandomForest: secondary,
+  ensemble diversity (`class_weight="balanced"`). XGB beats RF throughout.
+- **CV is purged walk-forward, NOT `TimeSeriesSplit`.** `purged_walk_forward_splits`
+  (`xgboost_trainer.py`) globally time-sorts the pooled rows and embargoes overlapping
+  labels (`label_end_ts = LEAD(ts, horizon)`); the old `TimeSeriesSplit` leaked on both.
+  Honest leakage-free AUC for short-horizon *direction* is ~0.50 — mega-cap 1-week
+  up/down is near-random; that is real, not a bug. Do not reintroduce `TimeSeriesSplit`.
+- Feature names: 30m models use `xgboost_trainer.py:FEATURE_COLS` (parity with
+  `indicators_30min`); 1d models use `DAILY_FEATURE_SQL`. Each saved model carries its own
+  `feature_names_in_` — read that at serve time rather than assuming the global list.
+- `load_training_data(timeframe, target_type)`: `timeframe` ∈ {`30m`→`data/30min_data`,
+  `1d`→`data/daily_data`}; `target_type` ∈ {`direction`, `beat_spy` (excess return vs SPY,
+  joins SPY forward returns — use for multi-month horizons so the model isn't "always up")}.
+- **Two model families now coexist:**
+  - Global: `xgboost_prod.pkl` / `rf_prod.pkl` (current signal pipeline + `model_registry`).
+  - **Per-basket × horizon** (B1/B2, built): a *basket* is a curated ticker list
+    (`ml/models/baskets.py`; `nasdaq10` now, `smallcap`/`wholemarket` planned) — pooled
+    per basket (single-stock models were rejected: overfit). Keyed
+    `{basket}__{timeframe}__{label}__{algo}.pkl`. Built: 1w (30m, direction), 1m/3m (1d,
+    beat_spy). 1-day deferred until 1-min / aggregated-10-min data lands. Train:
+    `python -m ml.scripts.train_basket_models`.
+- Hot-reload via `model_registry.reload()`. Models saved under `MODEL_DIR`.
+- **Known issue + go-forward (B-synthesis):** Top-Signal confidences cluster at ~50%
+  because the single global model's `ensemble_prob` itself clusters at 0.5 (stddev ~0.07).
+  The leakage fix does NOT decluster this (it is honest). The fix is to feed the keyed
+  horizon models into `signal_engine`/`gemma_agent` and have Gemma synthesize all horizons
+  + news/FinBERT + indicators + price/volume + earnings + macro into ONE signal, with
+  confidence = cross-source/cross-horizon agreement (NOT a single near-0.5 probability).
+  Never inflate confidence artificially. (Gemma-framework changes are owned elsewhere.)
 
 ## User Tiers
 
@@ -405,6 +427,7 @@ make db-init       # apply db/schema/*.sql into the timescaledb container
 make bootstrap     # scripts/bootstrap_universe.py — populate ticker universe (run once)
 
 # ── Celebrity holdings ────────────────────────────
+make fetch-reference    # company/ETF names (Massive) → upsert tickers.name/exchange (stock-page header)
 make fetch-fomc         # FOMC statements → fomc_statements (Fed website + FinBERT scoring)
 make fetch-celebrities  # all three sources at once
 make fetch-congress     # congressional trades (Quiver Quant)

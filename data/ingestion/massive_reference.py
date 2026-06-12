@@ -224,21 +224,34 @@ async def run(dry_run: bool = False) -> None:
         await engine.dispose()
         return
 
+    # Upsert (not just UPDATE): every instruments symbol gets a tickers row, so
+    # `tickers` is the authoritative symbol → company-name dimension for the whole
+    # universe. On conflict we only refresh name/exchange — is_active is owned by
+    # symbol_validation and must not be clobbered here; new rows default to the
+    # listing's active flag.
     params = [
-        {"symbol": r["symbol"], "name": r["name"], "exchange": r["exchange"]}
+        {
+            "symbol": r["symbol"],
+            "name": r["name"],
+            "exchange": r["exchange"],
+            "is_active": bool(r["active"]) if r["active"] is not None else True,
+        }
         for r in records
         if r["name"]
     ]
     async with SessionLocal() as db:
         await db.execute(
             text(
-                "UPDATE tickers SET name = :name, "
-                "exchange = COALESCE(:exchange, exchange) WHERE ticker = :symbol"
+                "INSERT INTO tickers (ticker, name, exchange, is_active) "
+                "VALUES (:symbol, :name, :exchange, :is_active) "
+                "ON CONFLICT (ticker) DO UPDATE SET "
+                "name = EXCLUDED.name, "
+                "exchange = COALESCE(EXCLUDED.exchange, tickers.exchange)"
             ),
             params,
         )
         await db.commit()
-    logger.info("updated %d tickers rows in DB", len(params))
+    logger.info("upserted %d tickers rows in DB", len(params))
     await engine.dispose()
 
 

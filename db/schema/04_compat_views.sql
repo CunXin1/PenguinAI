@@ -40,6 +40,23 @@ FROM bars_30m b
 JOIN instruments i ON i.instrument_id = b.instrument_id
 WHERE b.rth;
 
+-- ── market_data_10min ── 10-min OHLCV for the 1W chart range (over bars_10m) ──
+CREATE OR REPLACE VIEW market_data_10min AS
+SELECT
+    b.ts          AS time,
+    i.symbol      AS ticker,
+    b.adj_open    AS open,
+    b.adj_high    AS high,
+    b.adj_low     AS low,
+    b.adj_close   AS close,
+    b.adj_volume  AS volume,
+    b.vwap_day    AS vwap,
+    TRUE          AS adjusted,
+    'import'::text AS source
+FROM bars_10m b
+JOIN instruments i ON i.instrument_id = b.instrument_id
+WHERE b.rth;
+
 -- ── market_data_daily ── daily OHLCV for macro context / charting ────────────
 CREATE OR REPLACE VIEW market_data_daily AS
 SELECT

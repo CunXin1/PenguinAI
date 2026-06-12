@@ -289,6 +289,24 @@ export interface CandleBar {
   high: number;
   low: number;
   close: number;
+  volume?: number; // present in /series payloads; used by the optional volume overlay
+}
+
+/** One point of a precomputed indicator series, time-aligned to the candles. */
+export interface SeriesIndicatorPoint {
+  time: number; // unix seconds
+  value: number;
+}
+
+/** PriceChart /series payload: candles + optional per-indicator overlay series.
+ *  `indicators` keys are DB column names (e.g. "ema_12", "macd", "rsi_14",
+ *  "vwap_day"); each series is dense (NULL bars omitted). */
+export interface SeriesResponse {
+  ticker: string;
+  range: ChartRange;
+  bars: CandleBar[];
+  indicators?: Record<string, SeriesIndicatorPoint[]>;
+  prev_close: number | null;
 }
 
 /** User-facing chart ranges (shared PriceChart). Default is 1W. */

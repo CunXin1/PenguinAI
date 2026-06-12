@@ -7,7 +7,6 @@ import type {
   AdminUserRow,
   AdminUserStats,
   Candle,
-  CandleBar,
   CelebrityHolding,
   CelebritySummary,
   CelebrityTopHolding,
@@ -40,6 +39,7 @@ import type {
   Quote,
   RedeemResponse,
   RegisterResponse,
+  SeriesResponse,
   Signal,
   SignalListItem,
   SymbolRequestResult,
@@ -222,10 +222,12 @@ export const marketData = {
       `/market-data/quotes?tickers=${encodeURIComponent(tickers.join(","))}`
     ),
 
-  /** Range-bucketed OHLC series (server-aggregated from 1-min bars). Powers PriceChart. */
-  series: (ticker: string, range: ChartRange = "1W") =>
-    apiFetch<{ ticker: string; range: ChartRange; bars: CandleBar[]; prev_close: number | null }>(
-      `/market-data/${ticker.toUpperCase()}/series?range=${range}`
+  /** Range-bucketed OHLC series + optional precomputed indicator overlays. Powers PriceChart.
+   *  `indicators` are DB column names (ema_12, macd, rsi_14, vwap_day, ...) to fetch alongside. */
+  series: (ticker: string, range: ChartRange = "1W", indicators: string[] = []) =>
+    apiFetch<SeriesResponse>(
+      `/market-data/${ticker.toUpperCase()}/series?range=${range}` +
+        (indicators.length ? `&indicators=${encodeURIComponent(indicators.join(","))}` : "")
     ),
 
   /** Batch index-strip data: price + same-session %chg + intraday spark per ticker. */

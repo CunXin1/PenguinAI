@@ -25,7 +25,7 @@ ml/
 │   ├── finbert_scorer.py    FinBERT sentiment scorer (batch, lazy-loaded)
 │   └── gemma_agent.py       Two-step Gemma 4 agent with output validation + retry
 ├── models/
-│   ├── xgboost_trainer.py   XGBoost GPU training with TimeSeriesSplit CV
+│   ├── xgboost_trainer.py   XGBoost GPU training with purged walk-forward CV
 │   ├── rf_trainer.py        Random Forest training with class_weight="balanced"
 │   └── model_registry.py   Hot-swap model loader (no restart needed)
 ├── features/
@@ -92,9 +92,15 @@ ml/
 
 ### Models
 
+> **Specialization (B1/B2, built):** beyond the single global model below, there are now
+> per-basket × horizon models (1w / 1m / 3m), and the CV is purged walk-forward (the old
+> "no leakage" TimeSeriesSplit actually leaked). Full reference: `docs/ml-specialization.md`.
+
 #### XGBoost
 - **Task**: Binary classification — will close price be higher in 16 bars (8 hours)?
-- **Training**: GPU (`device="cuda"`), TimeSeriesSplit 5-fold CV (no data leakage)
+- **Training**: GPU (`device="cuda"`), **purged walk-forward CV** — globally time-sorted +
+  overlapping-label embargo (`purged_walk_forward_splits`). NOT `TimeSeriesSplit`, which
+  leaked on pooled multi-symbol rows; honest short-horizon direction AUC is ~0.50.
 - **Features**: 11 technical indicators (see `FEATURE_COLS` in `xgboost_trainer.py`)
 - **Saved to**: `/models/penguinai/xgboost_prod.pkl`
 
@@ -209,9 +215,12 @@ ML 层是 PenguinAI 的算力核心，运行在 RTX 4090 GPU 上，负责完整�
 
 ### 模型说明
 
+> **专门化（B1/B2，已建）**：除下面的全局模型外，现有 分篮子 × 跨度 模型（1周/1月/3月），
+> 且 CV 已改为 purged walk-forward（旧 TimeSeriesSplit 实际会泄漏）。详见 `docs/ml-specialization.md`。
+
 | 模型 | 用途 | 关键参数 |
 |------|------|---------|
-| XGBoost | 主分类器，预测8小时后涨跌 | GPU训练、TimeSeriesSplit防穿越 |
+| XGBoost | 主分类器，预测8小时后涨跌 | GPU训练、purged walk-forward CV（全局排序+重叠标签 embargo，非 TimeSeriesSplit） |
 | 随机森林 | 集成多样性，与XGBoost互补 | class_weight="balanced" |
 | FinBERT | 社媒帖子情绪打分 | 输出[-1,1]，懒加载+LRU缓存 |
 | Gemma 4 | 最终综合推理和文字归因 | 温度0.1，JSON模式，3次重试 |

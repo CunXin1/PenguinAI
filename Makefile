@@ -64,6 +64,12 @@ fetch-13f:
 fetch-ark:
 	python -m data.celebrity.ark
 
+# Company / ETF names for every instruments symbol → upserted into tickers
+# (the authoritative symbol → name dimension; powers the stock-page header).
+# Needs MASSIVE_API_KEY in .env. Idempotent.
+fetch-reference:
+	python -m data.ingestion.massive_reference
+
 # FOMC statements → fomc_statements table. Scrapes Fed website, scores with
 # FinBERT. Incremental (skips dates already in DB). No API key needed.
 fetch-fomc:

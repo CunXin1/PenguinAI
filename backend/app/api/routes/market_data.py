@@ -287,11 +287,21 @@ async def get_mini(
 # asyncpg encodes them as PostgreSQL intervals (a bare str fails to bind).
 _RANGE_MAP: dict[str, tuple[timedelta, timedelta]] = {
     "1D": (timedelta(minutes=1), timedelta(days=1)),
-    "1W": (timedelta(minutes=15), timedelta(days=7)),
-    "1M": (timedelta(hours=1), timedelta(days=30)),
+    "1W": (timedelta(minutes=10), timedelta(days=7)),
+    "1M": (timedelta(minutes=30), timedelta(days=30)),
     "3M": (timedelta(days=1), timedelta(days=90)),
     "1Y": (timedelta(days=1), timedelta(days=365)),
 }
+
+# Indicator columns the chart may request, by what each source actually stores.
+# bars_10m / bars_30m / market_data_1min carry the full intraday family incl.
+# vwap_day; bars_1d (daily) has the trend/momentum/vol family but NO vwap_day.
+_BASE_IND_COLS = frozenset({
+    "sma_20", "sma_50", "sma_200", "ema_12", "ema_26", "ema_50",
+    "macd", "macd_signal", "macd_hist", "rsi_14",
+    "bb_mid", "bb_upper", "bb_lower", "bb_pctb", "bb_bw", "atr_14", "obv",
+})
+_INTRADAY_IND_COLS = _BASE_IND_COLS | {"vwap_day", "ret_1bar"}
 
 
 def _bars_from_rows(rows) -> list[dict]:
@@ -309,25 +319,109 @@ def _bars_from_rows(rows) -> list[dict]:
     ]
 
 
+def _split_bars_indicators(
+    rows, ind_cols: list[str]
+) -> tuple[list[dict], dict[str, list[dict]]]:
+    """Map a result set with (t,o,h,l,c,v) + indicator columns into PriceChart bars
+    plus a {indicator: [{time, value}, ...]} dict (NULL indicator values skipped,
+    so each series is dense). Empty indicator series are dropped from the result."""
+    bars: list[dict] = []
+    ind: dict[str, list[dict]] = {c: [] for c in ind_cols}
+    for row in rows.mappings():
+        t = int(row["t"].timestamp())
+        bars.append({
+            "time": t,
+            "open": float(row["o"]),
+            "high": float(row["h"]),
+            "low": float(row["l"]),
+            "close": float(row["c"]),
+            "volume": int(row["v"] or 0),
+        })
+        for c in ind_cols:
+            v = row[c]
+            if v is not None:
+                ind[c].append({"time": t, "value": float(v)})
+    return bars, {c: pts for c, pts in ind.items() if pts}
+
+
+async def _read_base_bars(
+    db: AsyncSession, table: str, iid: int, lookback: timedelta,
+    ind_cols: list[str], rth_only: bool,
+) -> tuple[list[dict], dict[str, list[dict]]]:
+    """Read adj OHLCV + requested indicator columns from a bars_* base table,
+    windowed to the symbol's latest bar (so a stale import still renders). The
+    indicator column names come from a server-side whitelist, never user free text.
+    Returns ([], {}) and rolls back on error so the session stays usable."""
+    sel = ("," + ", ".join(ind_cols)) if ind_cols else ""
+    rth = " AND rth" if rth_only else ""
+    try:
+        rows = await db.execute(
+            text(f"""
+                SELECT ts AS t, adj_open AS o, adj_high AS h, adj_low AS l,
+                       adj_close AS c, adj_volume AS v{sel}
+                FROM {table}
+                WHERE instrument_id = :iid{rth}
+                  AND ts >= (SELECT max(ts) FROM {table} WHERE instrument_id = :iid)
+                            - (:lookback)::interval
+                ORDER BY ts ASC
+            """),
+            {"iid": iid, "lookback": lookback},
+        )
+        return _split_bars_indicators(rows, ind_cols)
+    except Exception:
+        await db.rollback()
+        return [], {}
+
+
+async def _read_1min_bars(
+    db: AsyncSession, tkr: str, lookback: timedelta, ind_cols: list[str]
+) -> tuple[list[dict], dict[str, list[dict]]]:
+    """Read raw 1-min OHLCV + indicator columns (populated by the realtime
+    update_indicators writeback) for the 1D range, windowed to the latest tick."""
+    sel = ("," + ", ".join(ind_cols)) if ind_cols else ""
+    try:
+        rows = await db.execute(
+            text(f"""
+                SELECT time AS t, open AS o, high AS h, low AS l,
+                       close AS c, volume AS v{sel}
+                FROM market_data_1min
+                WHERE ticker = :tkr
+                  AND time >= (SELECT max(time) FROM market_data_1min WHERE ticker = :tkr)
+                              - (:lookback)::interval
+                ORDER BY time ASC
+            """),
+            {"tkr": tkr, "lookback": lookback},
+        )
+        return _split_bars_indicators(rows, ind_cols)
+    except Exception:
+        await db.rollback()
+        return [], {}
+
+
 @router.get("/{ticker}/series")
 async def get_series(
     ticker: str,
     db: AsyncSession = Depends(get_db),
     range: str = Query(default="1W", description="1D | 1W | 1M | 3M | 1Y"),
+    indicators: str = Query(
+        default="", description="Comma-separated indicator columns to overlay, e.g. ema_12,macd,rsi_14"
+    ),
 ):
-    """OHLC series for a user-facing range, time_bucket-aggregated for the PriceChart.
+    """OHLC series + optional precomputed indicators for a user-facing range.
 
-    Two sources, tried in order:
-      1. The live minute store (``market_data_1min`` / daily cagg) — freshest, but
-         only covers the streamed symbols (~Top-100).
-      2. Fallback for the rest of the universe (most of the ~6300 symbols, which
-         have imported 30-min/daily bars but no minute data): the
-         ``market_data_30min`` view (sub-daily ranges) or ``market_data_daily``
-         (3M/1Y). Without this, every 30-min-only symbol charts as empty.
+    Each range reads candles AND indicators from the DB-stored bar table at the
+    matching granularity — no per-request recomputation:
+      1D → market_data_1min (1-min; indicators written back by the realtime
+           update_indicators loop), falling back to bars_30m.
+      1W → bars_10m (10-min), falling back to bars_30m.
+      1M → bars_30m (30-min).
+      3M / 1Y → bars_1d (daily), falling back to the minute-derived daily cagg
+           (OHLC only) when a symbol has no daily bars.
 
-    The fallback window is anchored to the symbol's latest bar (cheap
-    ``(instrument_id, ts)`` index lookup on the base hypertable) so a 1–2 day
-    stale import still renders every range, including 1D.
+    Each table's window is anchored to the symbol's latest bar (cheap
+    ``(instrument_id, ts)`` index lookup) so a 1–2 day stale import still renders.
+    ``indicators`` is whitelisted per source (bars_1d has no vwap_day) before being
+    interpolated into SQL — never raw user text.
     """
     rng = range.upper()
     if rng not in _RANGE_MAP:
@@ -335,147 +429,105 @@ async def get_series(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"range must be one of {list(_RANGE_MAP)}",
         )
-    bucket, lookback = _RANGE_MAP[rng]
+    _bucket, lookback = _RANGE_MAP[rng]
     tkr = ticker.upper()
-    params = {"bucket": bucket, "lookback": lookback, "ticker": tkr}
+    is_daily = rng in ("3M", "1Y")
 
-    # ── 1) Primary: finest-granularity source that actually has data ──────────
-    # Always prefer the finer source when it exists — never chart 30-min bars for a
-    # symbol that has minute data.
-    #   sub-daily (1D/1W/1M): market_data_1min if the ticker has ANY minute bars
-    #       (streamed Top-100 or on-demand warmed); else the imported 30-min bars.
-    #   daily (3M/1Y): the minute-derived daily cagg; else imported daily bars.
-    # Intraday reads anchor their window to the ticker's latest minute bar rather
-    # than now(), so a symbol whose minute data is a day or two stale still renders
-    # at fine granularity instead of silently dropping to the coarser 30-min source.
-    is_daily = bucket >= timedelta(days=1)
+    # Whitelist + de-dupe (preserve order) the requested indicator columns.
+    allowed = _BASE_IND_COLS if is_daily else _INTRADAY_IND_COLS
+    seen: set[str] = set()
+    ind_cols = [
+        c for c in (s.strip() for s in indicators.split(","))
+        if c in allowed and not (c in seen or seen.add(c))
+    ]
+
+    iid = (await db.execute(
+        text("SELECT instrument_id FROM instruments WHERE symbol = :t ORDER BY instrument_id LIMIT 1"),
+        {"t": tkr},
+    )).scalar()
+
     bars: list[dict] = []
+    ind: dict[str, list[dict]] = {}
 
     if is_daily:
-        # Daily ranges (3M/1Y) read the pre-materialized daily continuous aggregate
-        # instead of rescanning ~350k 1-min rows per request (3s → ~10ms).
-        try:
-            bars = _bars_from_rows(await db.execute(
-                text("""
-                    SELECT day AS t, open AS o, high AS h, low AS l, close AS c, volume AS v
-                    FROM market_data_1d_cagg
-                    WHERE ticker = :ticker AND day >= now() - (:lookback)::interval
-                    ORDER BY t ASC
-                """),
-                params,
-            ))
-        except Exception:
-            # A failed statement leaves the asyncpg transaction in an aborted state —
-            # every subsequent query on this session would then fail with "current
-            # transaction is aborted". Roll back so the fallback (and prev_close)
-            # below can still run. This is what made 3M/1Y silently render empty when
-            # the daily cagg was missing: the primary query aborted, then the fallback
-            # AND prev_close both failed on the poisoned session.
-            await db.rollback()
-            bars = []
-    else:
-        # Detect minute coverage for THIS ticker (cheap (ticker, time) index probe).
-        latest_min = (await db.execute(
-            text("SELECT max(time) FROM market_data_1min WHERE ticker = :ticker"),
-            {"ticker": tkr},
-        )).scalar()
-        if latest_min is not None:
+        if iid is not None:
+            bars, ind = await _read_base_bars(db, "bars_1d", iid, lookback, ind_cols, rth_only=False)
+        if not bars:
+            # Symbol with no daily bars: minute-derived daily cagg (OHLC only).
             try:
                 bars = _bars_from_rows(await db.execute(
                     text("""
-                        SELECT time_bucket((:bucket)::interval, time) AS t,
-                               first(open, time)  AS o,
-                               max(high)          AS h,
-                               min(low)           AS l,
-                               last(close, time)  AS c,
-                               sum(volume)        AS v
-                        FROM market_data_1min
-                        WHERE ticker = :ticker
-                          AND time >= (:anchor)::timestamptz - (:lookback)::interval
-                        GROUP BY t
+                        SELECT day AS t, open AS o, high AS h, low AS l, close AS c, volume AS v
+                        FROM market_data_1d_cagg
+                        WHERE ticker = :ticker AND day >= now() - (:lookback)::interval
                         ORDER BY t ASC
                     """),
-                    {**params, "anchor": latest_min},
+                    {"ticker": tkr, "lookback": lookback},
                 ))
             except Exception:
                 await db.rollback()
                 bars = []
+    elif rng == "1M":
+        if iid is not None:
+            bars, ind = await _read_base_bars(db, "bars_30m", iid, lookback, ind_cols, rth_only=True)
+    elif rng == "1W":
+        if iid is not None:
+            bars, ind = await _read_base_bars(db, "bars_10m", iid, lookback, ind_cols, rth_only=True)
+            if not bars:  # no 10-min coverage → coarser 30-min bars
+                bars, ind = await _read_base_bars(db, "bars_30m", iid, lookback, ind_cols, rth_only=True)
+    else:  # 1D
+        bars, ind = await _read_1min_bars(db, tkr, lookback, ind_cols)
+        if not bars and iid is not None:  # no minute data → 30-min bars
+            bars, ind = await _read_base_bars(db, "bars_30m", iid, lookback, ind_cols, rth_only=True)
 
-    # ── 2) Fallback: imported 30-min / daily bars (covers the whole universe) ──
-    if not bars:
-        view, base = (
-            ("market_data_daily", "bars_1d") if is_daily
-            else ("market_data_30min", "bars_30m")
-        )
-        if is_daily:
-            # Daily data: one row per day, no time_bucket needed
-            fallback_sql = f"""
-                SELECT m.time AS t,
-                       m.open  AS o,
-                       m.high  AS h,
-                       m.low   AS l,
-                       m.close AS c,
-                       m.volume AS v
-                FROM {view} m
-                WHERE m.ticker = :ticker
-                  AND m.time >= COALESCE(
-                      (SELECT max(ts) FROM {base}
-                       WHERE instrument_id = (
-                           SELECT instrument_id FROM instruments
-                           WHERE symbol = :ticker ORDER BY instrument_id LIMIT 1
-                       )),
-                      now()
-                  ) - :lookback
-                ORDER BY t ASC
-            """
-        else:
-            fallback_sql = f"""
-                SELECT time_bucket(:bucket, m.time) AS t,
-                       first(m.open, m.time)  AS o,
-                       max(m.high)            AS h,
-                       min(m.low)             AS l,
-                       last(m.close, m.time)  AS c,
-                       sum(m.volume)          AS v
-                FROM {view} m
-                WHERE m.ticker = :ticker
-                  AND m.time >= COALESCE(
-                      (SELECT max(ts) FROM {base}
-                       WHERE instrument_id = (
-                           SELECT instrument_id FROM instruments
-                           WHERE symbol = :ticker ORDER BY instrument_id LIMIT 1
-                       )),
-                      now()
-                  ) - :lookback
-                GROUP BY t
-                ORDER BY t ASC
-            """
-        try:
-            bars = _bars_from_rows(await db.execute(text(fallback_sql), params))
-        except Exception as exc:
-            await db.rollback()  # keep the session usable for the prev_close query
-            import logging
-            logging.getLogger(__name__).warning("series fallback failed for %s/%s: %s", tkr, rng, exc)
-            bars = []
-
+    # prev_close = the PREVIOUS SESSION's close (the 1D % change baseline). Same
+    # rule as /quotes and /mini: the last RTH 1-min print strictly before the
+    # latest minute bar's ET session date — NOT the latest imported daily bar,
+    # which can be days stale and yields a wrong-signed/magnitude 1D change.
+    # bars_1d.adj_close remains the fallback for symbols with no minute data.
     prev_close: float | None = None
     try:
         row = (await db.execute(
             text("""
-                SELECT adj_close FROM bars_1d
-                WHERE instrument_id = (
-                    SELECT instrument_id FROM instruments
-                    WHERE symbol = :ticker ORDER BY instrument_id LIMIT 1
+                WITH latest AS (
+                    SELECT max(time) AS t FROM market_data_1min WHERE ticker = :ticker
                 )
-                ORDER BY ts DESC LIMIT 1
+                SELECT m.close AS prev_close
+                FROM market_data_1min m, latest l
+                WHERE l.t IS NOT NULL
+                  AND m.ticker = :ticker
+                  AND m.time < date_trunc('day', l.t AT TIME ZONE 'America/New_York')
+                               AT TIME ZONE 'America/New_York'
+                  AND (m.time AT TIME ZONE 'America/New_York')::time >= time '09:30'
+                  AND (m.time AT TIME ZONE 'America/New_York')::time <  time '16:00'
+                ORDER BY m.time DESC LIMIT 1
             """),
             {"ticker": tkr},
         )).mappings().first()
         if row:
-            prev_close = float(row["adj_close"])
+            prev_close = float(row["prev_close"])
     except Exception:
         await db.rollback()
 
-    return {"ticker": tkr, "range": rng, "bars": bars, "prev_close": prev_close}
+    if prev_close is None:
+        try:
+            row = (await db.execute(
+                text("""
+                    SELECT adj_close FROM bars_1d
+                    WHERE instrument_id = (
+                        SELECT instrument_id FROM instruments
+                        WHERE symbol = :ticker ORDER BY instrument_id LIMIT 1
+                    )
+                    ORDER BY ts DESC LIMIT 1
+                """),
+                {"ticker": tkr},
+            )).mappings().first()
+            if row:
+                prev_close = float(row["adj_close"])
+        except Exception:
+            await db.rollback()
+
+    return {"ticker": tkr, "range": rng, "bars": bars, "indicators": ind, "prev_close": prev_close}
 
 
 # period → return-horizon column in bars_1d (1D handled live; rest are stored returns)
