@@ -54,61 +54,130 @@ FEATURE_SQL: dict[str, str] = {
     "ret_1bar": "ret_1bar",
 }
 
+# Daily feature set for the 1d-timeframe (1-month / 3-month) basket models. Same
+# technical core as the 30-min set, minus the intraday-only columns (no daily VWAP,
+# no ret_1bar), plus 1-/3-month momentum (ret_21d / ret_63d) which matters at these
+# horizons. Reads the data/daily_data parquet (one row per trading day per symbol).
+# Keep equivalent to a future indicators_daily view for train/serve parity.
+DEFAULT_DAILY_ROOT = Path(__file__).resolve().parents[2] / "data" / "daily_data"
+
+DAILY_FEATURE_SQL: dict[str, str] = {
+    "rsi_14": "rsi_14",
+    "macd": "macd",
+    "macd_signal": "macd_signal",
+    "macd_hist": "macd_hist",
+    "bb_pct_b": "bb_pctb",
+    "bb_width": "bb_bw",
+    "atr_14_pct": "atr_14 / NULLIF(adj_close, 0)",
+    "price_vs_sma200": "adj_close / NULLIF(sma_200, 0) - 1",
+    "price_vs_ema50": "adj_close / NULLIF(ema_50, 0) - 1",
+    "ret_1d": "ret_1d",
+    "ret_21d": "ret_21d",
+    "ret_63d": "ret_63d",
+}
+
+# Per-timeframe config: (parquet root, time column, RTH filter prefix, feature SQL).
+_TIMEFRAMES = {
+    "30m": (DEFAULT_PARQUET_ROOT, "ts", "rth AND ", FEATURE_SQL),
+    "1d": (DEFAULT_DAILY_ROOT, "date", "", DAILY_FEATURE_SQL),
+}
+
 
 def load_training_data(
-    parquet_root: str | Path = DEFAULT_PARQUET_ROOT,
+    parquet_root: str | Path | None = None,
     tickers: list[str] | None = None,
-    horizon_bars: int = 16,  # 16 RTH 30-min bars ahead (~1.2 trading days)
+    horizon_bars: int = 16,  # bars ahead: 30-min bars for '30m', trading days for '1d'
     since: str = "2015-01-01",
     scope: str = "all",  # 'all' | 'stock' | 'etf'
+    timeframe: str = "30m",  # '30m' (data/30min_data) | '1d' (data/daily_data)
+    target_type: str = "direction",  # 'direction' (up/down) | 'beat_spy' (excess vs SPY)
 ) -> tuple[pd.DataFrame, pd.Series, pd.DataFrame]:
     """
-    Load feature matrix X and binary target y straight from the 30-min parquet
-    (one file per symbol, RTH rows, with precomputed indicators). Features are
-    derived in SQL via FEATURE_SQL — identical to the indicators_30min view.
+    Load feature matrix X and binary target y from the per-timeframe parquet (one file
+    per symbol, with precomputed indicators). Features are derived in SQL via the
+    timeframe's feature map (FEATURE_SQL for 30m / DAILY_FEATURE_SQL for 1d) so training
+    matches the serving view — no train/serve skew.
 
-    Target: will adj_close be higher `horizon_bars` RTH bars from now?
+    Targets:
+      - 'direction': will adj_close be higher `horizon_bars` ahead?
+      - 'beat_spy':  will this symbol's `horizon_bars`-ahead return beat SPY's over the
+        same window? (removes the market up-drift so long horizons aren't "always up").
 
-    Returns (X, y, cv_meta) where cv_meta carries the per-row `ts` and
-    `label_end_ts` (= the timestamp of the bar the label looks ahead to). Rows are
-    globally ORDER BY ts so a walk-forward split sees real time blocks, and cv_meta
-    lets `purged_walk_forward_splits` drop train rows whose label window overlaps the
+    Returns (X, y, cv_meta) where cv_meta carries the per-row `ts` and `label_end_ts`
+    (the timestamp the label looks ahead to). Rows are globally ORDER BY time so the
+    walk-forward split sees real time blocks, and cv_meta lets
+    `purged_walk_forward_splits` drop train rows whose label window overlaps the
     validation block (removes the overlapping-label leakage).
     """
+    if timeframe not in _TIMEFRAMES:
+        raise ValueError(f"unknown timeframe: {timeframe!r} (use '30m' or '1d')")
+    default_root, time_col, rth_prefix, feature_sql = _TIMEFRAMES[timeframe]
+    root = Path(parquet_root) if parquet_root is not None else default_root
+    feature_cols = list(feature_sql.keys())
+
     assets = ["stock", "etf"] if scope == "all" else [scope]
-    globs = [str(Path(parquet_root) / a / "*.parquet") for a in assets]
+    globs = [str(root / a / "*.parquet") for a in assets]
     glob_literal = "[" + ", ".join(f"'{g}'" for g in globs) + "]"
 
-    feat_select = ",\n                ".join(f"{expr} AS {name}" for name, expr in FEATURE_SQL.items())
+    feat_select = ",\n                ".join(f"{expr} AS {name}" for name, expr in feature_sql.items())
     ticker_filter = (
         "AND symbol IN (" + ",".join(repr(t) for t in tickers) + ")" if tickers else ""
     )
-
-    query = f"""
-        WITH bars AS (
+    bars_cte = f"""
+        bars AS (
             SELECT
-                ts,
+                {time_col} AS _t,
                 {feat_select},
                 adj_close,
-                LEAD(adj_close, {horizon_bars}) OVER (PARTITION BY symbol ORDER BY ts) AS future_close,
-                LEAD(ts, {horizon_bars}) OVER (PARTITION BY symbol ORDER BY ts) AS label_end_ts
+                LEAD(adj_close, {horizon_bars}) OVER (PARTITION BY symbol ORDER BY {time_col}) AS future_close,
+                LEAD({time_col}, {horizon_bars}) OVER (PARTITION BY symbol ORDER BY {time_col}) AS label_end_ts
             FROM read_parquet({glob_literal}, union_by_name=true)
-            WHERE rth AND ts >= TIMESTAMP '{since}' {ticker_filter}
-        )
+            WHERE {rth_prefix}{time_col} >= TIMESTAMP '{since}' {ticker_filter}
+        )"""
+
+    if target_type == "direction":
+        query = f"""
+        WITH {bars_cte}
         SELECT
-            ts,
+            _t AS ts,
             label_end_ts,
-            {", ".join(FEATURE_COLS)},
+            {", ".join(feature_cols)},
             (future_close > adj_close)::INT AS target
         FROM bars
         WHERE future_close IS NOT NULL
-        ORDER BY ts
-    """
+        ORDER BY _t
+        """
+    elif target_type == "beat_spy":
+        # SPY ships in the etf/ sub-dir of each timeframe's parquet root.
+        spy_file = str(root / "etf" / "SPY.parquet")
+        query = f"""
+        WITH {bars_cte},
+        spy AS (
+            SELECT
+                {time_col} AS _t,
+                adj_close AS spy_close,
+                LEAD(adj_close, {horizon_bars}) OVER (ORDER BY {time_col}) AS spy_future
+            FROM read_parquet('{spy_file}')
+        )
+        SELECT
+            b._t AS ts,
+            b.label_end_ts,
+            {", ".join("b." + c for c in feature_cols)},
+            CASE WHEN (b.future_close / NULLIF(b.adj_close, 0))
+                    > (s.spy_future / NULLIF(s.spy_close, 0)) THEN 1 ELSE 0 END AS target
+        FROM bars b
+        JOIN spy s ON b._t = s._t
+        WHERE b.future_close IS NOT NULL AND s.spy_future IS NOT NULL
+        ORDER BY b._t
+        """
+    else:
+        raise ValueError(f"unknown target_type: {target_type!r} (use 'direction' or 'beat_spy')")
+
     con = duckdb.connect()
     df = con.execute(query).df()
     con.close()
 
-    X = df[FEATURE_COLS].reset_index(drop=True)
+    X = df[feature_cols].reset_index(drop=True)
     y = df["target"].reset_index(drop=True)
     cv_meta = df[["ts", "label_end_ts"]].reset_index(drop=True)
     return X, y, cv_meta
@@ -145,17 +214,22 @@ def purged_walk_forward_splits(cv_meta: pd.DataFrame, n_splits: int = 5):
 
 
 def train(
-    parquet_root: str | Path = DEFAULT_PARQUET_ROOT,
+    parquet_root: str | Path | None = None,
     output_path: Path | None = None,
     tickers: list[str] | None = None,
     horizon_bars: int = 16,
+    timeframe: str = "30m",
+    target_type: str = "direction",
 ) -> dict:
     if output_path is None:
         from ml.core.config import ml_settings
         output_path = Path(ml_settings.MODEL_DIR) / "xgboost_prod.pkl"
 
-    logger.info("Loading training data...")
-    X, y, cv_meta = load_training_data(parquet_root, tickers=tickers, horizon_bars=horizon_bars)
+    logger.info("Loading training data (timeframe=%s, target=%s)...", timeframe, target_type)
+    X, y, cv_meta = load_training_data(
+        parquet_root, tickers=tickers, horizon_bars=horizon_bars,
+        timeframe=timeframe, target_type=target_type,
+    )
     logger.info("Dataset: %d samples, %.1f%% positive", len(X), y.mean() * 100)
 
     try:
@@ -212,6 +286,6 @@ def train(
         "mean_cv_auc": mean_auc,
         "n_samples": len(X),
         "feature_importance": dict(
-            zip(FEATURE_COLS, model.feature_importances_.tolist(), strict=False)
+            zip(list(X.columns), model.feature_importances_.tolist(), strict=False)
         ),
     }

@@ -144,12 +144,34 @@ export interface ChatReply {
   usage: ChatQuota;
 }
 
+/** One headline in a chat news card (matches the get_news tool payload). */
+export interface ChatNewsItem {
+  time: string;
+  headline: string;
+  source: string;
+  url?: string | null;
+  finbert_score?: number | null;
+  finbert_label?: string | null;
+}
+
+/** A rich inline card the chat agent emits alongside its text answer. */
+export interface ChatChartCard {
+  card: "chart";
+  data: { ticker: string; range: string };
+}
+export interface ChatNewsCard {
+  card: "news";
+  data: { ticker: string; articles: ChatNewsItem[] };
+}
+export type ChatCard = ChatChartCard | ChatNewsCard;
+
 /** A stored message in a server-backed conversation. */
 export interface StoredMessage {
   id: string;
   role: ChatRole;
   content: string;
   tools_used: string[];
+  cards?: ChatCard[] | null;
   created_at: string;
 }
 

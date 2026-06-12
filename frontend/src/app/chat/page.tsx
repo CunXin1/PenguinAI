@@ -16,10 +16,11 @@ import {
   PanelLeft,
 } from "lucide-react";
 import { Card } from "@/components/ui/Card";
+import { ChatCards } from "@/components/chat/ChatCards";
 import { useAuth } from "@/hooks/useAuth";
 import { chat as chatApi } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { ChatQuota, Conversation, StoredMessage } from "@/lib/types";
+import type { ChatCard, ChatQuota, Conversation, StoredMessage } from "@/lib/types";
 
 const MAX_INPUT = 2000;
 
@@ -35,6 +36,7 @@ type Msg = {
   role: "user" | "assistant";
   content: string;
   tools_used?: string[];
+  cards?: ChatCard[];
   id?: string;
   streaming?: boolean;
 };
@@ -89,6 +91,7 @@ export default function ChatPage() {
           role: m.role,
           content: m.content,
           tools_used: m.tools_used,
+          cards: m.cards ?? undefined,
           id: m.id,
         }))
       );
@@ -166,6 +169,14 @@ export default function ChatPage() {
               const last = c[c.length - 1];
               if (last?.role === "assistant")
                 c[c.length - 1] = { ...last, tools_used: [...(last.tools_used ?? []), name] };
+              return c;
+            }),
+          onCard: (card) =>
+            setMessages((m) => {
+              const c = [...m];
+              const last = c[c.length - 1];
+              if (last?.role === "assistant")
+                c[c.length - 1] = { ...last, cards: [...(last.cards ?? []), card] };
               return c;
             }),
           onDone: (d) => {
@@ -387,6 +398,9 @@ export default function ChatPage() {
                       ""
                     )}
                   </div>
+                  {m.role === "assistant" && m.cards && m.cards.length > 0 && (
+                    <ChatCards cards={m.cards} />
+                  )}
                   {m.role === "assistant" && m.tools_used && m.tools_used.length > 0 && (
                     <div className="flex flex-wrap items-center gap-1 pl-1">
                       {Array.from(new Set(m.tools_used)).map((t) => (

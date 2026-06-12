@@ -7,8 +7,8 @@ belong to a conversation (cascade delete).
 
 import uuid
 
-from sqlalchemy import Column, DateTime, ForeignKey, Text, func
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy import JSON, Column, DateTime, ForeignKey, Text, func
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import relationship
 
 from app.core.database import Base
@@ -46,6 +46,10 @@ class ChatMessage(Base):
     role = Column(Text, nullable=False)  # 'user' | 'assistant'
     content = Column(Text, nullable=False)
     tools_used = Column(ARRAY(Text), nullable=False, default=list)
+    # JSONB in Postgres (prod); generic JSON on SQLite (tests) — same Python value.
+    cards = Column(
+        JSONB().with_variant(JSON(), "sqlite"), nullable=True
+    )  # rich UI cards (chart/news) for this turn; None = none
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     conversation = relationship("ChatConversation", back_populates="messages")

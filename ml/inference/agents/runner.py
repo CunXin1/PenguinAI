@@ -90,6 +90,9 @@ async def run_stream(user_message: str, ctx: ChatContext, history: list[dict] | 
     tools_used: list[str] = []
     content_parts: list[str] = []
     final_output = ""
+    ctx.card_sink = []  # tools append {"card","data"} here; we drain on each tool output
+    emitted_cards = 0
+    seen_cards: set[tuple[str, str]] = set()  # dedupe by (card, ticker) — e.g. quote+history → one chart
     try:
         result = Runner.run_streamed(
             build_orchestrator(),
@@ -103,10 +106,21 @@ async def run_stream(user_message: str, ctx: ChatContext, history: list[dict] | 
                 if isinstance(data, ResponseTextDeltaEvent) and data.delta:
                     content_parts.append(data.delta)
                     yield {"type": "delta", "text": data.delta}
-            elif ev.type == "run_item_stream_event" and ev.item.type == "tool_call_item":
-                name = _tool_name(ev.item)
-                tools_used.append(name)
-                yield {"type": "tool", "name": name}
+            elif ev.type == "run_item_stream_event":
+                if ev.item.type == "tool_call_item":
+                    name = _tool_name(ev.item)
+                    tools_used.append(name)
+                    yield {"type": "tool", "name": name}
+                elif ev.item.type == "tool_call_output_item":
+                    # The tool has run; flush any cards it recorded, in order.
+                    while emitted_cards < len(ctx.card_sink):
+                        card = ctx.card_sink[emitted_cards]
+                        emitted_cards += 1
+                        key = (card["card"], str(card["data"].get("ticker", "")))
+                        if key in seen_cards:
+                            continue
+                        seen_cards.add(key)
+                        yield {"type": "card", **card}
         final_output = result.final_output or ""
     except Exception as e:  # noqa: BLE001 — transport/parse errors → error event (route 503s)
         logger.warning("sdk chat stream failed: %s", e)

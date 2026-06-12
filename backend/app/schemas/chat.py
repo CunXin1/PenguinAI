@@ -71,6 +71,7 @@ class MessageOut(BaseModel):
     role: Literal["user", "assistant"]
     content: str
     tools_used: list[str] = []
+    cards: list[dict] | None = None  # rich UI cards (chart/news) to render inline; None = none
     created_at: datetime
 
     model_config = {"from_attributes": True}

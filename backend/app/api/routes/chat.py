@@ -263,6 +263,7 @@ async def send_message_stream(
     async def event_stream():
         full_content = ""
         tools_used: list[str] = []
+        cards: list[dict] = []
         try:
             async for ev in run_chat_agent_stream(
                 user_message=req.content,
@@ -272,8 +273,10 @@ async def send_message_stream(
                 history=history,
                 focus_ticker=req.focus_ticker,
             ):
-                if ev["type"] in ("tool", "delta"):
+                if ev["type"] in ("tool", "delta", "card"):
                     yield _sse(ev)
+                    if ev["type"] == "card":
+                        cards.append({"card": ev["card"], "data": ev["data"]})
                 elif ev["type"] == "done":
                     full_content = (ev.get("content") or "").strip()
                     tools_used = ev.get("tools_used", [])
@@ -299,6 +302,7 @@ async def send_message_stream(
             role="assistant",
             content=full_content,
             tools_used=tools_used or [],
+            cards=cards or None,
         )
         db.add(assistant_msg)
         if is_first:

@@ -76,8 +76,11 @@ CREATE TABLE IF NOT EXISTS chat_messages (
     role            TEXT        NOT NULL,            -- 'user' | 'assistant'
     content         TEXT        NOT NULL,
     tools_used      TEXT[]      NOT NULL DEFAULT '{}',  -- tool names the assistant invoked for this turn
+    cards           JSONB,                           -- rich UI cards (chart/news) for this turn; NULL = none
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Additive for already-provisioned DBs (CREATE above is IF NOT EXISTS).
+ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS cards JSONB;
 -- Replay a conversation in order.
 CREATE INDEX IF NOT EXISTS idx_chat_msg_conv ON chat_messages (conversation_id, created_at);
 

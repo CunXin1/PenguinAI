@@ -497,12 +497,13 @@ _DAILY_LATERAL = """
     LEFT JOIN LATERAL (
         SELECT max(adj_close) FILTER (WHERE rn = 1) AS last_close,
                max(adj_close) FILTER (WHERE rn = 2) AS prev_close,
+               max(ts)        FILTER (WHERE rn = 1) AS last_ts,
                max(ret_5d)    FILTER (WHERE rn = 1) AS ret_5d,
                max(ret_21d)   FILTER (WHERE rn = 1) AS ret_21d,
                max(ret_63d)   FILTER (WHERE rn = 1) AS ret_63d,
                max(ret_252d)  FILTER (WHERE rn = 1) AS ret_252d
         FROM (
-            SELECT adj_close, ret_5d, ret_21d, ret_63d, ret_252d,
+            SELECT adj_close, ts, ret_5d, ret_21d, ret_63d, ret_252d,
                    row_number() OVER (ORDER BY ts DESC) AS rn
             FROM bars_1d WHERE instrument_id = {inst} ORDER BY ts DESC LIMIT 2
         ) x
@@ -517,19 +518,49 @@ def _daily_lateral(inst: str) -> str:
     return _DAILY_LATERAL.format(inst=inst)
 
 
+def _ny_date(ts) -> object | None:
+    """NY-session calendar date for a tz-aware timestamp (UTC-assumed if naive)."""
+    if ts is None:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    return ts.astimezone(ET).date()
+
+
 def _period_change(
-    m: dict, period: str, is_open: bool, live_price: float | None
+    m: dict, period: str, is_open: bool, sess: dict | None, today_ny
 ) -> tuple[float, float] | None:
-    """(price, change_pct) for the selected period, or None if no daily data."""
+    """(price, change_pct) for the selected period, or None if no daily data.
+
+    1D is always measured against the PRIOR CLOSE (the broker/Finviz convention):
+      - if the current session is live (market open) or just-closed but not yet settled
+        into ``bars_1d`` → take its price from today's ``market_data_1min`` prints and
+        compare to the last settled daily close;
+      - otherwise (already settled, or no session today — weekend/holiday/pre-open) →
+        last settled close vs the one before it. This branch is fully static, so the
+        map freezes outside market hours.
+
+    Stale ticks can't leak in: ``sess`` only carries *today's* RTH prints, so a symbol
+    with no fresh data falls through to the settled-bar branch instead of colouring off
+    a days-old quote.
+    """
     if m.get("last_close") is None:
         return None
     last_close = float(m["last_close"])
     if period == "1D":
         prev = float(m["prev_close"]) if m.get("prev_close") is not None else None
-        if is_open and live_price is not None:
-            price, baseline = live_price, last_close  # intraday move vs prior close
+        last_bar_is_today = _ny_date(m.get("last_ts")) == today_ny
+        live = sess.get("live") if sess else None  # latest print today (RTH or after-hrs)
+        rth_close = sess.get("rth_close") if sess else None  # today's <16:00 close
+        if live is not None and not last_bar_is_today:
+            # Unsettled current session vs the last settled close. While open use the
+            # live print; once closed freeze at today's regular-session (16:00) close.
+            baseline = last_close
+            price = live if is_open else (rth_close if rth_close is not None else live)
         else:
-            price, baseline = last_close, (prev if prev is not None else last_close)
+            # Settled session (or none today) → standard close vs prior close, static.
+            baseline = prev if prev is not None else last_close
+            price = last_close
         chg = ((price - baseline) / baseline * 100.0) if baseline else 0.0
     else:
         ret = m.get(_PERIOD_RET[period])  # stored as a fraction
@@ -546,10 +577,11 @@ async def get_heatmap(
     period: str = Query(default="1D", description="1D | 1W | 1M | 3M | 1Y"),
 ):
     """Market-cap heatmap — tiles sized by market cap, colored by % change over
-    the chosen period, plus index ETF tiles (SPY/QQQ/DIA/IWM).
+    the chosen period, plus index ETF tiles (SPY/QQQ/IWM).
 
-    - 1D: market OPEN → live ``market_data_1min`` price vs prior close; CLOSED →
-      last daily close vs the prior session.
+    - 1D: always vs PRIOR CLOSE. OPEN → live ``market_data_1min`` price vs prior
+      close; CLOSED → the last completed session (today's if it just closed, else
+      the prior one) close vs prior close. Frozen outside market hours.
     - 1W/1M/3M/1Y: the stored return horizons in ``bars_1d`` (ret_5d/21d/63d/252d).
     """
     period = period.upper()
@@ -559,6 +591,7 @@ async def get_heatmap(
             detail=f"period must be one of {list(_PERIODS)}",
         )
     now = datetime.now(UTC)
+    today_ny = now.astimezone(ET).date()
     phase = get_session_phase(now)
     is_open = phase == "REGULAR"
     if not is_open:
@@ -577,7 +610,8 @@ async def get_heatmap(
                 LIMIT :limit
             )
             SELECT top.ticker, top.name, top.sector, top.market_cap,
-                   lc.last_close, lc.prev_close, lc.ret_5d, lc.ret_21d, lc.ret_63d, lc.ret_252d
+                   lc.last_close, lc.prev_close, lc.last_ts,
+                   lc.ret_5d, lc.ret_21d, lc.ret_63d, lc.ret_252d
             FROM top
             {_daily_lateral("top.instrument_id")}
             ORDER BY top.market_cap DESC
@@ -590,7 +624,7 @@ async def get_heatmap(
     idx_syms = [s for s, _ in _INDEX_TILES]
     idx_rows = await db.execute(
         text(f"""
-            SELECT i.symbol, lc.last_close, lc.prev_close,
+            SELECT i.symbol, lc.last_close, lc.prev_close, lc.last_ts,
                    lc.ret_5d, lc.ret_21d, lc.ret_63d, lc.ret_252d
             FROM instruments i
             {_daily_lateral("i.instrument_id")}
@@ -600,24 +634,44 @@ async def get_heatmap(
     )
     idx_metrics = {r["symbol"]: dict(r) for r in idx_rows.mappings()}
 
-    # ── Live prices for everything (1D + open only) ──────────────────────────
-    live: dict[str, float] = {}
-    if is_open and period == "1D":
+    # ── Today's session prices from the live stream (1D only) ────────────────
+    # One row per symbol carrying ONLY today's RTH prints: the latest (open-market
+    # live price) and the 16:00 close (freezes the map the instant the session ends,
+    # before freshness settles today's bar into bars_1d). Scoping to today's session
+    # is also what stops a stale prior-day tick from posing as a "live" price.
+    session: dict[str, dict] = {}
+    if period == "1D":
         syms = [r["ticker"] for r in base] + idx_syms
-        lrows = await db.execute(
+        srows = await db.execute(
             text("""
-                SELECT DISTINCT ON (ticker) ticker, close
-                FROM market_data_1min
-                WHERE ticker = ANY(:syms)
-                ORDER BY ticker, time DESC
+                SELECT ticker,
+                       last(close, time)                                  AS live_px,
+                       last(close, time) FILTER (WHERE et < time '16:00') AS rth_close_px
+                FROM (
+                    SELECT ticker, close, time,
+                           (time AT TIME ZONE 'America/New_York')::time AS et,
+                           (time AT TIME ZONE 'America/New_York')::date AS ed
+                    FROM market_data_1min
+                    WHERE ticker = ANY(:syms)
+                      AND time >= now() - interval '36 hours'
+                ) s
+                WHERE ed = (now() AT TIME ZONE 'America/New_York')::date
+                  AND et >= time '09:30'
+                GROUP BY ticker
             """),
             {"syms": syms},
         )
-        live = {r["ticker"]: float(r["close"]) for r in lrows.mappings()}
+        session = {
+            r["ticker"]: {
+                "live": float(r["live_px"]) if r["live_px"] is not None else None,
+                "rth_close": float(r["rth_close_px"]) if r["rth_close_px"] is not None else None,
+            }
+            for r in srows.mappings()
+        }
 
     items = []
     for r in base:
-        res = _period_change(r, period, is_open, live.get(r["ticker"]))
+        res = _period_change(r, period, is_open, session.get(r["ticker"]), today_ny)
         if res is None:
             continue
         price, change_pct = res
@@ -637,7 +691,7 @@ async def get_heatmap(
         m = idx_metrics.get(sym)
         if not m:
             continue
-        res = _period_change(m, period, is_open, live.get(sym))
+        res = _period_change(m, period, is_open, session.get(sym), today_ny)
         if res is None:
             continue
         price, change_pct = res

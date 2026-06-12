@@ -173,8 +173,12 @@ class TestRegistry:
 # ── backend capability ───────────────────────────────────────────────────────
 class TestBackendToolSupport:
     @pytest.mark.asyncio
-    async def test_ollama_opts_out_of_tool_calling(self):
+    async def test_ollama_supports_tool_calling(self):
+        # Ollama's Gemma 4 tool-call parser works (>=0.4): OllamaBackend overrides
+        # chat_tools with a real implementation rather than the base opt-out, so the
+        # chat agent runs the full tool loop on macOS. (The old "must use vLLM" caveat
+        # is obsolete.)
+        from ml.inference.llm.base import LLMBackend
         from ml.inference.llm.ollama_backend import OllamaBackend
 
-        with pytest.raises(NotImplementedError):
-            await OllamaBackend().chat_tools([], tools=[])
+        assert OllamaBackend.chat_tools is not LLMBackend.chat_tools

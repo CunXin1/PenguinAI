@@ -12,6 +12,7 @@ import type {
   CelebritySummary,
   CelebrityTopHolding,
   ChartRange,
+  ChatCard,
   ChatMessage,
   ChatQuota,
   ChatReply,
@@ -381,6 +382,7 @@ export const chat = {
     handlers: {
       onDelta?: (text: string) => void;
       onTool?: (name: string) => void;
+      onCard?: (card: ChatCard) => void;
       onDone?: (data: {
         message_id: string;
         title: string;
@@ -434,6 +436,8 @@ export const chat = {
         }
         if (ev.type === "delta") handlers.onDelta?.(ev.text as string);
         else if (ev.type === "tool") handlers.onTool?.(ev.name as string);
+        else if (ev.type === "card")
+          handlers.onCard?.({ card: ev.card, data: ev.data } as ChatCard);
         else if (ev.type === "done")
           handlers.onDone?.(
             ev as unknown as {
