@@ -10,7 +10,7 @@ python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.32
 celery[redis]==5.6.3
-redis==5.2.1
+redis==5.3.1
 httpx==0.28.1
 openai-agents==0.17.5  # PREMIUM chat agent harness (pulls openai SDK); tool-calling over local Gemma via OpenAI-compat
 python-dotenv==1.0.1
