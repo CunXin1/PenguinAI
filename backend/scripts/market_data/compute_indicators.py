@@ -229,6 +229,45 @@ def _process_daily(df: pd.DataFrame, symbol: str, asset_type: str) -> pd.DataFra
     return daily
 
 
+# ----------------------------------------------------------------------------- precision
+# Output rounding by indicator category, to standardize stored precision.
+#   - Price-denominated values (OHLC + all price-derived indicators) keep 4 decimals:
+#     sub-cent resolution, safe for split-adjusted history and sub-$1 names, and matches
+#     market_data_1min's NUMERIC(14,4).
+#   - Bounded ratios and returns also keep 4 (2 would collapse e.g. 0.0023 -> 0.00).
+#   - rsi_14 is a 0-100 oscillator: 2 decimals is plenty.
+#   - obv is whole-share cumulative volume: 0 decimals.
+# MIRRORED by data/ingestion/realtime/indicators.py (realtime 1-min compute) and
+# backend/scripts/market_data/round_existing_precision.py (one-time DB backfill).
+# Keep the three in sync.
+ROUND_DECIMALS: dict[str, int] = {
+    # prices + price-derived (4)
+    "raw_open": 4, "raw_high": 4, "raw_low": 4, "raw_close": 4,
+    "adj_open": 4, "adj_high": 4, "adj_low": 4, "adj_close": 4,
+    "sma_20": 4, "sma_50": 4, "sma_200": 4,
+    "ema_12": 4, "ema_26": 4, "ema_50": 4,
+    "macd": 4, "macd_signal": 4, "macd_hist": 4,
+    "bb_mid": 4, "bb_upper": 4, "bb_lower": 4,
+    "atr_14": 4, "vwap_day": 4,
+    # bounded ratios + returns (4)
+    "bb_pctb": 4, "bb_bw": 4, "ret_1bar": 4,
+    "ret_1d": 4, "ret_5d": 4, "ret_21d": 4,
+    "ret_63d": 4, "ret_126d": 4, "ret_252d": 4,
+    "gap_overnight": 4,
+    # bounded oscillator (2)
+    "rsi_14": 2,
+    # cumulative volume (0)
+    "obv": 0,
+}
+
+
+def round_precision(df: pd.DataFrame) -> pd.DataFrame:
+    """Round price/indicator columns to their per-category precision (NaN preserved,
+    volume/non-numeric columns untouched). Returns a rounded copy."""
+    cols = {c: n for c, n in ROUND_DECIMALS.items() if c in df.columns}
+    return df.round(cols) if cols else df
+
+
 def _atomic_write(table_df: pd.DataFrame, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_suffix(dest.suffix + ".tmp")
@@ -255,14 +294,14 @@ def _task(
     n_daily = 0
     try:
         if do_30min:
-            out_df = _process_30min(df)
+            out_df = round_precision(_process_30min(df))
             if min30_out_dir:
                 dest = Path(min30_out_dir) / asset_type / src.name
             else:
                 dest = src  # in-place
             _atomic_write(out_df, dest)
         if do_daily and daily_root:
-            daily = _process_daily(df, symbol, asset_type)
+            daily = round_precision(_process_daily(df, symbol, asset_type))
             n_daily = len(daily)
             if n_daily:
                 _atomic_write(daily, Path(daily_root) / asset_type / src.name)

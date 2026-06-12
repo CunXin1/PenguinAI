@@ -427,7 +427,7 @@ the repo root — never `cd ml` first.
 
 ## What NOT to do
 
-- Do not add LangChain or any LLM orchestration framework. Everything is native Python async.
+- Keep the **signal pipeline** native Python async — do not wrap that deterministic, backend-assembled path in an agent/orchestration framework. The **LLM Chat Agent** MAY adopt an agent framework (e.g. Google ADK, Pydantic AI, OpenAI Agents SDK) when it earns its keep, provided it keeps the dependency footprint reasonable and preserves the non-negotiable chat security model (read-only tools, server-side `user_id`, injection mitigations, no write/execution tools — see "LLM Chat Agent"). Avoid LangChain specifically (bloat).
 - Do not let user free text reach the **signal pipeline** LLM — those prompts are 100% backend-assembled. (The separate **LLM Chat Agent** does accept user input; it gets its own injection mitigations, read-only tools, and server-side `user_id` scoping. Never give the chat agent write/execution tools.)
 - Do not write trading/order execution code. Signals only — this applies to chat-agent tools too (read-only).
 - Do not use Streamlit for the user-facing product. Streamlit is for internal ML monitoring only.

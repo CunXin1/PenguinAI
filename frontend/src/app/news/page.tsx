@@ -204,8 +204,9 @@ export default function NewsPage() {
         </div>
       )}
 
-      {/* Featured — 1 large + 2 small grid, only in market view */}
-      {!isLoading && f === "all" && featured.length === 3 && (
+      {/* Featured — 1 large + 2 small grid. Stays pinned in the market view regardless
+          of the sentiment filter (featured is already [] when a ticker search is active). */}
+      {!isLoading && featured.length === 3 && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {/* Primary featured — spans full width on mobile, left column on desktop */}
           <FeaturedCard article={featured[0]} variant="large" onTickerClick={handleTickerClick} />

@@ -43,6 +43,22 @@ except ImportError:
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# Tech-leaning tickers — prioritized in the market-wide "look through" feed so it skews
+# toward technology names rather than whatever sector happens to be loudest that day.
+TECH_TICKERS = frozenset(
+    {
+        "AAPL", "MSFT", "AMZN", "NVDA", "GOOGL", "GOOG", "META", "TSLA", "AVGO", "NFLX",
+        "AMD", "ADBE", "CRM", "INTC", "QCOM", "TXN", "AMAT", "MU", "LRCX", "KLAC",
+        "ORCL", "CSCO", "IBM", "NOW", "PANW", "CRWD", "SNOW", "PLTR", "COIN", "MSTR",
+        "INTU", "ADI", "SNPS", "CDNS", "MRVL", "ARM", "SMCI", "TMUS", "PYPL", "MARA", "RIOT",
+        "QQQ", "XLK", "SOXX", "SMH", "ARKK",
+    }
+)
+
+# Max headlines per ticker in the market-wide feed (no ticker filter). A single-ticker
+# request is exempt — it deliberately wants every headline for that one symbol.
+_PER_TICKER_CAP = 3
+
 _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
 _NON_EN_RE = re.compile(
     r"\b(?:según|también|después|años|será|está|están|puede|desde|gobierno"
@@ -277,6 +293,59 @@ def _map_db_row(row) -> dict:
     }
 
 
+def _curate_market_feed(
+    articles: list[dict],
+    limit: int,
+    per_ticker_cap: int = _PER_TICKER_CAP,
+) -> list[dict]:
+    """Turn a raw, newest-first article pool into the market-wide "look through" feed.
+
+    Three passes, in order:
+      1. Dedup by URL (fallback: headline), merging the ticker lists of duplicates so one
+         story shared across several tickers appears once.
+      2. Skew toward technology names: tech-tagged stories sort ahead of the rest, recency
+         breaking ties within each group.
+      3. Cap each ticker at ``per_ticker_cap`` so a single loud sector (e.g. energy/XOM)
+         can't crowd out everything else.
+
+    Only used for the market-wide feed; single-ticker requests skip this entirely.
+    """
+    # 1. Dedup + merge tickers (input is newest-first, so the first hit for a URL wins).
+    by_key: dict[str, dict] = {}
+    for a in articles:
+        key = a.get("url") or a.get("headline")
+        if not key:
+            continue
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = {**a, "tickers": list(a.get("tickers") or [])}
+        else:
+            for tk in a.get("tickers") or []:
+                if tk not in existing["tickers"]:
+                    existing["tickers"].append(tk)
+    unique = list(by_key.values())
+
+    # 2. Tech-first, newest-first within each group.
+    def _is_tech(a: dict) -> bool:
+        return any(tk in TECH_TICKERS for tk in (a.get("tickers") or []))
+
+    unique.sort(key=lambda a: (0 if _is_tech(a) else 1, -int(a.get("datetime") or 0)))
+
+    # 3. Per-ticker cap, counted against the story's primary (first) ticker.
+    counts: dict[str, int] = {}
+    out: list[dict] = []
+    for a in unique:
+        tickers = a.get("tickers") or []
+        primary = tickers[0] if tickers else "__none__"
+        if counts.get(primary, 0) >= per_ticker_cap:
+            continue
+        counts[primary] = counts.get(primary, 0) + 1
+        out.append(a)
+        if len(out) >= limit:
+            break
+    return out
+
+
 # ── Fetch helpers (each returns None on failure) ─────────────────────
 
 
@@ -459,17 +528,23 @@ async def get_hot_news(
                 ),
                 {"ticker": t, "limit": limit},
             )
+            result = [a for a in (_map_db_row(r) for r in rows.mappings()) if _is_english(a)]
         else:
+            # Pull a generous, newest-first candidate pool (one row per (ticker, article)),
+            # then curate it: dedup across tickers, cap per ticker, and skew toward tech so
+            # a single sector (e.g. energy/XOM) can't dominate the "look through" feed.
+            pool = min(max(limit * 10, 500), 1200)
             rows = await db.execute(
                 text(
                     "SELECT * FROM news_articles "
                     "WHERE time > NOW() - INTERVAL '7 days' "
                     "ORDER BY time DESC "
-                    "LIMIT :limit"
+                    "LIMIT :pool"
                 ),
-                {"limit": limit},
+                {"pool": pool},
             )
-        result = [a for a in (_map_db_row(r) for r in rows.mappings()) if _is_english(a)]
+            candidates = [a for a in (_map_db_row(r) for r in rows.mappings()) if _is_english(a)]
+            result = _curate_market_feed(candidates, limit)
     except Exception as exc:
         # Parity with /{ticker}: a DB outage shouldn't 500 — fall through to the
         # on-demand API fetch below instead.
@@ -479,19 +554,24 @@ async def get_hot_news(
         _set_cache(cache_key, result)
         return result
 
-    # DB empty or unavailable — fall back to on-demand API fetch
-    articles = await _fetch_massive_news(ticker=t, limit=limit)
+    # DB empty or unavailable — fall back to on-demand API fetch. For the market-wide
+    # feed, over-fetch so the curation pass below has material to dedup/cap/skew.
+    fetch_n = limit if t else min(max(limit * 4, 100), 200)
+    articles = await _fetch_massive_news(ticker=t, limit=fetch_n)
     if articles is None:
         articles = await _fetch_google_rss(
             query=f"{t} stock" if t else "stock market finance",
-            limit=limit,
+            limit=fetch_n,
         )
     if articles is None:
-        articles = await _fetch_finnhub_news(ticker=t, limit=limit)
+        articles = await _fetch_finnhub_news(ticker=t, limit=fetch_n)
     articles = articles or []
     if t:
         articles = await _score_articles(articles, t)
-    articles = [a for a in articles if _is_english(a)]
+        articles = [a for a in articles if _is_english(a)]
+    else:
+        articles = [a for a in articles if _is_english(a)]
+        articles = _curate_market_feed(articles, limit)
     _set_cache(cache_key, articles)
     return articles
 

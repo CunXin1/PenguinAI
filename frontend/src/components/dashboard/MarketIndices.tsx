@@ -6,7 +6,7 @@ import { marketData } from "@/lib/api";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { Card } from "@/components/ui/Card";
 import { useMarketStatus } from "@/lib/market-status";
-import { cn, money, signedPct } from "@/lib/utils";
+import { cn, etWeekday, money, signedPct } from "@/lib/utils";
 
 const UP = "#10b981"; // emerald-500
 const DOWN = "#f43f5e"; // rose-500
@@ -41,6 +41,9 @@ export function MarketIndices() {
         const has = !!q && Number.isFinite(q.price);
         const up = (q?.change_pct ?? 0) >= 0;
         const color = up ? UP : DOWN;
+        // While open the % is "today"; when closed it's the last session's move —
+        // label it by that session's ET weekday ("Fri close") so it never lies.
+        const changeLabel = isOpen ? "today" : `${etWeekday(q?.time) ?? "prev"} close`;
 
         return (
           <Link
@@ -72,7 +75,7 @@ export function MarketIndices() {
                           : "text-red-600 dark:text-red-400"
                       )}
                     >
-                      {signedPct(q!.change_pct)} today
+                      {signedPct(q!.change_pct)} {changeLabel}
                     </div>
                   ) : (
                     <div className="text-xs text-zinc-400 dark:text-zinc-600">awaiting feed</div>

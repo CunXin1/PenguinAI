@@ -41,7 +41,7 @@ vi.mock("@/lib/api", () => ({
 
 // @/lib/market-status — useLiveQuotes imports useMarketStatus
 vi.mock("@/lib/market-status", () => ({
-  useMarketStatus: () => ({ isOpen: false, sessionPhase: "CLOSED", isLoading: false, status: undefined }),
+  useMarketStatus: () => ({ isOpen: false, sessionPhase: "CLOSED", nextOpen: null, isLoading: false, status: undefined }),
   MarketStatusProvider: ({ children }: { children: ReactNode }) => children,
 }));
 

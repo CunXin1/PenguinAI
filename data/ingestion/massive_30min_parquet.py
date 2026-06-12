@@ -150,7 +150,11 @@ async def _fetch_series(
             t, o, h, low, c = r.get("t"), r.get("o"), r.get("h"), r.get("l"), r.get("c")
             if t is None or None in (o, h, low, c):
                 continue
-            out[int(t)] = (o, h, low, c, int(round(float(r.get("v") or 0))))
+            # Prices -> 4 dp (standardized precision; matches compute_indicators.py + DB).
+            out[int(t)] = (
+                round(float(o), 4), round(float(h), 4), round(float(low), 4),
+                round(float(c), 4), int(round(float(r.get("v") or 0))),
+            )
         nxt = data.get("next_url")
         url = _with_key(nxt, key) if nxt else None
     return out

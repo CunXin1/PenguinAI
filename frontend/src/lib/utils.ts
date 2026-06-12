@@ -78,6 +78,36 @@ export function isUsMarketActiveNow(now: Date = new Date()): boolean {
 /** @deprecated Use isUsMarketActiveNow — kept for backward compat. */
 export const isUsMarketSessionNow = isUsMarketActiveNow;
 
+/** Short ET weekday of an ISO timestamp ("Fri"), or null if unparseable.
+ *  Used to label frozen quotes by their session day instead of "today". */
+export function etWeekday(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+  }).format(d);
+}
+
+/** Format a next-open ISO timestamp as an ET reopen hint ("Mon 9:30 AM"),
+ *  or null if unparseable. Weekday is relative to ET, so it reads correctly
+ *  regardless of the viewer's local timezone. */
+export function formatReopen(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).formatToParts(d);
+  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${get("weekday")} ${get("hour")}:${get("minute")} ${get("dayPeriod")}`;
+}
+
 /** ISO timestamp → relative "3h ago" (client-side use). */
 export function timeAgo(iso: string): string {
   const diff = Math.max(1, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));

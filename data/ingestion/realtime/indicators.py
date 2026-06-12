@@ -29,6 +29,17 @@ _IND_COLS = [
     "atr_14", "obv", "vwap_day", "ret_1bar",
 ]
 
+# Stored-precision policy by indicator category (see the long note in
+# backend/scripts/market_data/compute_indicators.py:ROUND_DECIMALS — keep in sync).
+# Price-derived + ratios/returns -> 4 dp, rsi_14 (0-100) -> 2 dp, obv (cum volume) -> 0.
+_ROUND_DECIMALS: dict[str, int] = {
+    "sma_20": 4, "sma_50": 4, "sma_200": 4, "ema_12": 4, "ema_26": 4, "ema_50": 4,
+    "macd": 4, "macd_signal": 4, "macd_hist": 4,
+    "bb_mid": 4, "bb_upper": 4, "bb_lower": 4, "bb_pctb": 4, "bb_bw": 4,
+    "atr_14": 4, "vwap_day": 4, "ret_1bar": 4,
+    "rsi_14": 2, "obv": 0,
+}
+
 _SELECT_SQL = text(
     "SELECT time, open, high, low, close, volume FROM market_data_1min "
     "WHERE ticker = :ticker ORDER BY time DESC LIMIT :window"
@@ -138,7 +149,10 @@ async def update_indicators(engine, ticker: str, *, tail: int = 8, full: bool = 
         rec: dict = {"ticker": ticker, "time": d["time"].to_pydatetime(), "rth": bool(d["rth"])}
         for c in _IND_COLS[1:]:
             v = d[c]
-            rec[c] = None if v is None or (isinstance(v, float) and np.isnan(v)) else float(v)
+            if v is None or (isinstance(v, float) and np.isnan(v)):
+                rec[c] = None
+            else:
+                rec[c] = round(float(v), _ROUND_DECIMALS[c])
         params.append(rec)
     async with engine.begin() as conn:
         await conn.execute(_UPDATE_SQL, params)

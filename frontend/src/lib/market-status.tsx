@@ -21,6 +21,8 @@ interface MarketStatusValue {
   isOpen: boolean;
   /** Specific session phase for display (badge label). */
   sessionPhase: SessionPhase;
+  /** Next regular open ISO (holiday-aware) when closed; null when open or unknown. */
+  nextOpen: string | null;
   isLoading: boolean;
 }
 
@@ -39,9 +41,10 @@ export function MarketStatusProvider({ children }: { children: React.ReactNode }
   const fallbackPhase = getClientSessionPhase();
   const isOpen = data?.market_active ?? ACTIVE_PHASES.has(fallbackPhase);
   const sessionPhase: SessionPhase = data?.session_phase ?? fallbackPhase;
+  const nextOpen = data?.next_open ?? null;
 
   return (
-    <MarketStatusContext.Provider value={{ status: data, isOpen, sessionPhase, isLoading }}>
+    <MarketStatusContext.Provider value={{ status: data, isOpen, sessionPhase, nextOpen, isLoading }}>
       {children}
     </MarketStatusContext.Provider>
   );
@@ -55,6 +58,7 @@ export function useMarketStatus(): MarketStatusValue {
       status: undefined,
       isOpen: ACTIVE_PHASES.has(phase),
       sessionPhase: phase,
+      nextOpen: null,
       isLoading: false,
     };
   }

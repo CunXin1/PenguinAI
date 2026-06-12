@@ -26,7 +26,7 @@ vi.mock("@/hooks/useAuth", () => ({
 
 // Mock market-status for MarketStatusBadge (used inside Navbar)
 vi.mock("@/lib/market-status", () => ({
-  useMarketStatus: () => ({ isOpen: false, sessionPhase: "CLOSED", isLoading: false, status: undefined }),
+  useMarketStatus: () => ({ isOpen: false, sessionPhase: "CLOSED", nextOpen: null, isLoading: false, status: undefined }),
   MarketStatusProvider: ({ children }: { children: ReactNode }) => children,
 }));
 

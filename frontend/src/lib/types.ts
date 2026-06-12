@@ -331,6 +331,7 @@ export interface MarketStatus {
   source: string;
   as_of: string;
   latest_tick: string | null;
+  next_open: string | null; // ISO; next regular open when closed (holiday-aware), else null
 }
 
 // ── Celebrity Holdings ───────────────────────────────────────────────────────

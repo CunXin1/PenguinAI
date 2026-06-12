@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import threading
 from datetime import UTC, datetime
+from datetime import time as dtime
 from time import monotonic
 from zoneinfo import ZoneInfo
 
@@ -95,6 +96,25 @@ def get_session_phase(now_utc: datetime | None = None) -> str:
     return "OVERNIGHT"
 
 
+def next_session_open(now_utc: datetime | None = None) -> datetime | None:
+    """Next US equity PRE-MARKET open (04:00 ET, UTC-returned), strictly after ``now``.
+
+    Holiday- and weekend-aware via exchange_calendars: we take the next regular
+    session's date and pin it to 04:00 ET — the moment pre-market trading (and
+    our live feed) actually resumes — rather than the 09:30 regular open. So on a
+    Friday/weekend it returns Monday 04:00 ET (or the next trading day if Monday
+    is a holiday). Returns None if the calendar can't resolve it.
+    """
+    now = now_utc or datetime.now(UTC)
+    try:
+        reg_open = _nyse.next_open(pd.Timestamp(now))  # next regular open, tz-aware UTC
+    except (ValueError, KeyError):
+        return None
+    session_date = reg_open.tz_convert(ET).date()
+    premarket = datetime.combine(session_date, dtime(4, 0), tzinfo=ET)
+    return premarket.astimezone(UTC)
+
+
 _LIVE_WINDOW_S = 360.0
 _tick_lock = threading.Lock()
 
@@ -141,6 +161,9 @@ async def get_market_status(db: AsyncSession) -> dict:
     latest = (await db.execute(text("SELECT max(time) FROM market_data_1min"))).scalar()
     advancing = ticks_advancing(latest)
     is_active = phase in ("PRE_MARKET", "REGULAR", "AFTER_HOURS") or advancing
+    # When not active, surface the next regular open so the UI can show a
+    # "reopens Mon 9:30 AM" hint instead of a bare "CLOSED".
+    next_open = None if is_active else next_session_open(now)
     return {
         "market_open": session_open or advancing,
         "market_active": is_active,
@@ -149,4 +172,5 @@ async def get_market_status(db: AsyncSession) -> dict:
         "source": "session" if session_open else ("ticks" if advancing else phase.lower()),
         "as_of": now.isoformat(),
         "latest_tick": latest.isoformat() if latest is not None else None,
+        "next_open": next_open.isoformat() if next_open is not None else None,
     }
