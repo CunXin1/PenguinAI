@@ -43,6 +43,14 @@ text-only (no HTML from the model) while the UI stays rich and safe.
 
 ### B. ML modeling — specialization
 
+> **Status update — partly built; see `docs/ml-specialization.md`.** Per-*symbol* models
+> (B1 as originally written) were **rejected** (overfit: ~16k bars/symbol, very low
+> signal-to-noise). Built instead: per-**basket** × horizon models (`ml/models/baskets.py`
+> `nasdaq10`; 1w on 30m direction, 1m/3m on daily beat-SPY). CV leakage was fixed
+> (`purged_walk_forward_splits`). Still open: registry multi-model serving + global
+> fallback, the 1-day tier (pending 1-min/10-min data), the Gemma multi-horizon
+> *synthesis* that fixes the ~50% confidence clustering, and the frontend horizon switcher.
+
 Today there is one global classifier (`ml/models/xgboost_trainer.py`,
 `horizon_bars=16`, ~1.2 trading days). Extend to per-symbol and multi-horizon models.
 
@@ -203,6 +211,13 @@ before charging money or scaling.
   必须保持"只出信号":呈现证据和模型倾向,绝不给个性化买卖指令。视觉上复用 A1-A4 卡片。
 
 ### B. ML 建模 —— 专门化
+
+> **进展更新 —— 部分已建；详见 `docs/ml-specialization.md`。** 分 *symbol* 模型（原 B1）
+> 已**否决**（过拟合：~1.6 万 bar/股、信噪比极低）。改建：分**篮子** × 跨度模型
+> （`ml/models/baskets.py` 的 `nasdaq10`；1周用 30m 涨跌，1月/3月用日线 beat-SPY）。CV
+> 泄漏已修（`purged_walk_forward_splits`）。仍待办：registry 多模型 serving + 全局回退、
+> 1 天档（等 1min/10min 数据）、解决 ~50% confidence 聚集的 Gemma 多跨度*综合*、前端跨度
+> 切换按钮。
 
 目前是单一全局分类器(`ml/models/xgboost_trainer.py`,`horizon_bars=16`,约 1.2
 个交易日)。扩展为分股票、分时间跨度的模型。

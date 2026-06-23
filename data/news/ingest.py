@@ -22,6 +22,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -57,7 +58,12 @@ def _load_settings():
 
 
 _env = _load_settings()
-DATABASE_URL = _env.get("DATABASE_URL", "postgresql+asyncpg://penguinai:penguinai_dev@localhost:5432/penguinai")
+# Prefer the real OS environment over the .env file: inside a container the
+# compose `environment:` block sets DATABASE_URL to the `timescaledb` service
+# host, which must win over the localhost default baked into .env.
+DATABASE_URL = os.environ.get("DATABASE_URL") or _env.get(
+    "DATABASE_URL", "postgresql+asyncpg://penguinai:penguinai_dev@localhost:5432/penguinai"
+)
 MASSIVE_API_KEY = _env.get("MASSIVE_API_KEY", "")
 MASSIVE_BASE_URL = _env.get("MASSIVE_BASE_URL", "https://api.massive.com").rstrip("/")
 FINNHUB_API_KEY = _env.get("FINNHUB_API_KEY", "")

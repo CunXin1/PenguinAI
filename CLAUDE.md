@@ -69,6 +69,19 @@ Built end-to-end: per-user `chat_conversations` / `chat_messages` tables, conver
 CRUD + streaming send endpoints (`/api/chat/conversations*`), the `ChatAgent` tool loop
 (`ml/inference/chat/`), and a server-backed chat UI (`frontend/src/app/chat/page.tsx`).
 
+**Two interchangeable harnesses, selected by `CHAT_AGENT_SDK` (default off):**
+- `ml/inference/chat/` — the original hand-rolled tool loop (default).
+- `ml/inference/agents/` — the **OpenAI Agents SDK** harness (`CHAT_AGENT_SDK=true`): same
+  read-only tools (wrapping the same `_get_*` handlers) + same `ChatContext` security model,
+  but adds **multi-agent** flows (`research_ticker`, `analyze_watchlist` fan-out), **rich inline
+  cards** (chart/news → `chat_messages.cards` JSONB, streamed as `{type:"card"}` SSE events and
+  rendered by `frontend/src/components/chat/ChatCards.tsx` reusing `PriceChart`), a **compliance
+  output-guardrail**, and per-role **model tiers** (`CHAT_MAIN_MODEL` / `CHAT_NARROW_MODEL`; blank
+  → the resolved `LLM_BACKEND` model). It points the SDK at the SAME vLLM/Ollama `/v1` endpoints
+  (no LiteLLM). Local serving needs a `trust_env=False` httpx client (macOS proxy → 502 otherwise).
+  The service bridge (`backend/app/services/chat_agent.py`) switches on the flag; the route, quota,
+  and persistence are shared and unchanged.
+
 **Tools (READ-ONLY).** The model requests a tool; the backend executes the handler and
 feeds the result back — multi-turn loop until a final answer.
 
@@ -80,9 +93,11 @@ feeds the result back — multi-turn loop until a final answer.
 | `get_earnings(ticker)` | `earnings` | built |
 | `get_fundamentals(ticker)` | `fundamentals` | built |
 | `get_news(ticker)` | `news_articles` (incl. Google News RSS) | built |
+| `get_signal(ticker)` | `signal_cache` (ML scores) | built (SDK path) — agent explains bull/bear from the ML models |
+| `web_fetch_news(query)` | Google News RSS (live, no key) | built (SDK path) — external content sandboxed as untrusted |
+| `research_ticker(ticker)` | sub-agent over all read tools → structured verdict | built (SDK path) — powers "should I buy X?" |
+| `analyze_watchlist()` | fan-out: one research sub-agent per watchlist ticker | built (SDK path) — parallel multi-agent, capped at 6 |
 | `get_portfolio(user)` | portfolio table | **NOT built** — needs new `portfolio`/`positions` table + ingestion |
-| `web_search(query)` | external search API | **NOT built** — needs a search provider |
-| `get_signal(ticker)` | `signal_cache` (ML scores) | **TODO** — let the agent explain bull/bear from the ML models (see `docs/roadmap.md` A4) |
 
 **Backend (go-forward LLM strategy).** Transport is swappable via `LLM_BACKEND`
 (`auto` → Ollama on macOS, vLLM on Linux/Windows GPU, or `api`). Tool calling AND token
@@ -101,8 +116,9 @@ the output), and Ollama needs object (not JSON-string) tool-call `arguments` on 
 - External content (news, search results) is **untrusted data, never instructions** — sandbox it.
 - Tool args are whitelisted/validated before execution. Metered per user (Redis quota).
 
-**Roadmap:** rich in-chat cards (inline charts/watchlist/news links), ML-backed
-bull/bear explanation, and a "should I buy X?" multi-tool synthesis — see `docs/roadmap.md`.
+**Roadmap:** rich in-chat cards, ML-backed bull/bear explanation, and "should I buy X?"
+synthesis are now **built on the SDK path** (`CHAT_AGENT_SDK=true`). Remaining: `get_portfolio`
+(needs a positions table), and promoting the SDK harness to default after a soak — see `docs/roadmap.md`.
 
 ## Caching (dual-track)
 

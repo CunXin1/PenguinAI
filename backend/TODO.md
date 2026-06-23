@@ -82,8 +82,9 @@
 
 ## P4 — 功能补全(产品向)
 
-- [x] **OAuth 实现** — Google + Apple 已接入(authorize→callback→id_token 验签→find-or-create→签发 JWT;无状态签名 state)。见 `core/oauth.py` + `auth.py`。**上线前需**:在 Google/Apple 控制台创建凭据并填 `.env`(`GOOGLE_CLIENT_ID/SECRET`、`APPLE_CLIENT_ID/TEAM_ID/KEY_ID/PRIVATE_KEY`)。
-- [x] **验证 / 重置邮件发送** — 已接入 `core/email.py`(`EMAIL_BACKEND=smtp` 走 SMTP,否则 console 兜底);register / resend-verification / forgot-password 三处均已发送。**上线前需**:配置 `SMTP_*`。
+> OAuth(Google/Apple)与验证/重置邮件发送已完成(见 `core/oauth.py`、`core/email.py`);
+> 上线前仅需在 `.env` 配置 `GOOGLE_CLIENT_ID/SECRET`、`APPLE_*`、`SMTP_*` 凭据。
+
 - [ ] **PREMIUM API Key 访问** — 发放/吊销 API key + 限流/计费。
 - [ ] **用户自助** — 修改资料、登出、注销账号(GDPR/数据删除)。
 - [ ] **Tier 升级链路** — 支付 webhook → `users.tier`。

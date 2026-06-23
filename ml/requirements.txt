@@ -19,6 +19,10 @@ sqlalchemy[asyncio]==2.0.36
 asyncpg==0.30.0
 pydantic-settings==2.7.0
 httpx==0.28.1
+# beautifulsoup4: FOMC statement scraper (data/fomc/scraper.py) parses the Fed
+# website with the stdlib html.parser, so no lxml is needed. Required in the
+# celery worker image because FOMC ingestion runs there.
+beautifulsoup4==4.15.0
 ib_insync==0.9.86
 praw==7.8.1
 playwright==1.49.0

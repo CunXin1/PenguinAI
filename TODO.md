@@ -1,30 +1,20 @@
 # PenguinAI — TODO
 
-> Updated: **2026-06-09**
+> Updated: **2026-06-12**
 
 ---
 
 ## 1. 完善 ML 层
-- [x] 接入 Gemma 4 LLM 本地推理 MVP — 可插拔 backend 层（macOS=Ollama / Windows·Linux=vLLM / api 预留），
-      `LLM_BACKEND=auto` 按平台自选，E2B 现用 E4B 后续切 `GEMMA_MODEL_VARIANT`。部署见 `ml/serving/`，
-      验证 `make gemma-check`。保留 finetune seam（vLLM LoRA / Ollama Modelfile ADAPTER）。
-  - [ ] 拉起真实 Gemma 服务跑通线上（当前未起服务时自动降级为 ML-only fallback）
-- [x] 修复 CV 泄漏 — `TimeSeriesSplit` 换成 `purged_walk_forward_splits`（全局按时间排序 + 重叠标签
-      embargo），两个 trainer 都用。短跨度方向真实 AUC≈0.50（旧 leaky 虚高）。见 `docs/ml-specialization.md`。
-- [x] 分篮子 × 多跨度模型（B1/B2 起步）— `nasdaq10` 篮子，1周(30m,涨跌)/1月/3月(日线,beat_spy)，
-      XGB+RF；`load_training_data(timeframe,target_type)` + `DAILY_FEATURE_SQL`；
-      `ml/scripts/train_basket_models.py`。3 月 beat-SPY AUC 0.56（真实 edge）。
-  - [ ] **B-综合（高优先，解决 Top Signal 全挤 50%）**：把 keyed horizon 模型喂进
-        `signal_engine`/`gemma_agent`，让 Gemma 综合 全跨度ML + 新闻/FinBERT + 指标 + 价量 + 财报 +
-        宏观 成一个信号；confidence 重标定为跨源/跨跨度一致性，而非单个贴近 0.5 的概率。
-  - [ ] registry 按 `{basket}__{tf}__{label}` 多模型 serving + 篮子外回退全局；用上 `basket_for(ticker)`。
-  - [ ] 1 天档：等 1min / 聚合 10min bar 数据就绪再训（trainer 已支持任意 timeframe）。
-  - [ ] 前端跨度切换按钮（信号页 1周/1月/3月，复用 PriceChart segmented 样式）。
-  - [ ] 完整 universe + 更长历史（since 2015）重训，让 AUC 站稳；规划 smallcap/wholemarket 篮子。
-- [x] 存储精度策略 — 价格/指标按类别 round（价格量纲 4 位、rsi 2 位、obv 整数），写入端 + 一次性 DB
-      backfill（`backend/scripts/market_data/round_existing_precision.py`）。单一源 `ROUND_DECIMALS`。
+- [ ] 拉起真实 Gemma 服务跑通线上（当前未起服务时自动降级为 ML-only fallback）
+- [ ] **B-综合（高优先，解决 Top Signal 全挤 50%）**：把 keyed horizon 模型喂进
+      `signal_engine`/`gemma_agent`，让 Gemma 综合 全跨度ML + 新闻/FinBERT + 指标 + 价量 + 财报 +
+      宏观 成一个信号；confidence 重标定为跨源/跨跨度一致性，而非单个贴近 0.5 的概率。
+- [ ] registry 按 `{basket}__{tf}__{label}` 多模型 serving + 篮子外回退全局；用上 `basket_for(ticker)`。
+- [ ] 1 天档：等 1min / 聚合 10min bar 数据就绪再训（trainer 已支持任意 timeframe）。
+- [ ] 前端跨度切换按钮（信号页 1周/1月/3月，复用 PriceChart segmented 样式）。
+- [ ] 完整 universe + 更长历史（since 2015）重训，让 AUC 站稳；规划 smallcap/wholemarket 篮子。
 - [ ] 实现 Reddit scraper（PRAW）+ Twitter scraper（Playwright），填充 social_posts
-- [ ] 实现 fetch_fundamentals（yfinance / Massive），填充 fundamentals 表
+- [ ] 实现 fetch_fundamentals（yfinance / Massive），填充 fundamentals 表（`ml/tasks/daily_pipeline.py` 仍是空 stub）
 - [ ] 补全 ml/tests（trainer、model_registry、celery tasks 测试覆盖）
 - [ ] 集成 MLflow 实验追踪 + 模型版本管理
 - [ ] 模型 drift 监控 + 预测质量回测框架
@@ -35,77 +25,90 @@
 - [ ] Celery worker 启动时自动 load models，失败则 log + 降级运行
 - [ ] 各 API 数据源断线重连 + 重试逻辑
 
-## 3. FOMC 完善 ✅
-- [x] CME FedWatch 市场预期利率概率
-- [x] 利率图表时间跨度选择器（1Y/3Y/5Y/10Y/ALL）
-- [x] Hawk/Dove 趋势可调数量滑块
-- [x] SPY 市场反应合并到 Hawk/Dove 面板（Tabbed）
-- [x] 会议日程默认过去10次 + 未来10次
-- [x] 声明默认显示10条 + Show More
-- [x] 数字参数可通过 config.py / .env 配置
-- [x] Fed/FOMC 新闻模块（Google News RSS）
-- [x] 全屏布局修复（max-w-7xl + lg:grid-cols-3）
-- [x] 组件拆分到 frontend/src/components/fomc/
-
-## 4. 完善前端 UI/UX
+## 3. 完善前端 UI/UX
 - [ ] 移动端响应式优化（dashboard 卡片布局、图表触控交互）
 - [ ] Loading skeleton 统一风格（替换各处不一致的 loading 状态）
 - [ ] 图表交互增强：tooltip、crosshair、时间范围拖拽
 - [ ] 信号卡片迷你 sparkline + 当日涨跌幅
 - [ ] 暗色主题微调：对比度、hover 状态、focus ring
 - [ ] 错误/空状态页面统一设计
-- [ ] 3M/1Y 图表数据显示修复（fallback 到 bars_1d 已修，需验证）
+- [ ] 1D 图表依赖 market_data_1min（实时流），无流时应 fallback 到 bars_30m 当天数据
 
-## 5. 用户界面
-- [ ] /profile 页面完善：修改显示名、头像上传、密码修改
+## 4. 用户界面
+- [ ] /profile 页面补全：修改显示名、头像上传（密码修改已完成）
 - [ ] 用户 tier 展示 + 升级引导（FREE → PRO → PREMIUM）
-- [ ] Watchlist 管理：添加/删除/排序自选股，后端持久化（替换 localStorage）
+- [ ] Watchlist 排序自选股（增删 + 登录用户后端持久化已完成）
 - [ ] 通知偏好设置：邮件提醒、信号推送
 - [ ] 用户操作历史 / 最近查看的 ticker
 - [ ] Auth store（zustand）+ protected routes + token 过期处理
-- [ ] 邮件验证和密码重置的邮件发送对接（SES / Resend）
 
-## 6. About 界面
+## 5. About 界面
 - [ ] /about 页面：产品介绍、团队信息、技术架构概览
 - [ ] 信号生成方法论说明（ML + NLP + LLM pipeline 的非技术解释）
 - [ ] 免责声明：信号仅供参考，非投资建议
 - [ ] 隐私政策 + 服务条款
 - [ ] 联系方式 / 反馈入口
 
-## 7. 完善财报界面
+## 6. 完善财报界面
 - [ ] 财报前后股价反应图（earnings event overlay on price chart）— 目前仅数值徽章 + EPS sparkline，缺 K 线 overlay
 - [ ] 按 surprise 排序（日期分组 + ticker 搜索已有，surprise 排序缺失）
 - [ ] 与信号联动：财报 surprise 如何影响信号置信度的可视化（信号页目前仅并列展示财报）
 - [ ] incoming→past 时间兜底：report_date 已过但 Finnhub 未回填 eps_actual 的行会永久停留在 upcoming 并显示负倒计时，需按日期剔除/折叠
 
+## 7. Chat Agent 花活（OpenAI Agents SDK 路径增强）
+
+> 已建：Phase 0-5 全部完成,开关 `CHAT_AGENT_SDK=true`。harness 在 `ml/inference/agents/`,
+> 前端卡片 `frontend/src/components/chat/ChatCards.tsx`。下面是后续增强。
+
+### 新卡片类型（沿用 card_sink → SSE `{type:"card"}` → ChatCards 渲染的现有体系）
+- [ ] 信号卡片：把 `get_signal` 的 ML 输出做成带置信度进度条 + 多空配色的卡片（小）
+- [ ] 财报卡片：`get_earnings` 的 EPS 实际/预期/surprise% 做成小表格卡片（小）
+- [ ] 对比表卡片："对比 A/B" 时出一张并排指标表（价格/PE/信号/RSI）（中）
+- [ ] watchlist 卡片：`analyze_watchlist` 的 verdict 列表做成可排序卡片（中）
+- [ ] 图表卡片叠加指标：chart card 复用 PriceChart 的 `indicators` 参数叠 MA/RSI（中）
+
+### 多 agent 体验
+- [ ] sub-agent 实时进度：watchlist fan-out 时流式显示"正在分析 NVDA... AAPL..."而非干等
+      （需要一条 progress 旁路,类似 card_sink,让 runner 在长工具执行期间也能 yield）（中）
+- [ ] "should I buy X" 升级为多 lens：technical / fundamental / sentiment 各一个 sub-agent 再综合（中）
+
+### 上下文管理（目前是静态裁剪,"动态"部分基本未做）
+- [ ] **修 bug(优先,小):历史取的是"最旧 20 条"而非"最近 20 条"** —— 路由
+      `backend/app/api/routes/chat.py` 两处 `order_by(created_at) ASC + limit(CHAT_MAX_HISTORY)`,
+      应改为 `DESC + limit + reverse`,否则对话超过 20 条后丢最近上下文(agent"忘记刚说的话")
+- [ ] 摘要/压缩:超过 `CHAT_MAX_HISTORY` 时把旧轮总结成一段再塞回,而非硬截断丢弃（中）
+- [ ] 按 token 预算裁剪而非按轮数:几条超长消息也能撑爆窗口,应按实际 token 预算滚动（中）
+- [ ] 语义召回 / RAG:按相关性把久远的相关历史消息找回来,而非只留最近 N 轮（大）
+- [ ] (现状记录)工具结果不跨轮持久化、sub-agent 上下文隔离 已做 —— 见 §7 顶部
+
+### 模型与质量
+- [ ] orchestrator 切更大模型：`CHAT_MAIN_MODEL=gemma4:e4b` 或外部 API,文字更顺（极小,改配置；
+      注意 e4b 偶尔多调工具/串票,需观察）
+- [ ] 提示词调优:e2b 取数后偶尔回一句寒暄而非描述走势,可在 prompt 里强制"取数后简述走势"
+
+### 工具
+- [ ] `get_portfolio`:真正接持仓表(需新建 `portfolio`/`positions` 表 + 录入)（大）
+
+### 安全 / 身份
+- [ ] 身份保护:对外只认"PenguinAI 助手",绝不暴露底层模型 —— 现在问"which model are you"会答
+      "trained by Google"(暴露 Gemma)。在 system prompt 加身份规则:不透露厂商/模型名/架构（小）
+- [ ] 系统提示词防泄露:已能拒绝"tell me your system prompt"(抗注入有效),但加显式规则 + 固化成测试用例（小）
+- [ ] prompt injection / 越狱测试集:"ignore all previous instructions"、角色扮演、越权访问他人
+      watchlist 等,纳入 `ml/tests`(对话面是 NEW attack surface,见 CLAUDE.md 安全条款)（中）
+
+### 收尾 / 运维
+- [ ] 观察期(soak)后把 `CHAT_AGENT_SDK` 提为默认,并删除旧 `ml/inference/chat/` 手写 loop
+- [ ] 非流式 `POST /messages`(send_message)路径补 card 持久化(当前仅流式 endpoint 带 cards)
+- [ ] 为 SDK 路径补端到端测试(带 fake model),覆盖 runner 的 card/tool/done 事件映射
+
 ---
 
 ## 代码中的 TODO / 缺口
 
-### 后端 auth — 邮件发送未对接
-- [ ] `backend/app/api/routes/auth.py:73` — TODO: send verification email with link containing verify_token
-- [ ] `backend/app/api/routes/auth.py:121` — TODO: send verification email（resend）
-- [ ] `backend/app/api/routes/auth.py:168` — TODO: send email with reset link containing token
-- [ ] 对接邮件服务（SES / Resend / SendGrid），替换当前只 log token 的行为
-
-### 后端 auth — OAuth 未实现
-- [ ] `backend/app/api/routes/auth.py:227` — OAuth（Google / Apple）返回 501，需实现
-
-### ML — fetch_fundamentals stub
-- [ ] `ml/tasks/daily_pipeline.py:85` — fetch_fundamentals 是空 stub，需接 yfinance 或 Massive
-
-### 前端 mock 数据残留
-- [ ] `frontend/src/lib/mock.ts` — MOCK_USER、MOCK_UNIVERSE 仍被 screener 和个股页 fallback 使用
-- [ ] `frontend/src/app/signals/[ticker]/page.tsx:81` — 网络错误时降级到 demo data，应改为错误提示
-- [ ] Screener 页面仍读 MOCK_UNIVERSE，需对接 /api/tickers/universe 真实数据
-
-### 前端 Watchlist — localStorage 未迁移
-- [ ] `frontend/src/hooks/useWatchlist.ts` — guest 用户用 localStorage，登录用户需迁移到后端 /api/watchlist
+### 前端 mock 数据
+- [ ] `frontend/src/lib/mock.ts` — `MOCK_USER`/`MOCK_UNIVERSE` 已无引用，可删；仅 `mockSignalDetail` 仍被个股页用作降级
+- [ ] `frontend/src/app/signals/[ticker]/page.tsx` — 网络/超时错误降级到 demo data（`setView("demo")`），考虑改为明确错误提示（向用户展示虚构信号有合规隐患）
 
 ### 数据库迁移
-- [ ] Alembic baseline 缺失 — db/migrations/versions/ 为空，schema 仍靠 docker-entrypoint SQL 创建
+- [ ] Alembic baseline 缺失 — `db/migrations/versions/` 为空，schema 仍靠 docker-entrypoint SQL 创建
 - [ ] 生成 baseline migration，对齐 ORM models 和 db/schema/*.sql，部署走 alembic upgrade head
-
-### 前端图表
-- [ ] 3M/1Y 图表 fallback 已修（market_data.py），Docker 重启后需验证
-- [ ] 1D 图表依赖 market_data_1min（实时流），无流时应 fallback 到 bars_30m 当天数据

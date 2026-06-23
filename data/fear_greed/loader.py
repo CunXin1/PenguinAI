@@ -218,8 +218,11 @@ if __name__ == "__main__":
     _db = os.environ.get(
         "DATABASE_URL", "postgresql+asyncpg://penguinai:penguinai_dev@localhost:5432/penguinai"
     )
-    # On the host the DB is on localhost, not the compose service name.
-    _db = _db.replace("@timescaledb:", "@localhost:")
+    # The compose service name `timescaledb` only resolves on the docker network.
+    # When this CLI is run on the host (no /.dockerenv), rewrite it to localhost,
+    # which the published 5432 port maps to. Inside a container, keep it as-is.
+    if not Path("/.dockerenv").exists():
+        _db = _db.replace("@timescaledb:", "@localhost:")
     if "+asyncpg" not in _db:
         _db = _db.replace("postgresql://", "postgresql+asyncpg://")
 

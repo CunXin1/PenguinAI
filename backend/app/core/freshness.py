@@ -43,7 +43,11 @@ from app.core.seed_market_data import (
     _get_seed_tickers,
     _make_session,
 )
-from data.ingestion.realtime.indicators import common_indicator_block, compute_bar_indicators
+from data.ingestion.realtime.indicators import (
+    common_indicator_block,
+    compute_bar_indicators,
+    update_indicators,
+)
 
 logger = logging.getLogger("app.freshness")
 
@@ -453,6 +457,17 @@ async def check_and_backfill_once(stop: threading.Event) -> dict:
                         except Exception:
                             await db.rollback()
                             logger.warning("freshness: daily backfill failed for %s", sym, exc_info=True)
+                        # Persist the recent 1-min window's indicators (incl. session
+                        # vwap_day) back into market_data_1min so the 1D chart range
+                        # has overlays even outside market hours, when the live
+                        # update_indicators tail-writes aren't running. Manages its
+                        # own connections via `engine`, so it sits outside `db`.
+                        try:
+                            await update_indicators(engine, sym, full=True)
+                        except Exception:
+                            logger.warning(
+                                "freshness: 1-min indicator refresh failed for %s", sym, exc_info=True
+                            )
                     elif await _is_stale(db, iid):
                         n30, n1d = await _massive_fallback(db, sym, iid, stop)
                         await db.commit()

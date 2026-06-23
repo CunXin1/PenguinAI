@@ -15,6 +15,7 @@ Schedule (managed by scheduler.py):
 
 import asyncio
 import logging
+from datetime import date
 
 import httpx
 from sqlalchemy import text as sa_text
@@ -98,7 +99,7 @@ async def fetch_rates_from_fred(
                 if lo is None:
                     lo = hi
                 await conn.execute(_UPSERT_SQL, {
-                    "date": d,
+                    "date": date.fromisoformat(d),
                     "rate_low": lo,
                     "rate_high": hi,
                     "source": "FRED",
@@ -120,7 +121,7 @@ async def seed_from_hardcoded(db_url: str) -> int:
         async with engine.begin() as conn:
             for date_str, (lo, hi) in sorted(FED_FUNDS_RATE_HISTORY.items()):
                 await conn.execute(_UPSERT_SQL, {
-                    "date": date_str,
+                    "date": date.fromisoformat(date_str),
                     "rate_low": lo,
                     "rate_high": hi,
                     "source": "hardcoded",

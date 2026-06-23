@@ -2,6 +2,7 @@
 
 # ── Docker Compose ────────────────────────────────────────────────────────────
 up:
+	@bash scripts/ensure_ollama.sh
 	docker-compose up -d
 
 down:

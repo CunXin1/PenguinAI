@@ -161,15 +161,46 @@ backend/app/schemas/chat.py                    Pydantic request/response models
 backend/app/api/routes/chat.py                 REST + SSE endpoints
 backend/app/services/chat_agent.py             bridge to the ML agent (sync + stream)
 backend/app/services/chat_llm.py               legacy stateless reply
-ml/inference/chat/agent.py                     ChatAgent: tool loop + chat_stream
-ml/inference/chat/tools.py                     read-only tool registry
-ml/inference/chat/context.py                   ChatContext (server-side user_id)
+ml/inference/chat/agent.py                     ChatAgent: tool loop + chat_stream (default)
+ml/inference/chat/tools.py                     read-only tool registry + _get_* handlers
+ml/inference/chat/context.py                   ChatContext (server-side user_id, db lock, card sink)
+ml/inference/agents/                           OpenAI Agents SDK harness (CHAT_AGENT_SDK=true)
+ml/inference/agents/provider.py                AsyncOpenAI over vLLM/Ollama /v1 + model tiers
+ml/inference/agents/tools.py                   @function_tool wrappers (+ get_signal, web_fetch_news)
+ml/inference/agents/research.py                ticker_research_agent + watchlist fan-out
+ml/inference/agents/guardrails.py              compliance output-guardrail
+ml/inference/agents/runner.py                  stream_events → SSE (tool/delta/card/done/error)
 ml/inference/llm/ollama_backend.py             Ollama transport (+ streaming)
 ml/inference/llm/vllm_backend.py               vLLM transport (+ streaming)
-frontend/src/app/chat/page.tsx                 chat UI (sidebar + streaming)
-frontend/src/lib/api.ts                        chat client (incl. sendMessageStream)
-frontend/src/lib/types.ts                      Conversation / StoredMessage types
+frontend/src/app/chat/page.tsx                 chat UI (sidebar + streaming + cards)
+frontend/src/components/chat/ChatCards.tsx     inline chart/news card rendering
+frontend/src/lib/api.ts                        chat client (incl. sendMessageStream onCard)
+frontend/src/lib/types.ts                      Conversation / StoredMessage / ChatCard types
 ```
+
+### OpenAI Agents SDK harness (`CHAT_AGENT_SDK=true`)
+
+An alternative, interchangeable harness in `ml/inference/agents/`, built on the **OpenAI
+Agents SDK** (`openai-agents`). It reuses the same read-only `_get_*` handlers and the same
+`ChatContext` security model (server-side `user_id`, read-only tools, untrusted external
+content), and points the SDK at the SAME vLLM/Ollama `/v1` endpoints — no LiteLLM. The flag
+selects it in `chat_agent.py`; route/quota/persistence are shared. What it adds:
+
+- **Multi-agent.** A single-ticker research sub-agent (`research_ticker`) on the narrow model
+  tier returns a structured `TickerVerdict`; `analyze_watchlist` fans it out over the user's
+  watchlist with `asyncio.gather` (capped at 6) and the orchestrator ranks the verdicts.
+  "Compare A vs B" deliberately stays single-agent.
+- **Rich cards.** Tools record card payloads on `ChatContext.card_sink`; the runner streams
+  them as `{type:"card", card:"chart"|"news", data:{…}}` SSE events and persists them to
+  `chat_messages.cards` (JSONB). The frontend renders charts via the existing `PriceChart`.
+- **Compliance guardrail.** A non-blocking `@output_guardrail` flags advice-like answers
+  missing a disclaimer; the system prompt is the primary enforcement.
+- **Model tiers.** `CHAT_MAIN_MODEL` (orchestrator) / `CHAT_NARROW_MODEL` (sub-agents); blank
+  → the resolved `LLM_BACKEND` model. Lets the orchestrator point at a bigger model/API later.
+
+Two gotchas, both handled: local serving needs `trust_env=False` on the httpx client (macOS
+proxy → 502), and the shared `AsyncSession` is serialized by `ChatContext.db_lock` because the
+SDK may run tool calls concurrently.
 
 ### Local dev / testing
 
@@ -332,3 +363,24 @@ macOS(Ollama):后端连宿主机原生 Ollama
 (`OLLAMA_BASE_URL=http://host.docker.internal:11434`);用 `ollama pull gemma4:e2b`
 拉模型,保持 `ollama serve` 运行。快速端到端检查见上方英文 bash 示例:应先看到一个
 `tool` 帧(`get_quote`),再是流式 `delta`,最后 `done`。
+
+### OpenAI Agents SDK 模式(`CHAT_AGENT_SDK=true`)
+
+`ml/inference/agents/` 下的另一套可互换的 harness,基于 **OpenAI Agents SDK**
+(`openai-agents`)。它复用同一批只读 `_get_*` handler 和同一套 `ChatContext` 安全模型
+(`user_id` 服务端注入、只读工具、外部内容当数据),并把 SDK 指向**同一个** vLLM/Ollama
+`/v1` 端点——不经过 LiteLLM。由 `chat_agent.py` 按开关切换;路由/配额/持久化共用。新增能力:
+
+- **多 agent。** 单票研究 sub-agent(`research_ticker`,narrow 档模型)返回结构化
+  `TickerVerdict`;`analyze_watchlist` 用 `asyncio.gather` 对 watchlist 并行 fan-out
+  (上限 6),由 orchestrator 排序综合。"对比 A/B" 故意保持单 agent。
+- **富卡片。** 工具把卡片写入 `ChatContext.card_sink`,runner 以
+  `{type:"card", card:"chart"|"news", data:{…}}` SSE 事件流式下发,并持久化到
+  `chat_messages.cards`(JSONB);前端复用现有 `PriceChart` 渲染图表。
+- **合规 guardrail。** 一个非阻断的 `@output_guardrail`,标记缺少免责声明的"建议式"回答;
+  主要约束仍在 system prompt。
+- **模型分档。** `CHAT_MAIN_MODEL`(orchestrator)/ `CHAT_NARROW_MODEL`(sub-agent);
+  留空则用 `LLM_BACKEND` 解析出的模型。便于以后让 orchestrator 切换到更大模型或外部 API。
+
+两个坑都已处理:本地服务必须给 httpx 客户端设 `trust_env=False`(否则 macOS 系统代理导致
+localhost 502),且共享的 `AsyncSession` 由 `ChatContext.db_lock` 串行化(SDK 可能并发跑工具)。
