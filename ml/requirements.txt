@@ -25,7 +25,7 @@ httpx==0.28.1
 beautifulsoup4==4.15.0
 ib_insync==0.9.86
 praw==7.8.1
-playwright==1.49.0
+playwright==1.60.0
 polygon-api-client==1.16.3
 python-dotenv==1.2.2
 mlflow==3.13.0
