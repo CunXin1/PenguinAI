@@ -58,11 +58,9 @@ celery_app.conf.beat_schedule = {
     },
     # Earnings: managed by backend lifespan (fetch on startup + 2× daily 08:00/18:00 ET).
     # Celery task remains available for manual invocation but is not scheduled here.
-    # Hot ticker news every 30 minutes (:15 and :45 to avoid collision with other tasks)
-    "refresh-hot-news": {
-        "task": "ml.tasks.realtime_ingest.refresh_hot_news",
-        "schedule": crontab(minute="15,45"),
-    },
+    # News: managed by backend lifespan (data.news.scheduler — startup + tiered periodic,
+    # Massive + Google merged every cycle). The refresh_hot_news Celery task remains for
+    # manual invocation but is not scheduled here (would double-ingest the lifespan thread).
     # Classify user-requested (uncovered) symbols via Massive every 6 hours.
     "validate-symbol-requests": {
         "task": "ml.tasks.symbol_validation.validate_symbol_requests",

@@ -39,6 +39,7 @@ type Msg = {
   cards?: ChatCard[];
   id?: string;
   streaming?: boolean;
+  localId?: string; // client-side handle for optimistic turns (targeted updates + rollback)
 };
 
 function fmtReset(sec: number): string {
@@ -63,6 +64,19 @@ export default function ChatPage() {
   const [quota, setQuota] = useState<ChatQuota | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // The conversation currently shown — read by async stream handlers (state would be stale).
+  const activeIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+  // Aborts the in-flight stream when the user switches threads / unmounts, so a stale
+  // stream can't keep running server-side or write into another conversation.
+  const abortRef = useRef<AbortController | null>(null);
+  const abortStream = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+  }, []);
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   // Load the conversation list + quota once signed in.
   useEffect(() => {
@@ -80,7 +94,9 @@ export default function ChatPage() {
   const exhausted = !unlimited && quota.remaining <= 0;
 
   const openConversation = useCallback(async (id: string) => {
+    abortStream(); // stop any in-flight stream before swapping the rendered thread
     setActiveId(id);
+    activeIdRef.current = id;
     setError(null);
     setSidebarOpen(false);
     setLoadingThread(true);
@@ -104,12 +120,14 @@ export default function ChatPage() {
   }, []);
 
   const newChat = useCallback(() => {
+    abortStream();
     setActiveId(null);
+    activeIdRef.current = null;
     setMessages([]);
     setError(null);
     setInput("");
     setSidebarOpen(false);
-  }, []);
+  }, [abortStream]);
 
   const removeConversation = useCallback(
     async (id: string, e: React.MouseEvent) => {
@@ -126,16 +144,6 @@ export default function ChatPage() {
     [conversations, activeId, newChat]
   );
 
-  // Append a text delta to the in-flight assistant message (the last one).
-  const appendDelta = useCallback((text: string) => {
-    setMessages((m) => {
-      const c = [...m];
-      const last = c[c.length - 1];
-      if (last?.role === "assistant") c[c.length - 1] = { ...last, content: last.content + text };
-      return c;
-    });
-  }, []);
-
   const send = useCallback(
     async (text: string) => {
       const content = text.trim();
@@ -144,12 +152,25 @@ export default function ChatPage() {
       setInput("");
       setSending(true);
       setError(null);
-      // Optimistic user turn + an empty assistant bubble that fills as tokens stream.
+
+      // Optimistic user turn + empty assistant bubble, tagged with stable local ids so
+      // streamed updates and rollback target THESE messages — never "the last array
+      // element", which can change if the user switches threads mid-stream.
+      const userLid = crypto.randomUUID();
+      const asstLid = crypto.randomUUID();
       setMessages((m) => [
         ...m,
-        { role: "user", content },
-        { role: "assistant", content: "", streaming: true },
+        { role: "user", content, localId: userLid },
+        { role: "assistant", content: "", streaming: true, localId: asstLid },
       ]);
+      const patchAsst = (fn: (msg: Msg) => Msg) =>
+        setMessages((m) => m.map((x) => (x.localId === asstLid ? fn(x) : x)));
+      const rollback = () =>
+        setMessages((m) => m.filter((x) => x.localId !== userLid && x.localId !== asstLid));
+
+      const controller = new AbortController();
+      abortRef.current = controller;
+      let createdConvId: string | null = null;
 
       try {
         // Lazily create a thread on the first message so empty threads never pile up.
@@ -157,73 +178,80 @@ export default function ChatPage() {
         if (!convId) {
           const conv = await chatApi.createConversation();
           convId = conv.id;
+          createdConvId = conv.id;
           setActiveId(conv.id);
+          activeIdRef.current = conv.id;
           setConversations((cs) => [conv, ...cs]);
         }
 
-        await chatApi.sendMessageStream(convId, content, {
-          onDelta: appendDelta,
-          onTool: (name) =>
-            setMessages((m) => {
-              const c = [...m];
-              const last = c[c.length - 1];
-              if (last?.role === "assistant")
-                c[c.length - 1] = { ...last, tools_used: [...(last.tools_used ?? []), name] };
-              return c;
-            }),
-          onCard: (card) =>
-            setMessages((m) => {
-              const c = [...m];
-              const last = c[c.length - 1];
-              if (last?.role === "assistant")
-                c[c.length - 1] = { ...last, cards: [...(last.cards ?? []), card] };
-              return c;
-            }),
-          onDone: (d) => {
-            setMessages((m) => {
-              const c = [...m];
-              const last = c[c.length - 1];
-              if (last?.role === "assistant")
-                c[c.length - 1] = {
-                  ...last,
-                  streaming: false,
-                  id: d.message_id,
-                  tools_used: d.tools_used ?? last.tools_used,
-                };
-              return c;
-            });
-            if (d.usage) setQuota(d.usage);
-            setConversations((cs) => {
-              const rest = cs.filter((c) => c.id !== convId);
-              const existing = cs.find((c) => c.id === convId);
-              const now = new Date().toISOString();
-              return [
-                {
-                  id: convId!,
-                  title: d.title,
-                  created_at: existing?.created_at ?? now,
-                  updated_at: now,
-                },
-                ...rest,
-              ];
-            });
+        await chatApi.sendMessageStream(
+          convId,
+          content,
+          {
+            onDelta: (t) => patchAsst((x) => ({ ...x, content: x.content + t })),
+            onTool: (name) =>
+              patchAsst((x) => ({ ...x, tools_used: [...(x.tools_used ?? []), name] })),
+            onCard: (card) => patchAsst((x) => ({ ...x, cards: [...(x.cards ?? []), card] })),
+            onDone: (d) => {
+              patchAsst((x) => ({
+                ...x,
+                streaming: false,
+                id: d.message_id,
+                tools_used: d.tools_used ?? x.tools_used,
+              }));
+              createdConvId = null; // produced a reply — keep the thread
+              if (d.usage) setQuota(d.usage);
+              setConversations((cs) => {
+                const rest = cs.filter((c) => c.id !== convId);
+                const existing = cs.find((c) => c.id === convId);
+                const now = new Date().toISOString();
+                return [
+                  {
+                    id: convId!,
+                    title: d.title,
+                    created_at: existing?.created_at ?? now,
+                    updated_at: now,
+                  },
+                  ...rest,
+                ];
+              });
+            },
+            onError: (detail) => {
+              setError(detail);
+              rollback();
+              // The server refunds quota on any in-band failure but doesn't resend a 429,
+              // so reconcile the counter unconditionally (cheap, read-only).
+              chatApi.quota().then(setQuota).catch(() => {});
+            },
           },
-          onError: (detail, status) => {
-            setError(detail);
-            // Server persisted nothing on failure — drop the optimistic pair.
-            setMessages((m) => m.slice(0, -2));
-            if (status === 429) chatApi.quota().then(setQuota).catch(() => {});
-          },
-        });
+          null,
+          controller.signal
+        );
       } catch (e) {
-        const err = e as { message?: string };
-        setError(err.message ?? "Something went wrong. Please try again.");
-        setMessages((m) => m.slice(0, -2));
+        if (!controller.signal.aborted) {
+          const err = e as { message?: string };
+          setError(err.message ?? "Something went wrong. Please try again.");
+          rollback();
+        }
       } finally {
+        // A thread created in THIS send that never produced a reply is an orphan — delete
+        // it so a failed first message doesn't leave an empty conversation behind. Skip on
+        // abort (user switched away; the thread may be perfectly valid).
+        if (createdConvId && !controller.signal.aborted) {
+          const orphan = createdConvId;
+          chatApi.deleteConversation(orphan).catch(() => {});
+          setConversations((cs) => cs.filter((c) => c.id !== orphan));
+          if (activeIdRef.current === orphan) {
+            setActiveId(null);
+            activeIdRef.current = null;
+            setMessages([]);
+          }
+        }
+        if (abortRef.current === controller) abortRef.current = null;
         setSending(false);
       }
     },
-    [activeId, sending, exhausted, appendDelta]
+    [activeId, sending, exhausted]
   );
 
   // ── Auth states ──────────────────────────────────────────────

@@ -85,9 +85,13 @@ async def consume_quota(user: User) -> dict:
     key = _KEY.format(uid=user.id)
     try:
         used = await redis.incr(key)
-        if used == 1:
-            await redis.expire(key, settings.CHAT_WINDOW_SECONDS)
         ttl = await redis.ttl(key)
+        # Always ensure the counter has a TTL. If the first INCR's EXPIRE was ever lost
+        # (crash/Redis hiccup), ttl is -1 (key, no expiry) and the user would be locked
+        # out forever; re-arm the window. ttl == -2 (no key) can't happen right after INCR.
+        if used == 1 or ttl < 0:
+            await redis.expire(key, settings.CHAT_WINDOW_SECONDS)
+            ttl = settings.CHAT_WINDOW_SECONDS
     except Exception:
         logger.warning("Chat quota consume failed — allowing message", exc_info=True)
         return _snapshot(user.tier, 0, 0)

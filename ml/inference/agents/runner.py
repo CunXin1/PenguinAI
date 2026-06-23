@@ -92,7 +92,7 @@ async def run_stream(user_message: str, ctx: ChatContext, history: list[dict] | 
     final_output = ""
     ctx.card_sink = []  # tools append {"card","data"} here; we drain on each tool output
     emitted_cards = 0
-    seen_cards: set[tuple[str, str]] = set()  # dedupe by (card, ticker) — e.g. quote+history → one chart
+    seen_cards: set[tuple[str, str, str]] = set()  # dedupe by (card, ticker, range)
     try:
         result = Runner.run_streamed(
             build_orchestrator(),
@@ -120,7 +120,10 @@ async def run_stream(user_message: str, ctx: ChatContext, history: list[dict] | 
                     while emitted_cards < len(sink):
                         card = sink[emitted_cards]
                         emitted_cards += 1
-                        key = (card["card"], str(card["data"].get("ticker", "")))
+                        data = card.get("data", {})
+                        # Key on range too: get_quote(1W) must not mask an explicit
+                        # get_history(3M) for the same ticker (news cards have no range).
+                        key = (card["card"], str(data.get("ticker", "")), str(data.get("range", "")))
                         if key in seen_cards:
                             continue
                         seen_cards.add(key)

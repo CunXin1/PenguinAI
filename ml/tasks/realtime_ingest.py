@@ -35,11 +35,15 @@ def fetch_earnings(days_back: int = 7, days_ahead: int = 30):
 
 @celery_app.task(name="ml.tasks.realtime_ingest.refresh_hot_news", queue="default")
 def refresh_hot_news():
-    """Fetch news for Nasdaq-100 + key ETFs from Massive and store in DB."""
-    from data.news.ingest import fetch_hot_news
+    """Fetch news for all hot tickers (Massive + Google merged) and store in DB.
+
+    Kept for manual invocation only — news is normally ingested by the backend lifespan
+    scheduler (``data.news.scheduler``), not Celery beat, so this is not scheduled.
+    """
+    from data.news.ingest import ingest_all
 
     try:
-        count = asyncio.run(fetch_hot_news())
+        count = asyncio.run(ingest_all())
         logger.info("Hot news refresh: %d new articles", count)
     except Exception as exc:
         logger.warning("Hot news refresh failed: %s", exc)

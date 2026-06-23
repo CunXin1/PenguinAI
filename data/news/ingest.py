@@ -332,6 +332,41 @@ def _article_metadata(article: dict) -> dict:
     return meta
 
 
+# ── Cross-source dedup ────────────────────────────────────────────────────────
+
+def _norm_headline(text: str) -> str:
+    """Lowercased, whitespace-collapsed headline — the cross-source dedup key."""
+    return " ".join(str(text or "").lower().split())
+
+
+def _is_massive(article: dict) -> bool:
+    """Massive articles carry no ``_source`` tag (Google/Finnhub set it)."""
+    return article.get("_source") not in ("google", "finnhub")
+
+
+def _dedup_articles(articles: list[dict]) -> list[dict]:
+    """Collapse the same story across sources, keeping the Massive copy when duplicated.
+
+    Massive and Google return different URLs for the same article (canonical vs Google
+    redirect), so url-only dedup misses them. We key on the normalized headline and, on a
+    collision, prefer the Massive row (it carries summary/image/ticker tags) over the
+    Google/Finnhub headline-only dup. Order is first-seen (input is newest-first).
+    """
+    best: dict[str, dict] = {}
+    order: list[str] = []
+    for a in articles:
+        key = _norm_headline(_article_headline(a)) or _article_url(a)
+        if not key:
+            continue
+        cur = best.get(key)
+        if cur is None:
+            best[key] = a
+            order.append(key)
+        elif _is_massive(a) and not _is_massive(cur):
+            best[key] = a  # replace a Google/Finnhub dup with the richer Massive copy
+    return [best[k] for k in order]
+
+
 # ── DB upsert ───────────────────────────────────────────────────────────────
 
 _UPSERT_SQL = text("""
@@ -486,6 +521,10 @@ async def ingest_tickers(
             for ticker, articles in all_articles.items():
                 if not articles:
                     continue
+
+                # Collapse the same story across Massive + Google (prefer the Massive copy)
+                # before scoring/storing, so the DB doesn't carry duplicate rows per ticker.
+                articles = _dedup_articles(articles)
 
                 sentiments = score_articles_finbert(articles, ticker)
 

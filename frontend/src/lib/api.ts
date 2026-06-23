@@ -404,7 +404,8 @@ export const chat = {
       }) => void;
       onError?: (detail: string, status?: number) => void;
     },
-    focusTicker?: string | null
+    focusTicker?: string | null,
+    signal?: AbortSignal
   ): Promise<void> => {
     let res: Response;
     try {
@@ -412,8 +413,10 @@ export const chat = {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ content, focus_ticker: focusTicker ?? null }),
+        signal,
       });
     } catch {
+      if (signal?.aborted) return; // caller switched away / unmounted — stay silent
       handlers.onError?.("Network error — please try again.", 0);
       return;
     }
@@ -433,7 +436,15 @@ export const chat = {
     const decoder = new TextDecoder();
     let buffer = "";
     for (;;) {
-      const { done, value } = await reader.read();
+      let chunk: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunk = await reader.read();
+      } catch {
+        if (signal?.aborted) return; // aborted mid-stream — stay silent
+        handlers.onError?.("Connection lost — please try again.", 0);
+        return;
+      }
+      const { done, value } = chunk;
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
       const frames = buffer.split("\n\n");

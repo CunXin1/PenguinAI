@@ -15,7 +15,7 @@
 DO $$
 DECLARE n TEXT;
 BEGIN
-  FOREACH n IN ARRAY ARRAY['market_data_30min', 'market_data_daily', 'indicators_30min'] LOOP
+  FOREACH n IN ARRAY ARRAY['market_data_30min', 'market_data_daily', 'indicators_30min', 'indicators_daily'] LOOP
     IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace s ON s.oid = c.relnamespace
                WHERE c.relname = n AND s.nspname = 'public' AND c.relkind = 'r') THEN
       EXECUTE format('DROP TABLE IF EXISTS %I CASCADE', n);
@@ -96,6 +96,32 @@ SELECT
 FROM bars_30m b
 JOIN instruments i ON i.instrument_id = b.instrument_id
 WHERE b.rth;
+
+-- ── indicators_daily ── model-ready daily features (must match
+-- xgboost_trainer.DAILY_FEATURE_SQL) for the per-basket 1-month / 3-month models.
+-- Same technical core as indicators_30min minus intraday-only columns (no vwap_pct,
+-- no ret_1bar), plus 1-/3-month momentum (ret_21d / ret_63d). Derived row-wise here
+-- so training (DuckDB over data/daily_data parquet) and serving stay identical.
+CREATE OR REPLACE VIEW indicators_daily AS
+SELECT
+    b.ts          AS time,
+    i.symbol      AS ticker,
+    b.rsi_14,
+    b.macd,
+    b.macd_signal,
+    b.macd_hist,
+    b.bb_pctb                                   AS bb_pct_b,
+    b.bb_bw                                     AS bb_width,
+    b.atr_14   / NULLIF(b.adj_close, 0)         AS atr_14_pct,
+    b.adj_close / NULLIF(b.sma_200, 0) - 1      AS price_vs_sma200,
+    b.adj_close / NULLIF(b.ema_50, 0)  - 1      AS price_vs_ema50,
+    b.ret_1d,
+    b.ret_21d,
+    b.ret_63d,
+    -- handy passthroughs for ad-hoc analysis (not model features)
+    b.obv, b.sma_200, b.ema_50, b.atr_14
+FROM bars_1d b
+JOIN instruments i ON i.instrument_id = b.instrument_id;
 
 -- ── Convenience wide views (parity with data/docs/03) ────────────────────────
 CREATE OR REPLACE VIEW v_bars_30m AS

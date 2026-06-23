@@ -53,17 +53,29 @@ function isLikelyEnglish(text: string): boolean {
   return ascii / text.length > 0.85;
 }
 
+// How much a story variant carries — Massive (summary + image + real sentiment) outranks a
+// Google/Finnhub headline-only dup, so dedup keeps the richer copy.
+function richness(a: NewsArticle): number {
+  return (a.summary ? 2 : 0) + (a.image ? 2 : 0) + (a.sentiment !== "neutral" ? 1 : 0);
+}
+
 function deduplicateArticles(articles: NewsArticle[]): NewsArticle[] {
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
   const seen = new Map<string, NewsArticle>();
   for (const a of articles) {
     if (!isLikelyEnglish(a.headline + " " + (a.summary ?? ""))) continue;
-    const key = a.url || a.headline;
+    // Key on the normalized headline so the same story from Massive + Google collapses
+    // (their URLs differ — canonical vs Google redirect — so url-only dedup would miss it).
+    const key = norm(a.headline) || a.url || "";
+    if (!key) continue;
     const existing = seen.get(key);
-    if (existing) {
-      const merged = new Set([...(existing.tickers ?? []), ...(a.tickers ?? [])]);
-      existing.tickers = [...merged];
-    } else {
+    if (!existing) {
       seen.set(key, { ...a, tickers: [...(a.tickers ?? [])] });
+    } else {
+      const mergedTickers = [...new Set([...(existing.tickers ?? []), ...(a.tickers ?? [])])];
+      const base = richness(a) > richness(existing) ? { ...a } : existing;
+      base.tickers = mergedTickers;
+      seen.set(key, base);
     }
   }
   return [...seen.values()];

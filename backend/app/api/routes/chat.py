@@ -178,15 +178,17 @@ async def send_message(
     usage = await consume_quota(user)
 
     # Prior turns become the agent's history (the new user message is added by the agent).
+    # Take the MOST RECENT N (desc + limit), then restore chronological order — ordering
+    # ascending with a limit would keep the OLDEST N and starve long threads of recent context.
     prior = (
         await db.execute(
             select(ChatMessage)
             .where(ChatMessage.conversation_id == conv.id)
-            .order_by(ChatMessage.created_at)
+            .order_by(ChatMessage.created_at.desc())
             .limit(settings.CHAT_MAX_HISTORY)
         )
     ).scalars().all()
-    history = [{"role": m.role, "content": m.content} for m in prior]
+    history = [{"role": m.role, "content": m.content} for m in reversed(prior)]
 
     try:
         reply_text, tools_used = await run_chat_agent(
@@ -249,15 +251,16 @@ async def send_message_stream(
     conv = await _owned_conversation(conversation_id, user, db)
     usage = await consume_quota(user)  # raises 429 before any model work
 
+    # Most recent N turns, restored to chronological order (see send_message for why).
     prior = (
         await db.execute(
             select(ChatMessage)
             .where(ChatMessage.conversation_id == conv.id)
-            .order_by(ChatMessage.created_at)
+            .order_by(ChatMessage.created_at.desc())
             .limit(settings.CHAT_MAX_HISTORY)
         )
     ).scalars().all()
-    history = [{"role": m.role, "content": m.content} for m in prior]
+    history = [{"role": m.role, "content": m.content} for m in reversed(prior)]
     is_first = not prior
 
     async def event_stream():

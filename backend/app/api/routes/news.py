@@ -295,6 +295,48 @@ def _map_db_row(row) -> dict:
     }
 
 
+def _norm_headline(headline) -> str:
+    """Lowercased, whitespace-collapsed headline — the cross-source dedup key."""
+    return " ".join(str(headline or "").lower().split())
+
+
+def _richness(a: dict) -> int:
+    """Rank a story variant by how much it carries — Massive (summary/image/tags) wins
+    over a Google/Finnhub headline-only dup. Used to pick which copy survives dedup."""
+    score = 0
+    if a.get("summary"):
+        score += 2
+    if a.get("image"):
+        score += 2
+    sentiment = a.get("sentiment")
+    if sentiment and sentiment != "neutral":
+        score += 1
+    if str(a.get("id") or "").startswith("massive:"):
+        score += 3
+    return score
+
+
+def _dedup_prefer_rich(articles: list[dict]) -> list[dict]:
+    """Dedup mapped articles by normalized headline (then URL), keeping the richest copy.
+
+    Massive and Google use different URLs for the same story, so url-only dedup misses
+    cross-source duplicates. Keying on the headline collapses them; ``_richness`` keeps the
+    Massive variant. First-seen order is preserved (callers pass newest-first / curated).
+    """
+    best: dict[str, dict] = {}
+    order: list[str] = []
+    for a in articles:
+        key = _norm_headline(a.get("headline")) or (a.get("url") or "")
+        if not key:
+            continue
+        if key not in best:
+            best[key] = a
+            order.append(key)
+        elif _richness(a) > _richness(best[key]):
+            best[key] = a
+    return [best[k] for k in order]
+
+
 def _curate_market_feed(
     articles: list[dict],
     limit: int,
@@ -312,19 +354,24 @@ def _curate_market_feed(
 
     Only used for the market-wide feed; single-ticker requests skip this entirely.
     """
-    # 1. Dedup + merge tickers (input is newest-first, so the first hit for a URL wins).
+    # 1. Dedup by normalized headline (so the same story from Massive + Google collapses
+    #    despite different URLs), merging ticker lists. Keep the richest variant — Massive
+    #    (summary/image/tags) wins over a Google/Finnhub headline-only dup.
     by_key: dict[str, dict] = {}
     for a in articles:
-        key = a.get("url") or a.get("headline")
+        key = _norm_headline(a.get("headline")) or a.get("url")
         if not key:
             continue
         existing = by_key.get(key)
         if existing is None:
             by_key[key] = {**a, "tickers": list(a.get("tickers") or [])}
         else:
+            merged_tickers = existing["tickers"]
             for tk in a.get("tickers") or []:
-                if tk not in existing["tickers"]:
-                    existing["tickers"].append(tk)
+                if tk not in merged_tickers:
+                    merged_tickers.append(tk)
+            if _richness(a) > _richness(existing):
+                by_key[key] = {**a, "tickers": merged_tickers}
     unique = list(by_key.values())
 
     # 2. Tech-first, newest-first within each group.
@@ -469,13 +516,8 @@ async def _overlay_live_google(existing: list[dict], ticker: str, limit: int) ->
     live = [a for a in live if _is_english(a)]
     live = await _score_articles(live, ticker)
 
-    seen = {a.get("url") for a in existing if a.get("url")}
-    merged = list(existing)
-    for a in live:
-        url = a.get("url")
-        if url and url not in seen:
-            seen.add(url)
-            merged.append(a)
+    # existing first so a stored Massive/DB copy beats a live Google dup of the same story.
+    merged = _dedup_prefer_rich([*existing, *live])
     merged.sort(key=lambda a: -(a.get("datetime") or 0))
     return merged[:limit]
 
@@ -485,22 +527,23 @@ async def _overlay_live_market(existing: list[dict], limit: int) -> list[dict]:
 
     The market-wide counterpart of ``_overlay_live_google``: gives the News page a fresh
     pull the moment a user opens it, rather than only what the last ingest cycle stored.
-    Merged by URL/headline (existing rows win), newest-first, capped at ``limit``. Live
-    market headlines have no single ticker so they are left unscored (neutral), matching
-    the existing ``/market`` behaviour. Best-effort: returns ``existing`` on failure.
+    Genuinely-new live headlines (deduped vs ``existing`` by normalized headline) are
+    FinBERT-scored and placed on top, newest-first; the curated DB feed keeps its order
+    below — so the tech-skew/per-ticker curation is preserved, not flattened by a global
+    recency sort. Best-effort: returns ``existing`` on failure.
     """
-    live = await _fetch_google_rss(query="stock market finance", limit=limit)
+    live = await _fetch_google_rss(query="stock market finance", limit=min(limit, 40))
     if not live:
         return existing
     live = [a for a in live if _is_english(a)]
-    seen = {(a.get("url") or a.get("headline")) for a in existing}
-    merged = list(existing)
-    for a in live:
-        key = a.get("url") or a.get("headline")
-        if key and key not in seen:
-            seen.add(key)
-            merged.append(a)
-    merged.sort(key=lambda a: -(a.get("datetime") or 0))
+    # Score so live market headlines aren't all counted as neutral in the sentiment bar.
+    live = await _score_articles(live, "")
+
+    seen = {_norm_headline(a.get("headline")) for a in existing}
+    fresh_new = [a for a in live if _norm_headline(a.get("headline")) not in seen]
+    fresh_new.sort(key=lambda a: -(a.get("datetime") or 0))
+    # Fresh items on top (recency), curated feed preserved below; dedup guards any residual.
+    merged = _dedup_prefer_rich([*fresh_new, *existing])
     return merged[:limit]
 
 

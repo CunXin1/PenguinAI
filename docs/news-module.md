@@ -65,9 +65,13 @@ the two complement each other.
 > **Why merge instead of fallback.** The old pipeline put Massive *first* and only fell back to
 > Google when Massive returned nothing — so the free, near-real-time source was effectively
 > dead code and the feed lagged the chat agent. Merging both every cycle gives full volume
-> *and* freshness. Overlap is cheap: `store_articles` dedups by `(url, ticker)`, so only
-> genuinely new rows are written. For up-to-the-minute reads, the API additionally overlays a
-> live Google pull on demand via `?fresh=true` (see API + Frontend).
+> *and* freshness. Overlap is cheap and de-duplicated: `store_articles` dedups by
+> `(url, ticker)`, and before storing, `_dedup_articles` collapses the same story across
+> sources by **normalized headline** — keeping the Massive copy (summary/image/tags) over a
+> Google/Finnhub headline-only dup, since the two sources return different URLs (canonical vs
+> Google redirect) for the same article. The same headline+richness dedup runs in the API
+> (`_curate_market_feed`, `?fresh` overlays) and the frontend (`deduplicateArticles`). For
+> up-to-the-minute reads, the API overlays a live Google pull on demand via `?fresh=true`.
 
 | Source | Cost | Sentiment | Summary/Image | Ticker tags | Freshness | When |
 |--------|------|-----------|---------------|-------------|-----------|------|
@@ -151,6 +155,8 @@ For each batch of 10 tickers:
      + Massive batch (ticker.any_of=NVDA,AAPL,...)             # distributed by ticker tags
      → both fetched concurrently and MERGED (peers, not fallback)
   2. Finnhub(each) — only for tickers still empty after both   # last resort, 25/min
+  2b. _dedup_articles per ticker — collapse same story across   # by normalized headline,
+      sources, keeping the Massive copy (summary/image/tags)    # prefer Massive over Google
   3. FinBERT score each headline per ticker:
      "NVDA: Intel Surges on Google Foundry Order" → negative for NVDA
      "INTC: Intel Surges on Google Foundry Order" → positive for INTC
@@ -208,7 +214,7 @@ Per-ticker news. Hot tickers → DB first → API fallback. Cold → API only (M
 |-------|------|---------|-------------|
 | `days` | int | 7 | Lookback window (1-30) |
 | `limit` | int | 20 | Max articles (1-50) |
-| `fresh` | bool | false | Overlay a live Google News RSS pull on top of DB/cached rows so the viewed ticker is as up-to-date as the chat agent. On the hot path it merges live items into the DB result (deduped by URL, DB rows keep their stored scores); on the cold path it bypasses the cache to force a live fetch. Live items are FinBERT-scored on the fly. Used by the News page for the ticker the user is actively viewing. |
+| `fresh` | bool | false | Overlay a live Google News RSS pull on top of DB/cached rows so the viewed ticker is as up-to-date as the chat agent. On the hot path it merges live items into the DB result (deduped by normalized headline, keeping the richer DB/Massive copy); on the cold path it bypasses the cache to force a live fetch. Live items are FinBERT-scored on the fly. Used by the News page for the ticker the user is actively viewing. |
 
 ### Unified Response Shape
 
