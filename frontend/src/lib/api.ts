@@ -32,6 +32,7 @@ import type {
   FomcStatement,
   FomcTrendPoint,
   HeatmapResponse,
+  KeyStats,
   LogsResponse,
   MarketStatus,
   MiniQuote,
@@ -229,6 +230,10 @@ export const marketData = {
       `/market-data/${ticker.toUpperCase()}/series?range=${range}` +
         (indicators.length ? `&indicators=${encodeURIComponent(indicators.join(","))}` : "")
     ),
+
+  /** Key statistics panel (market cap, 52w range, avg volume, TTM EPS / P/E). Stock detail page. */
+  stats: (ticker: string) =>
+    apiFetch<KeyStats>(`/market-data/${ticker.toUpperCase()}/stats`),
 
   /** Batch index-strip data: price + same-session %chg + intraday spark per ticker. */
   mini: (tickers: string[]) =>

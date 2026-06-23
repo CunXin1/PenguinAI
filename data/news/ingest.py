@@ -410,8 +410,16 @@ async def ingest_tickers(
     tickers: list[str],
     db_url: str | None = None,
     dry_run: bool = False,
+    include_massive: bool = True,
 ) -> int:
-    """Fetch + score + store news for a list of tickers. Returns total new rows."""
+    """Fetch + score + store news for a list of tickers. Returns total new rows.
+
+    ``include_massive`` controls the split-frequency strategy: Google News RSS (free,
+    near-real-time) is the high-frequency baseline and runs every cycle; Massive (paid,
+    rich summary/image/ticker tags) is a low-frequency enrichment layer the scheduler
+    only switches on every Nth cycle. With ``include_massive=False`` this is a pure
+    Google pass (plus Finnhub last-resort for tickers that came back empty).
+    """
     engine = create_async_engine(db_url or DATABASE_URL)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     total = 0
@@ -423,16 +431,21 @@ async def ingest_tickers(
             for i in range(0, len(tickers), _BATCH_SIZE):
                 batch = tickers[i:i + _BATCH_SIZE]
 
-                # Fetch both primary sources concurrently and MERGE (not fallback):
-                #   - Massive: one batched call (ticker.any_of), articles carry tags.
-                #   - Google RSS: one ticker-scoped query per ticker — free and
-                #     near-real-time, the same source the chat agent uses. Running it
-                #     every cycle is what keeps the DB as fresh as the chat agent.
-                # Overlap is cheap: store_articles dedups by (url, ticker).
-                massive_articles, *google_per_ticker = await asyncio.gather(
-                    fetch_massive(client, batch, limit=50),
-                    *(fetch_google_rss(client, [t], limit=15) for t in batch),
-                )
+                # Google RSS is the always-on baseline: one ticker-scoped query per
+                # ticker — free and near-real-time (the same source the chat agent uses).
+                # Massive is the low-frequency enrichment layer (rich summary/image/tags),
+                # fetched only when the scheduler turns it on. Overlap is cheap:
+                # store_articles dedups by (url, ticker).
+                if include_massive:
+                    massive_articles, *google_per_ticker = await asyncio.gather(
+                        fetch_massive(client, batch, limit=50),
+                        *(fetch_google_rss(client, [t], limit=15) for t in batch),
+                    )
+                else:
+                    massive_articles = []
+                    google_per_ticker = list(
+                        await asyncio.gather(*(fetch_google_rss(client, [t], limit=15) for t in batch))
+                    )
 
                 # Massive: distribute by each article's ticker tags (headline-scan
                 # only as a fallback for the rare untagged article).
@@ -497,19 +510,19 @@ async def ingest_tickers(
     return total
 
 
-async def ingest_tier1(db_url: str | None = None) -> int:
-    logger.info("Ingesting tier-1 (%d tickers)", len(TIER1_TICKERS))
-    return await ingest_tickers(TIER1_TICKERS, db_url)
+async def ingest_tier1(db_url: str | None = None, include_massive: bool = True) -> int:
+    logger.info("Ingesting tier-1 (%d tickers, massive=%s)", len(TIER1_TICKERS), include_massive)
+    return await ingest_tickers(TIER1_TICKERS, db_url, include_massive=include_massive)
 
 
-async def ingest_tier2(db_url: str | None = None) -> int:
-    logger.info("Ingesting tier-2 (%d tickers)", len(TIER2_TICKERS))
-    return await ingest_tickers(TIER2_TICKERS, db_url)
+async def ingest_tier2(db_url: str | None = None, include_massive: bool = True) -> int:
+    logger.info("Ingesting tier-2 (%d tickers, massive=%s)", len(TIER2_TICKERS), include_massive)
+    return await ingest_tickers(TIER2_TICKERS, db_url, include_massive=include_massive)
 
 
-async def ingest_all(db_url: str | None = None) -> int:
-    logger.info("Ingesting all hot tickers (%d)", len(HOT_TICKERS_LIST))
-    return await ingest_tickers(HOT_TICKERS_LIST, db_url)
+async def ingest_all(db_url: str | None = None, include_massive: bool = True) -> int:
+    logger.info("Ingesting all hot tickers (%d, massive=%s)", len(HOT_TICKERS_LIST), include_massive)
+    return await ingest_tickers(HOT_TICKERS_LIST, db_url, include_massive=include_massive)
 
 
 # ── CLI entry point ─────────────────────────────────────────────────────────
@@ -519,15 +532,22 @@ if __name__ == "__main__":
     ap.add_argument("--tier", type=int, choices=[1, 2], help="Fetch only tier 1 or 2")
     ap.add_argument("--ticker", type=str, help="Fetch a single ticker")
     ap.add_argument("--dry-run", action="store_true", help="Fetch + score only, no DB write")
+    ap.add_argument(
+        "--google-only", action="store_true",
+        help="Skip Massive — pure Google RSS pass (free, near-real-time)",
+    )
     args = ap.parse_args()
+    inc_massive = not args.google_only
 
     if args.ticker:
-        count = asyncio.run(ingest_tickers([args.ticker.upper()], dry_run=args.dry_run))
+        count = asyncio.run(
+            ingest_tickers([args.ticker.upper()], dry_run=args.dry_run, include_massive=inc_massive)
+        )
     elif args.tier == 1:
-        count = asyncio.run(ingest_tier1() if not args.dry_run else ingest_tickers(TIER1_TICKERS, dry_run=True))
+        count = asyncio.run(ingest_tickers(TIER1_TICKERS, dry_run=args.dry_run, include_massive=inc_massive))
     elif args.tier == 2:
-        count = asyncio.run(ingest_tier2() if not args.dry_run else ingest_tickers(TIER2_TICKERS, dry_run=True))
+        count = asyncio.run(ingest_tickers(TIER2_TICKERS, dry_run=args.dry_run, include_massive=inc_massive))
     else:
-        count = asyncio.run(ingest_all() if not args.dry_run else ingest_tickers(HOT_TICKERS_LIST, dry_run=True))
+        count = asyncio.run(ingest_tickers(HOT_TICKERS_LIST, dry_run=args.dry_run, include_massive=inc_massive))
 
     print(f"Done: {count} new articles stored")

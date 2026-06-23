@@ -1,4 +1,5 @@
 import asyncio
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
@@ -11,6 +12,19 @@ from app.core.database import engine as app_engine
 from app.core.market_clock import ET, get_market_status, get_session_phase, ticks_advancing
 
 router = APIRouter()
+
+# Same symbol shape the other per-ticker routes (signals/earnings/news) validate against —
+# reject junk before it reaches SQL so a malformed path returns 422, not a 500.
+_TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,10}$")
+
+
+def _valid_ticker(ticker: str) -> str:
+    t = ticker.upper()
+    if not _TICKER_RE.match(t):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="invalid ticker"
+        )
+    return t
 
 # Cached market status — avoid hitting SELECT max(time) FROM market_data_1min on every request.
 _status_cache: dict = {"data": None, "ts": 0.0}
@@ -72,7 +86,7 @@ async def get_candles(
     db: AsyncSession = Depends(get_db),
 ):
     """Return OHLCV bars for charting. Frontend uses TradingView Lightweight Charts."""
-    ticker = ticker.upper()
+    ticker = _valid_ticker(ticker)
     if timeframe == "1min" and days > 30:
         days = 30
     since = datetime.now(UTC) - timedelta(days=days)
@@ -85,15 +99,21 @@ async def get_candles(
     table = table_map[timeframe]
     adjusted_filter = " AND adjusted = TRUE" if timeframe == "30min" else ""
 
-    rows = await db.execute(
-        text(f"""
-            SELECT time, open, high, low, close, volume
-            FROM {table}
-            WHERE ticker = :ticker AND time >= :since{adjusted_filter}
-            ORDER BY time ASC
-        """),
-        {"ticker": ticker, "since": since},
-    )
+    # Mirror /series resilience: a transient DB error returns an empty series (the
+    # caller renders "no data") rather than a 500 with a dangling un-rolled-back session.
+    try:
+        rows = await db.execute(
+            text(f"""
+                SELECT time, open, high, low, close, volume
+                FROM {table}
+                WHERE ticker = :ticker AND time >= :since{adjusted_filter}
+                ORDER BY time ASC
+            """),
+            {"ticker": ticker, "since": since},
+        )
+    except Exception:
+        await db.rollback()
+        return {"ticker": ticker, "timeframe": timeframe, "candles": [], "count": 0}
     candles = [
         {
             "time": row["time"].isoformat(),
@@ -106,6 +126,107 @@ async def get_candles(
         for row in rows.mappings()
     ]
     return {"ticker": ticker, "timeframe": timeframe, "candles": candles, "count": len(candles)}
+
+
+@router.get("/{ticker}/stats")
+async def get_stats(ticker: str, db: AsyncSession = Depends(get_db)):
+    """Key statistics panel for the stock detail page — all from REAL stored tables,
+    never the empty `fundamentals` snapshot (its fetch is still a stub):
+
+      - market cap / sector / industry  ← `tickers`
+      - 52-week high/low + % from each   ← `bars_1d` (adjusted, last 252 sessions)
+      - latest close + 30-day avg volume ← `bars_1d`
+      - TTM EPS + trailing P/E           ← `earnings` (sum of last 4 reported actuals)
+
+    Every field is independently nullable: a symbol with no daily bars or no earnings
+    still returns 200 with the fields it *does* have, so the panel degrades gracefully.
+    """
+    tkr = _valid_ticker(ticker)
+
+    meta = (await db.execute(
+        text("""
+            SELECT i.instrument_id, t.market_cap, t.sector, t.industry
+            FROM instruments i
+            LEFT JOIN tickers t ON t.ticker = i.symbol
+            WHERE i.symbol = :t
+            ORDER BY i.instrument_id LIMIT 1
+        """),
+        {"t": tkr},
+    )).mappings().first()
+
+    if meta is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="ticker not found")
+
+    iid = meta["instrument_id"]
+    w52_high = w52_low = last_close = avg_vol_30d = None
+    last_volume = None
+    if iid is not None:
+        try:
+            row = (await db.execute(
+                text("""
+                    WITH recent AS (
+                        SELECT adj_high, adj_low, adj_close, adj_volume,
+                               row_number() OVER (ORDER BY ts DESC) AS rn
+                        FROM bars_1d
+                        WHERE instrument_id = :iid
+                        ORDER BY ts DESC LIMIT 252
+                    )
+                    SELECT max(adj_high)  AS w52_high,
+                           min(adj_low)   AS w52_low,
+                           max(adj_close)  FILTER (WHERE rn = 1)  AS last_close,
+                           max(adj_volume) FILTER (WHERE rn = 1)  AS last_volume,
+                           avg(adj_volume) FILTER (WHERE rn <= 30) AS avg_vol_30d
+                    FROM recent
+                """),
+                {"iid": iid},
+            )).mappings().first()
+            if row:
+                w52_high = float(row["w52_high"]) if row["w52_high"] is not None else None
+                w52_low = float(row["w52_low"]) if row["w52_low"] is not None else None
+                last_close = float(row["last_close"]) if row["last_close"] is not None else None
+                last_volume = int(row["last_volume"]) if row["last_volume"] is not None else None
+                avg_vol_30d = int(row["avg_vol_30d"]) if row["avg_vol_30d"] is not None else None
+        except Exception:
+            await db.rollback()
+
+    # TTM EPS = sum of the last 4 *reported* quarterly actuals; P/E only when both the
+    # price and a positive TTM EPS exist (negative/zero earnings → P/E is "N/A", not a
+    # misleading negative number).
+    ttm_eps = pe_ratio = None
+    try:
+        eps_rows = (await db.execute(
+            text("""
+                SELECT eps_actual FROM earnings
+                WHERE ticker = :t AND eps_actual IS NOT NULL
+                ORDER BY report_date DESC LIMIT 4
+            """),
+            {"t": tkr},
+        )).scalars().all()
+        if len(eps_rows) == 4:
+            ttm_eps = round(float(sum(eps_rows)), 4)
+            if ttm_eps > 0 and last_close is not None:
+                pe_ratio = round(last_close / ttm_eps, 2)
+    except Exception:
+        await db.rollback()
+
+    def _pct(a: float | None, b: float | None) -> float | None:
+        return round((a - b) / b * 100.0, 2) if a is not None and b else None
+
+    return {
+        "ticker": tkr,
+        "market_cap": meta["market_cap"],
+        "sector": meta["sector"],
+        "industry": meta["industry"],
+        "price": last_close,
+        "week52_high": w52_high,
+        "week52_low": w52_low,
+        "pct_from_high": _pct(last_close, w52_high),  # ≤ 0 (below the high)
+        "pct_from_low": _pct(last_close, w52_low),     # ≥ 0 (above the low)
+        "avg_volume_30d": avg_vol_30d,
+        "last_volume": last_volume,
+        "ttm_eps": ttm_eps,
+        "pe_ratio": pe_ratio,
+    }
 
 
 @router.get("/quotes")

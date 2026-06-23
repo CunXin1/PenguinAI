@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { useQuery } from "@tanstack/react-query";
 import { Newspaper, ArrowRight, ExternalLink, Search, X, SlidersHorizontal } from "lucide-react";
@@ -16,6 +16,12 @@ const SENT: Record<NewsArticle["sentiment"], { label: string; chip: string }> = 
 };
 
 const FILTERS = ["all", "positive", "negative", "neutral"] as const;
+
+// Minimum natural resolution for an image to be allowed in the featured hero slot.
+// The hero renders at ~800x192; anything smaller is a thumbnail/tracking pixel and
+// looks pixelated stretched across the card, so we drop it and feature another story.
+const MIN_IMG_W = 400;
+const MIN_IMG_H = 200;
 
 const MAJOR_TICKERS = new Set([
   "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "NVDA", "META", "TSLA",
@@ -63,13 +69,14 @@ function deduplicateArticles(articles: NewsArticle[]): NewsArticle[] {
   return [...seen.values()];
 }
 
-function scoreFeatured(a: NewsArticle): number {
+function scoreFeatured(a: NewsArticle, hasGoodImage: boolean): number {
   let score = 0;
   const tickers = a.tickers ?? [];
   if (tickers.length === 0 || tickers.some((t) => ["SPY", "QQQ", "DIA"].includes(t))) score += 10;
   if (tickers.some((t) => MAJOR_TICKERS.has(t))) score += 5;
   if (tickers.length >= 2) score += 3;
-  if (a.image) score += 2;
+  // Only a high-res image counts — a low-res one is no better than no image here.
+  if (hasGoodImage) score += 2;
   if (a.summary && a.summary.length > 80) score += 1;
   return score;
 }
@@ -124,11 +131,54 @@ export default function NewsPage() {
   const total = allNews.length;
   const net = counts.positive >= counts.negative ? "Bullish" : "Bearish";
 
+  // Probe candidate images for real resolution. An image only becomes eligible for the
+  // featured hero once it loads at >= MIN_IMG_W x MIN_IMG_H; low-res or broken images
+  // are excluded so the headline slot never shows a pixelated thumbnail. Runs only when
+  // showing the market feed (featured is hidden in single-ticker view).
+  const [goodImages, setGoodImages] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    if (activeTicker) return;
+    const candidates = allNews.filter((a) => a.image);
+    if (candidates.length === 0) {
+      setGoodImages(new Set());
+      return;
+    }
+    let cancelled = false;
+    const good = new Set<string>();
+    let pending = candidates.length;
+    const settle = () => {
+      pending -= 1;
+      if (pending === 0 && !cancelled) setGoodImages(good);
+    };
+    for (const a of candidates) {
+      const img = new window.Image();
+      img.onload = () => {
+        if (img.naturalWidth >= MIN_IMG_W && img.naturalHeight >= MIN_IMG_H) good.add(a.id);
+        settle();
+      };
+      img.onerror = settle;
+      img.src = a.image!;
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [allNews, activeTicker]);
+
   const featured = useMemo(() => {
     if (activeTicker || allNews.length < 4) return [];
-    const sorted = [...allNews].sort((a, b) => scoreFeatured(b) - scoreFeatured(a));
-    return sorted.slice(0, 3);
-  }, [allNews, activeTicker]);
+    const sorted = [...allNews].sort(
+      (a, b) => scoreFeatured(b, goodImages.has(b.id)) - scoreFeatured(a, goodImages.has(a.id)),
+    );
+    // The hero (featured[0], the only slot that renders an image) must have a validated
+    // high-res image; prefer one that also has a real summary so the large card isn't bare.
+    const hero =
+      sorted.find((a) => a.image && goodImages.has(a.id) && (a.summary?.length ?? 0) > 40) ??
+      sorted.find((a) => a.image && goodImages.has(a.id)) ??
+      sorted[0];
+    const ordered = [hero, ...sorted.filter((a) => a.id !== hero.id)].slice(0, 3);
+    // Never hand a low-res/broken image to a card — strip it so it renders text-only.
+    return ordered.map((a) => (a.image && goodImages.has(a.id) ? a : { ...a, image: undefined }));
+  }, [allNews, activeTicker, goodImages]);
 
   const featuredIds = useMemo(() => new Set(featured.map((a) => a.id)), [featured]);
 
@@ -276,7 +326,9 @@ export default function NewsPage() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="space-y-1.5 min-w-0">
                     <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100 leading-snug group-hover:text-zinc-900 dark:group-hover:text-white transition-colors">{n.headline}</h2>
-                    <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed line-clamp-2">{n.summary}</p>
+                    {n.summary && (
+                      <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed line-clamp-2">{n.summary}</p>
+                    )}
                     <div className="flex items-center gap-2 text-xs text-zinc-400 dark:text-zinc-600 pt-1 flex-wrap">
                       <span className="text-zinc-600 dark:text-zinc-400">{n.source}</span>
                       <span>·</span>

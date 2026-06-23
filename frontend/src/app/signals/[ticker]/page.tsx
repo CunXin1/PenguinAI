@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft, ArrowRight, Star, Loader2, Newspaper, ExternalLink,
   CalendarDays, Sunrise, Moon, TrendingUp, TrendingDown, Crown, Clock, Lock,
+  AlertTriangle, RotateCw,
 } from "lucide-react";
 import {
   signals as signalApi,
@@ -16,11 +17,11 @@ import {
 } from "@/lib/api";
 import { PriceChart } from "@/components/charts/PriceChart";
 import { SignalCard } from "@/components/signals/SignalCard";
+import { KeyStats } from "@/components/signals/KeyStats";
 import { UnknownSymbol } from "@/components/signals/UnknownSymbol";
 import { Card } from "@/components/ui/Card";
 import { useWatchlist } from "@/hooks/useWatchlist";
 import { getCelebrityMeta, getCelebrityColor } from "@/lib/celebrities";
-import { mockSignalDetail } from "@/lib/mock";
 import { cn, compact, signedPct, timeAgo, timeAgoUnix } from "@/lib/utils";
 import type {
   ApiError, CelebAction, CelebrityHolding, EarningsEvent, EarningsSession,
@@ -69,7 +70,7 @@ function NewsSentimentBar({ articles }: { articles: NewsApiArticle[] }) {
 const MAX_POLLS = 10; // ~50s of polling a cold ticker before giving up
 const POLL_MS = 5000;
 
-type View = "loading" | "live" | "demo" | "computing" | "locked" | "unknown";
+type View = "loading" | "live" | "computing" | "locked" | "unknown" | "error";
 
 // Massive reference stores MIC codes — show the household exchange names.
 const EXCHANGE_LABEL: Record<string, string> = {
@@ -88,6 +89,7 @@ export default function SignalDetailPage({ params }: Props) {
   const [view, setView] = useState<View>("loading");
   const [reason, setReason] = useState<"not_in_universe" | "delisted">("not_in_universe");
   const [requiredTier, setRequiredTier] = useState("PRO");
+  const [attempt, setAttempt] = useState(0); // bump to re-run the signal load (Retry)
 
   const watchlist = useWatchlist();
   const watched = watchlist.has(T);
@@ -95,7 +97,7 @@ export default function SignalDetailPage({ params }: Props) {
   // The ticker is confirmed covered (in our universe) once the signal endpoint
   // answers anything but 404 — only then fire the secondary data queries, so a
   // junk symbol like /signals/ZZZZZ never triggers on-demand news fetches.
-  const covered = view === "live" || view === "demo" || view === "computing" || view === "locked";
+  const covered = view === "live" || view === "computing" || view === "locked";
 
   const { data: info } = useQuery<Ticker>({
     queryKey: ["tickerInfo", T],
@@ -144,8 +146,8 @@ export default function SignalDetailPage({ params }: Props) {
             polls += 1;
             timer = setTimeout(() => load(true), POLL_MS);
           } else {
-            setSignal(mockSignalDetail(T));
-            setView("demo");
+            // Took too long — surface an honest "try again" state, never fake data.
+            setView("error");
           }
         } else if (err.status === 403) {
           // Signal exists but the caller's tier is too low — upgrade CTA, never
@@ -154,9 +156,9 @@ export default function SignalDetailPage({ params }: Props) {
           setRequiredTier(m?.[1] ?? "PRO");
           setView("locked");
         } else {
-          // Network / server error — keep the page alive with demo data.
-          setSignal(mockSignalDetail(T));
-          setView("demo");
+          // Network / server error — show an honest error state with a Retry, never
+          // fabricate ML output for a signals product.
+          setView("error");
         }
       }
     };
@@ -168,7 +170,7 @@ export default function SignalDetailPage({ params }: Props) {
       active = false;
       clearTimeout(timer);
     };
-  }, [T]);
+  }, [T, attempt]);
 
   const toggleWatch = () => {
     (watched ? watchlist.remove(T) : watchlist.add(T)).catch(() => {});

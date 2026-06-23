@@ -56,6 +56,25 @@ export interface TickerSearchResult {
   exchange: string | null;
 }
 
+// Key statistics panel (stock detail page). All fields independently nullable —
+// computed server-side from bars_1d + tickers + earnings (real data, not the
+// empty fundamentals snapshot). See GET /market-data/{ticker}/stats.
+export interface KeyStats {
+  ticker: string;
+  market_cap: number | null;
+  sector: string | null;
+  industry: string | null;
+  price: number | null;
+  week52_high: number | null;
+  week52_low: number | null;
+  pct_from_high: number | null; // ≤ 0
+  pct_from_low: number | null;  // ≥ 0
+  avg_volume_30d: number | null;
+  last_volume: number | null;
+  ttm_eps: number | null;
+  pe_ratio: number | null;
+}
+
 // ── Symbol request (data-demand queue) ────────────────────────────────────────
 export type SymbolRequestStatus =
   | "pending"
