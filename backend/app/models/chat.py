@@ -29,7 +29,9 @@ class ChatConversation(Base):
         "ChatMessage",
         back_populates="conversation",
         cascade="all, delete-orphan",
-        order_by="ChatMessage.created_at",
+        # role DESC tiebreaker: a turn's user+assistant share created_at (same txn
+        # now()), and 'user' > 'assistant', so this renders user before assistant.
+        order_by="ChatMessage.created_at, ChatMessage.role.desc()",
     )
 
 
