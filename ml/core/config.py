@@ -59,6 +59,12 @@ class MLSettings(BaseSettings):
     CHAT_MAX_TOKENS: int = 1024  # model output cap
     CHAT_TEMPERATURE: float = 0.7
     CHAT_TIMEOUT_SECONDS: int = 60
+    # LLM context window (Ollama num_ctx). Ollama DEFAULTS to 4096 and silently
+    # truncates from the left — dropping the system prompt + tool schemas. A local
+    # E4B handles 16k comfortably; raise only if you have the VRAM. NOTE: for the
+    # SDK /v1 path the guaranteed knob is the server-side `OLLAMA_CONTEXT_LENGTH`
+    # env var; this value is applied directly on the hand-rolled /api/chat path.
+    CHAT_NUM_CTX: int = 16384
 
     # OpenAI Agents SDK runner (replaces the hand-rolled tool loop when on).
     CHAT_AGENT_SDK: bool = False

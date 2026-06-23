@@ -18,7 +18,7 @@ import platform
 from functools import lru_cache
 
 import httpx
-from agents import OpenAIChatCompletionsModel, set_tracing_disabled
+from agents import ModelSettings, OpenAIChatCompletionsModel, set_tracing_disabled
 from openai import AsyncOpenAI
 
 from ml.core.config import ml_settings
@@ -72,6 +72,22 @@ def _client_and_default_model() -> tuple[AsyncOpenAI, str]:
 def _model(name_override: str) -> OpenAIChatCompletionsModel:
     client, default_model = _client_and_default_model()
     return OpenAIChatCompletionsModel(model=name_override or default_model, openai_client=client)
+
+
+def chat_model_settings() -> ModelSettings:
+    """Generation settings shared by every SDK agent.
+
+    Applies the CHAT_* caps the hand-rolled path already honored (the SDK path
+    previously used library defaults), and passes ``num_ctx`` to the local server via
+    ``extra_body`` so the request isn't capped at Ollama's 4096 default. NOTE: whether
+    the OpenAI-compatible /v1 endpoint honors ``options.num_ctx`` depends on the server;
+    the guaranteed knob is the ``OLLAMA_CONTEXT_LENGTH`` env var on ``ollama serve``.
+    """
+    return ModelSettings(
+        temperature=ml_settings.CHAT_TEMPERATURE,
+        max_tokens=ml_settings.CHAT_MAX_TOKENS,
+        extra_body={"options": {"num_ctx": ml_settings.CHAT_NUM_CTX}},
+    )
 
 
 def main_model() -> OpenAIChatCompletionsModel:

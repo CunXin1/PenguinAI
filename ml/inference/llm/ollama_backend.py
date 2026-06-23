@@ -65,6 +65,7 @@ class OllamaBackend(LLMBackend):
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": ml_settings.CHAT_NUM_CTX,
             },
         }
         # Ollama accepts a JSON Schema object (or the literal "json") as `format`.
@@ -102,6 +103,7 @@ class OllamaBackend(LLMBackend):
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
+                "num_ctx": ml_settings.CHAT_NUM_CTX,
             },
         }
         async with httpx.AsyncClient(timeout=self._timeout, trust_env=False) as client:
@@ -133,7 +135,11 @@ class OllamaBackend(LLMBackend):
             "stream": True,
             "think": False,
             "tools": tools,
-            "options": {"temperature": temperature, "num_predict": max_tokens},
+            "options": {
+                "temperature": temperature,
+                "num_predict": max_tokens,
+                "num_ctx": ml_settings.CHAT_NUM_CTX,
+            },
         }
         content_parts: list[str] = []
         tool_calls: list[dict] = []

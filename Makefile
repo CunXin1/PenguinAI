@@ -71,6 +71,12 @@ fetch-ark:
 fetch-reference:
 	python -m data.ingestion.massive_reference
 
+# Market cap + SIC sector/industry for every instruments symbol → upserted into
+# tickers (sizes the heatmap tiles, gives the screener a sort key + sector filter,
+# fills the stock-page Sector/Industry stats). Needs MASSIVE_API_KEY. Idempotent.
+fetch-marketcap:
+	python -m data.ingestion.massive_marketcap
+
 # FOMC statements → fomc_statements table. Scrapes Fed website, scores with
 # FinBERT. Incremental (skips dates already in DB). No API key needed.
 fetch-fomc:

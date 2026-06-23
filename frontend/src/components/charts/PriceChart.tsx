@@ -383,7 +383,9 @@ interface DrawSpec {
 
 /** Turn the enabled indicator keys into concrete series specs + total pane count.
  *  Oscillators each get their own sub-pane (price stays pane 0). */
-function buildDrawSpecs(selected: IndicatorKey[]): { specs: DrawSpec[]; paneCount: number } {
+function buildDrawSpecs(
+  selected: IndicatorKey[]
+): { specs: DrawSpec[]; paneCount: number; volumePane: number | null } {
   const specs: DrawSpec[] = [];
   let nextPane = 1;
 
@@ -402,9 +404,13 @@ function buildDrawSpecs(selected: IndicatorKey[]): { specs: DrawSpec[]; paneCoun
       });
     }
   }
-  // Volume (bottom of price pane).
+  // Volume gets its OWN thin pane directly under price. (It used to be overlaid on
+  // the bottom of the price pane, where the bars sat on top of the area fill and
+  // obscured the price curve.)
+  let volumePane: number | null = null;
   if (selected.includes("volume")) {
-    specs.push({ id: "volume", kind: "hist", color: INDICATORS.volume.color, pane: 0 });
+    volumePane = nextPane++;
+    specs.push({ id: "volume", kind: "hist", color: INDICATORS.volume.color, pane: volumePane });
   }
   // Oscillators each in their own sub-pane.
   for (const k of selected) {
@@ -418,7 +424,7 @@ function buildDrawSpecs(selected: IndicatorKey[]): { specs: DrawSpec[]; paneCoun
       specs.push({ id: "rsi_14", kind: "line", col: "rsi_14", color: "#a855f7", pane, lineWidth: 2, guides: [30, 70] });
     }
   }
-  return { specs, paneCount: nextPane };
+  return { specs, paneCount: nextPane, volumePane };
 }
 
 // ── Chart canvas (lightweight-charts v5) ──────────────────────────────────────
@@ -589,20 +595,21 @@ function Canvas({
       seriesRef.current = series;
 
       // Build indicator / volume / oscillator series from the enabled chips.
-      const { specs, paneCount } = buildDrawSpecs(selected);
+      const { specs, paneCount, volumePane } = buildDrawSpecs(selected);
       const map = new Map<string, { series: ISeriesApi<"Line"> | ISeriesApi<"Histogram">; spec: DrawSpec }>();
       for (const spec of specs) {
         if (spec.kind === "hist") {
           const s = chart.addSeries(
             LWC.HistogramSeries,
             spec.id === "volume"
-              ? { priceFormat: { type: "volume" }, priceScaleId: "vol", color: "rgba(113,113,122,0.5)" }
+              ? { priceFormat: { type: "volume" }, color: "rgba(113,113,122,0.5)", priceLineVisible: false, lastValueVisible: false }
               : { color: spec.color, priceLineVisible: false, lastValueVisible: false },
             spec.pane
           );
           if (spec.id === "volume") {
-            // Tuck the volume histogram into the bottom 18% of the price pane.
-            s.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+            // Own pane: keep a little headroom above the tallest bar so it doesn't
+            // touch the divider, and let the bars sit on the pane floor.
+            s.priceScale().applyOptions({ scaleMargins: { top: 0.2, bottom: 0 } });
           }
           map.set(spec.id, { series: s, spec });
         } else {
@@ -619,11 +626,14 @@ function Canvas({
       }
       indSeriesRef.current = map;
 
-      // Give the price pane the lion's share; split the rest among oscillators.
+      // Give the price pane the lion's share. Volume is a thin strip; each
+      // oscillator gets a medium band.
       if (paneCount > 1) {
         const panes = chart.panes();
-        panes[0]?.setStretchFactor(3 * (paneCount - 1));
-        for (let i = 1; i < paneCount; i++) panes[i]?.setStretchFactor(1);
+        panes[0]?.setStretchFactor(10);
+        for (let i = 1; i < paneCount; i++) {
+          panes[i]?.setStretchFactor(i === volumePane ? 2 : 4);
+        }
       }
 
       applyData(series, barsRef.current, type, up);

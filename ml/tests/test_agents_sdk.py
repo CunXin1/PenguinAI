@@ -163,6 +163,43 @@ class TestMarketMood:
         assert out["fear_greed"] is None and out["volatility"] == {}
 
 
+class TestHistoryDigest:
+    """get_history sends the model a digest + short tail, not the full series (context economy)."""
+
+    async def test_caps_tail_and_summarizes(self):
+        from ml.inference.chat.tools import _HISTORY_TAIL, _get_history
+
+        # DB returns newest-first (ORDER BY time DESC); close 50 (newest) .. 1 (oldest).
+        rows = [
+            {
+                "time": f"d{50 - i}",
+                "open": 50 - i,
+                "high": 51 - i,
+                "low": 49 - i,
+                "close": float(50 - i),
+                "volume": 100,
+            }
+            for i in range(50)
+        ]
+        out = await _get_history(
+            {"ticker": "AAPL", "range": "MAX"}, ChatContext(user_id="u1", db=_FakeDB(rows=rows))
+        )
+        assert out["count"] == 50
+        assert len(out["recent_bars"]) == _HISTORY_TAIL  # not all 50 bars
+        assert "bars" not in out  # full series is no longer fed to the model
+        assert out["summary"]["start"]["close"] == 1.0  # reversed to oldest→newest
+        assert out["summary"]["end"]["close"] == 50.0
+        assert out["summary"]["pct_change"] == 4900.0
+
+    async def test_empty_history(self):
+        from ml.inference.chat.tools import _get_history
+
+        out = await _get_history(
+            {"ticker": "AAPL", "range": "3M"}, ChatContext(user_id="u1", db=_FakeDB())
+        )
+        assert out["count"] == 0 and out["recent_bars"] == [] and out["summary"] is None
+
+
 class TestResearchCardIsolation:
     """Regression: research sub-agents must not mutate the orchestrator's card_sink.
 

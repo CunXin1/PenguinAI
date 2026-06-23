@@ -17,7 +17,7 @@ from typing import Literal
 from agents import Agent, RunContextWrapper, Runner, function_tool
 from pydantic import BaseModel, Field
 
-from ml.inference.agents.provider import narrow_model
+from ml.inference.agents.provider import chat_model_settings, narrow_model
 from ml.inference.agents.tools import (
     get_earnings,
     get_fundamentals,
@@ -57,6 +57,7 @@ def build_ticker_research_agent() -> Agent[ChatContext]:
         name="ticker-research",
         instructions=RESEARCH_PROMPT,
         model=narrow_model(),
+        model_settings=chat_model_settings(),
         tools=[
             get_quote,
             get_indicators,

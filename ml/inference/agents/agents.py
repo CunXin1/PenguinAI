@@ -10,7 +10,7 @@ from __future__ import annotations
 from agents import Agent, RunContextWrapper
 
 from ml.inference.agents.guardrails import compliance_guardrail
-from ml.inference.agents.provider import main_model
+from ml.inference.agents.provider import chat_model_settings, main_model
 from ml.inference.agents.research import RESEARCH_TOOLS
 from ml.inference.agents.tools import CHAT_TOOLS
 from ml.inference.chat.context import ChatContext
@@ -65,6 +65,7 @@ def build_orchestrator() -> Agent[ChatContext]:
         name="penguinai-chat",
         instructions=_instructions,
         model=main_model(),
+        model_settings=chat_model_settings(),
         tools=[*CHAT_TOOLS, *RESEARCH_TOOLS],
         output_guardrails=[compliance_guardrail],
     )

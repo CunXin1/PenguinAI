@@ -31,6 +31,7 @@ _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 _HISTORY_RANGES = {"1W": 5, "1M": 21, "3M": 63, "6M": 126, "1Y": 252, "MAX": 1000}
 _DIRECTIONS = {"LONG", "SHORT", "NEUTRAL"}
 _SCREEN_MAX = 25  # cap rows a single screen returns
+_HISTORY_TAIL = 30  # bars of get_history fed to the MODEL (the chart card shows the full series)
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -151,8 +152,31 @@ async def _get_history(args: dict, ctx: ChatContext) -> dict:
         """),
         {"t": t, "n": _HISTORY_RANGES[rng]},
     )
-    bars = list(reversed(_rows(res)))
-    return {"ticker": t, "range": rng, "bars": bars, "count": len(bars)}
+    bars = list(reversed(_rows(res)))  # oldest → newest
+    if not bars:
+        return {"ticker": t, "range": rng, "count": 0, "summary": None, "recent_bars": []}
+    # The chart CARD renders the full series (the frontend self-fetches by ticker+range),
+    # so the MODEL only needs a digest + a short tail. Sending every bar (up to 1000 for
+    # MAX) would swamp a small local context window for no benefit.
+    closes = [b["close"] for b in bars if b.get("close") is not None]
+    highs = [b["high"] for b in bars if b.get("high") is not None]
+    lows = [b["low"] for b in bars if b.get("low") is not None]
+    pct_change = (
+        round((closes[-1] / closes[0] - 1) * 100, 2) if len(closes) >= 2 and closes[0] else None
+    )
+    return {
+        "ticker": t,
+        "range": rng,
+        "count": len(bars),
+        "summary": {
+            "start": bars[0],
+            "end": bars[-1],
+            "high": max(highs) if highs else None,
+            "low": min(lows) if lows else None,
+            "pct_change": pct_change,
+        },
+        "recent_bars": bars[-_HISTORY_TAIL:],
+    }
 
 
 async def _get_indicators(args: dict, ctx: ChatContext) -> dict:
