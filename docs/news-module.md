@@ -1,26 +1,26 @@
 # News Module
 
-> Last updated: 2026-06-09
+> Last updated: 2026-06-23
 
 ## Architecture
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
 │                          Data Sources                                 │
-│  Massive API (PRIMARY)   Google News RSS (2nd)     Finnhub (BACKUP)  │
-│  - paid, no rate limit   - free, no key            - FREE tier       │
-│  - sentiment via insights- no sentiment            - 60 req/min      │
-│  - ticker.any_of batch   - no ticker filter        - save quota!     │
-└──────┬───────────────────────────┬──────────────────────────┬────────┘
-       │                          │                          │
-       ▼                          ▼                          ▼
+│  Google News RSS (BASELINE) Massive API (ENRICH)   Finnhub (LAST)   │
+│  - free, no key             - paid                 - FREE tier       │
+│  - near-real-time           - summary + image      - 60 req/min      │
+│  - EVERY cycle (per ticker) - ticker tags          - only if both    │
+│  - no summary/image         - low-freq (~60 min)     came back empty │
+│         └─────────── MERGED every cycle ──────────┘                  │
+└──────────────────────────┬────────────────────────────────────────────┘
+                           ▼
 ┌───────────────────────────────────────────────────────────────────────┐
 │                     FinBERT Scorer (local, GPU)                       │
 │  Prepends ticker to headline: "NVDA: Intel surges..." → per-ticker   │
 │  sentiment. Batch=32 on 4090 → ~50ms/batch. Falls back to Massive    │
 │  insights if torch unavailable.                                      │
 └──────────────────────────┬────────────────────────────────────────────┘
-                           │
                            ▼
 ┌───────────────────────────────────────────────────────────────────────┐
 │              news_articles (TimescaleDB hypertable)                   │
@@ -32,31 +32,54 @@
        ┌───────────────────┼──────────────────┐
        ▼                   ▼                  ▼
   /api/news/hot      /api/news/{ticker}   /api/news/market
-  (DB → fallback)    (DB → fallback)      (Massive → Google → Finnhub)
-       │                   │
+  (DB → fallback)    (DB → fallback;      (Massive → Google → Finnhub)
+       │              ?fresh=true overlays
+       │              live Google RSS)
        ▼                   ▼
   /news page          /signals/[ticker]
   (diversified:        (6 articles +
    max 3/ticker)        sentiment bar)
 ```
 
-## Source Priority
+## Source Strategy (split-frequency, Google-primary)
 
-**Massive API** is the primary source (paid plan, stress-tested at 54+ req/min with zero throttling). **Google News RSS** is the free secondary (no API key, no sentiment, general headlines). **Finnhub REST** is last resort only — its free tier (60 req/min) is shared with earnings calendar, realtime WebSocket auth, and symbol validation.
+The sources are **merged on every cycle, not fallback-ranked**. Each one does a distinct
+job, so they run at different cadences:
 
-| Source | Cost | Rate Limit | Sentiment | Ticker Filter | When Used |
-|--------|------|-----------|-----------|---------------|-----------|
-| Massive | Paid | ~54+/min (tested) | insights[] | `ticker.any_of` batch | Always first |
-| Google RSS | Free | None | No | Query-based only | Massive down |
-| Finnhub | Free tier | 60/min (shared!) | No | Per-ticker only | Both above fail |
+- **Google News RSS** is the always-on **freshness baseline** — free, no key, near-real-time
+  (the same source the chat agent's `web_fetch_news` uses). It runs on EVERY cycle, one
+  ticker-scoped query per ticker, so attribution is clean without headline guessing.
+- **Massive API** is the **low-frequency enrichment layer** — paid, but the only source that
+  carries summary text, images, and precise ticker tags. It is layered on only every
+  `NEWS_MASSIVE_INTERVAL_MIN` (default 60 min) to keep cost down while still giving the
+  feed rich cards.
+- **Finnhub REST** is the **last resort** — only for tickers that came back empty from both
+  of the above. Its free tier (60 req/min) is shared with the earnings calendar, realtime
+  WebSocket auth, and symbol validation, so we save quota.
+
+> **Why this design.** The chat agent fetched live Google RSS and felt much fresher than the
+> News page, because the old pipeline put Massive *first* and only fell back to Google when
+> Massive returned nothing — so the free near-real-time source was effectively dead code.
+> Making Google the always-on baseline closes that gap; Massive becomes a periodic overlay
+> for summaries/images rather than the freshness driver. Overlap between sources is cheap:
+> `store_articles` dedups by `(url, ticker)`, so only genuinely new rows are written.
+
+| Source | Cost | Sentiment | Summary/Image | Ticker tags | Freshness | Cadence |
+|--------|------|-----------|---------------|-------------|-----------|---------|
+| Google RSS | Free | No (FinBERT computes) | No | No (per-ticker query) | Near-real-time | Every cycle |
+| Massive | Paid | insights[] | Yes | `ticker.any_of` batch | Lags | ~60 min |
+| Finnhub | Free tier | No | summary only | Per-ticker only | Lags | Empty-only fallback |
 
 ## Fetch Tiers
 
 | Tier | Tickers | Count | Interval | Use Case |
 |------|---------|-------|----------|----------|
-| **Tier-1** | MAG7 + SPY/QQQ/DIA/IWM/SOXX | 12 | Every 15 min (configurable) | Most-viewed stocks, need freshest data |
-| **Tier-2** | Rest of Nasdaq-100 + key ETFs | ~81 | Every 60 min (configurable) | Broad coverage, less time-sensitive |
-| **Cold** | Everything else | ∞ | On-demand | User clicks → API fetch → cache 10 min, no DB |
+| **Tier-1** | MAG7 + SPY/QQQ/DIA/IWM/SOXX | 12 | Every 5 min (configurable) | Most-viewed stocks, need freshest data |
+| **Tier-2** | Rest of Nasdaq-100 + key ETFs | ~81 | Every 20 min (configurable) | Broad coverage, less time-sensitive |
+| **Cold** | Everything else | ∞ | On-demand | User clicks → API fetch → cache 5 min, no DB |
+
+Tiers control **which tickers** are fetched; the **source cadence** (Google every cycle,
+Massive every ~60 min) is an independent axis — see Source Strategy above.
 
 Tier definitions + intervals: `data/news/constants.py` (reads from `.env`)
 
@@ -102,21 +125,34 @@ CREATE TABLE news_articles (
 
 ### Scheduler (`data/news/scheduler.py`)
 
-Runs as a backend lifespan thread (same pattern as earnings, celebrity holdings):
-1. **Startup**: full ingest of all ~93 hot tickers
-2. **Every TIER1_INTERVAL** (default 15 min): tier-1 only (12 tickers)
-3. **Every TIER2_INTERVAL** (default 60 min): tier-1 + tier-2 (all 93)
+Runs as a backend lifespan thread (same pattern as earnings, celebrity holdings). It drives
+**two independent axes** — which tickers, and whether Massive is layered on:
 
-The tick ratio is dynamically computed: `tier2_every_n = round(TIER2_INTERVAL / TIER1_INTERVAL)`.
+1. **Startup**: full ingest of all ~93 hot tickers **with Massive** (so summaries/images are
+   populated from the first cycle).
+2. **Every TIER1_INTERVAL** (default 5 min): tier-1 (12 tickers).
+3. **Every TIER2_INTERVAL** (default 20 min): tier-1 + tier-2 (all ~93).
+4. **Source cadence**: Google RSS runs on every cycle; Massive is switched on only every
+   `MASSIVE_INTERVAL` (default 60 min). On a Massive tick the log reads `Google+Massive`,
+   otherwise `Google-only`.
+
+Tick ratios are computed dynamically:
+`tier2_every_n = round(TIER2_INTERVAL / TIER1_INTERVAL)`,
+`massive_every_n = round(MASSIVE_INTERVAL / TIER1_INTERVAL)`.
 
 ### Ingest Flow (`data/news/ingest.py`)
 
+`ingest_tickers(..., include_massive=True)` — when `include_massive=False` it is a pure
+Google pass (the high-frequency path); the scheduler flips it on for the periodic
+enrichment cycle.
+
 ```
 For each batch of 10 tickers:
-  1. fetch_massive(batch, limit=50)          # ticker.any_of=NVDA,AAPL,...
-     └─ if empty → fetch_google_rss(batch)   # free fallback (UTC-forced timestamps)
-        └─ if empty → fetch_finnhub(each)    # last resort, rate-limited 25/min
-  2. Distribute articles to tickers they mention
+  1. Google RSS: one ticker-scoped query PER ticker (always)   # results map straight to t
+     + Massive batch (only when include_massive):              # ticker.any_of=NVDA,AAPL,...
+       distributed by each article's ticker tags
+     → both lists MERGED (not fallback)
+  2. Finnhub(each) — only for tickers still empty after both   # last resort, 25/min
   3. FinBERT score each headline per ticker:
      "NVDA: Intel Surges on Google Foundry Order" → negative for NVDA
      "INTC: Intel Surges on Google Foundry Order" → positive for INTC
@@ -135,22 +171,30 @@ For each batch of 10 tickers:
 ### CLI
 
 ```bash
-python -m data.news.ingest                  # all hot tickers
+python -m data.news.ingest                  # all hot tickers (Google + Massive)
 python -m data.news.ingest --tier 1         # tier-1 only (MAG7 + top ETFs)
 python -m data.news.ingest --tier 2         # tier-2 only
 python -m data.news.ingest --ticker NVDA    # single ticker
+python -m data.news.ingest --google-only    # skip Massive — pure Google RSS pass
 python -m data.news.ingest --dry-run        # fetch + score, no DB write
 ```
 
 ## API Endpoints
 
+All hot/company cache entries are dropped by `invalidate_news_cache()` after each ingest
+cycle that wrote new rows (the scheduler runs in-process), so fresh articles are served
+immediately rather than waiting for the TTL.
+
 ### `GET /api/news/market`
 
-General market news. Fallback: Massive → Google RSS → Finnhub. Cached 5 min.
+General market news. Fallback: Massive → Google RSS → Finnhub. Cached 2 min; also dropped
+on ingest (a completed cycle means the upstream APIs have fresher headlines too, so the
+next request re-pulls live).
 
 ### `GET /api/news/hot`
 
-DB-stored hot-ticker news (last 7 days). Falls back to API chain if DB empty. Cached 5 min.
+DB-stored hot-ticker news (last 7 days). Falls back to API chain if DB empty. Cached 2 min
+(short backstop — the cache is invalidated on ingest, so this only bounds out-of-process drift).
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
@@ -159,12 +203,13 @@ DB-stored hot-ticker news (last 7 days). Falls back to API chain if DB empty. Ca
 
 ### `GET /api/news/{ticker}`
 
-Per-ticker news. Hot tickers → DB first → API fallback. Cold → API only (Massive → Google → Finnhub). Cached 10 min.
+Per-ticker news. Hot tickers → DB first → API fallback. Cold → API only (Massive → Google → Finnhub). Cached 5 min.
 
 | Param | Type | Default | Description |
 |-------|------|---------|-------------|
 | `days` | int | 7 | Lookback window (1-30) |
 | `limit` | int | 20 | Max articles (1-50) |
+| `fresh` | bool | false | Overlay a live Google News RSS pull on top of DB/cached rows so the viewed ticker is as up-to-date as the chat agent. On the hot path it merges live items into the DB result (deduped by URL, DB rows keep their stored scores); on the cold path it bypasses the cache to force a live fetch. Live items are FinBERT-scored on the fly. Used by the News page for the ticker the user is actively viewing. |
 
 ### Unified Response Shape
 
@@ -193,9 +238,32 @@ All endpoints return the same article format:
 - Fetches `GET /api/news/hot?limit=100` via React Query (5-min stale time)
 - Falls back to `/api/news/market` if `/hot` returns empty
 - **Diversified**: max `NEWS_MAX_PER_TICKER_FEED` (default 3) articles per ticker
-- Ticker search: type a symbol → switches to `GET /api/news/{ticker}`
+- Ticker search: type a symbol → switches to `GET /api/news/{ticker}?fresh=true`
+  (60-sec stale time + refetch on focus) so the viewed ticker gets near-real-time,
+  chat-agent-level freshness via the live Google RSS overlay
 - Clickable ticker tags in articles → filters to that ticker
 - Sentiment filter tabs (all/bullish/bearish/neutral)
+
+#### Featured hero — image-quality gate
+
+The market view promotes a "hero" story (1 large card + 2 small). The large card is the
+only slot that renders an image, so it must not show a pixelated thumbnail:
+
+- Candidate images are **probed client-side** for real resolution via `new window.Image()`
+  (`naturalWidth`/`naturalHeight`). Only images `>= MIN_IMG_W x MIN_IMG_H` (400×200) are
+  eligible; low-res or broken images are excluded.
+- `scoreFeatured` awards the image bonus **only** for a validated high-res image — a low-res
+  one ranks no better than no image at all.
+- Hero selection prefers a story with a validated image **and** a real summary (so the large
+  card isn't bare), then falls back to validated-image-only, then to text-only.
+- Any low-res/broken image is stripped before render, so a sub-threshold image is never shown
+  — the slot degrades to text-only or another story is featured instead.
+- Feed cards guard against empty `summary` (Google-sourced rows have no summary) so there is
+  no blank gap.
+
+Since Google is the freshness baseline (no summary/image) and Massive is the periodic
+enrichment layer, the hero naturally lands on a Massive-enriched story (image + summary)
+while the rest of the feed stays fresh from Google.
 
 ### Signal Detail Page (`/signals/[ticker]`)
 
@@ -209,12 +277,12 @@ All endpoints return the same article format:
 ```
 data/news/
 ├── __init__.py
-├── constants.py      # TIER1/TIER2 tickers, intervals, limits (env-configurable)
-├── ingest.py         # fetch + FinBERT score + store (Massive → Google → Finnhub)
-└── scheduler.py      # lifespan thread: startup + tiered periodic
+├── constants.py      # TIER1/TIER2 tickers, intervals (incl. Massive cadence), limits
+├── ingest.py         # fetch + FinBERT score + store (Google baseline + Massive enrich)
+└── scheduler.py      # lifespan thread: startup + tiered periodic + Google/Massive cadence
 
 backend/app/api/routes/
-└── news.py           # /market, /hot, /{ticker} (DB → API fallback chain)
+└── news.py           # /market, /hot, /{ticker} (DB → API; {ticker}?fresh live overlay)
 
 ml/inference/
 └── finbert_scorer.py # FinBERTScorer singleton (ProsusAI/finbert, GPU)
@@ -228,12 +296,13 @@ frontend/src/app/
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `MASSIVE_API_KEY` | Yes (primary) | — | Massive paid plan — news, reference, market cap |
+| `MASSIVE_API_KEY` | Recommended | — | Massive paid plan — enriches news with summary/image/tags (low-freq). Without it, the pipeline runs Google-only and the feed has no summaries/images. |
 | `MASSIVE_BASE_URL` | No | `https://api.massive.com` | Massive API endpoint |
 | `FINNHUB_API_KEY` | Recommended | — | Free tier — shared with earnings, realtime WS |
 | `FINNHUB_BASE_URL` | No | `https://finnhub.io/api/v1` | Finnhub API endpoint |
-| `NEWS_TIER1_INTERVAL_MIN` | No | `15` | Tier-1 fetch interval (minutes) |
-| `NEWS_TIER2_INTERVAL_MIN` | No | `60` | Tier-2 fetch interval (minutes) |
+| `NEWS_TIER1_INTERVAL_MIN` | No | `5` | Tier-1 fetch interval (minutes) |
+| `NEWS_TIER2_INTERVAL_MIN` | No | `20` | Tier-2 fetch interval (minutes) |
+| `NEWS_MASSIVE_INTERVAL_MIN` | No | `60` | How often Massive is layered on top of Google (minutes) |
 | `NEWS_MAX_PER_TICKER` | No | `50` | Max articles per ticker in DB |
 | `NEWS_MAX_PER_TICKER_FEED` | No | `3` | Max articles per ticker on /news page |
 | `NEXT_PUBLIC_NEWS_MAX_PER_TICKER_FEED` | No | `3` | Same value, exposed to Next.js |

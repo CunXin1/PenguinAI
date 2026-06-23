@@ -78,6 +78,50 @@ class TestOrchestrator:
         assert len(agent.output_guardrails) == 1
 
 
+class TestResearchCardIsolation:
+    """Regression: research sub-agents must not mutate the orchestrator's card_sink.
+
+    Previously research_ticker / analyze_watchlist set the SHARED ``ctx.card_sink = None``
+    for the sub-agent's duration. If the orchestrator ran another card-emitting tool
+    CONCURRENTLY in the same turn, the runner hit ``len(None)`` on the shared sink and
+    crashed the stream (and the sibling tool's card was silently dropped). The fix runs
+    each sub-agent on an isolated context so the orchestrator's sink is never touched.
+    """
+
+    async def test_subagent_runs_on_isolated_context(self, monkeypatch):
+        from ml.inference.agents import research as R
+
+        captured: dict = {}
+
+        class _FakeResult:
+            final_output = R.TickerVerdict(
+                ticker="AAPL", stance="neutral", confidence=0.5, summary="ok"
+            )
+
+        async def fake_run(agent, inp, *, context, max_turns):
+            captured["ctx"] = context
+            # The sub-agent would try to emit cards; its isolated sink is None → no-op.
+            if context.card_sink is not None:
+                context.card_sink.append({"card": "chart", "data": {"ticker": "AAPL"}})
+            return _FakeResult()
+
+        monkeypatch.setattr(R.Runner, "run", fake_run)
+
+        orch_sink: list[dict] = []
+        ctx = ChatContext(user_id="u1", db=object(), card_sink=orch_sink)
+        out = await R._research("AAPL", ctx)
+
+        assert out["ticker"] == "AAPL"
+        # Sub-agent got an ISOLATED context: cards suppressed, identity + db_lock shared.
+        assert captured["ctx"] is not ctx
+        assert captured["ctx"].card_sink is None
+        assert captured["ctx"].user_id == "u1"
+        assert captured["ctx"].db_lock is ctx.db_lock
+        # The orchestrator's live sink object was never swapped to None nor mutated.
+        assert ctx.card_sink is orch_sink
+        assert orch_sink == []
+
+
 @pytest.mark.asyncio
 async def test_disabled_chat_returns_error_event(monkeypatch):
     from ml.core.config import ml_settings

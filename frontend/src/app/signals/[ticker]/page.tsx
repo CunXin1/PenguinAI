@@ -258,11 +258,31 @@ export default function SignalDetailPage({ params }: Props) {
             <p className="text-xs text-zinc-400 dark:text-zinc-600">This usually takes a few seconds.</p>
           </div>
         </Card>
+      ) : view === "error" ? (
+        <Card className="h-56 grid place-items-center text-center">
+          <div className="flex flex-col items-center gap-3">
+            <span className="w-10 h-10 rounded-full bg-red-500/10 border border-red-500/30 grid place-items-center">
+              <AlertTriangle size={18} className="text-red-500 dark:text-red-400" />
+            </span>
+            <p className="text-sm text-zinc-700 dark:text-zinc-300">
+              Couldn&apos;t load the signal for{" "}
+              <span className="font-mono font-semibold">{T}</span>. The service may be busy.
+            </p>
+            <button
+              onClick={() => setAttempt((a) => a + 1)}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-200 dark:hover:bg-zinc-700/60 transition-colors"
+            >
+              <RotateCw size={13} /> Retry
+            </button>
+          </div>
+        </Card>
       ) : !signal ? (
         <div className="h-56 rounded-xl bg-zinc-100 dark:bg-zinc-900/60 animate-pulse" />
       ) : (
         <SignalCard signal={signal} />
       )}
+
+      {covered && <KeyStats ticker={T} />}
 
       {covered && tickerNews && tickerNews.length > 0 && (
         <Card className="p-4">
@@ -344,7 +364,9 @@ export default function SignalDetailPage({ params }: Props) {
             ? "Waiting on live ML output…"
             : view === "locked"
               ? `Signal locked — requires the ${requiredTier} plan.`
-              : "Demo signal — connect the backend for live ML output."}
+              : view === "error"
+                ? "Signal service unavailable — please retry."
+                : ""}
       </p>
     </div>
   );

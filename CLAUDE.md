@@ -359,7 +359,7 @@ docs/admin-dashboard.md            — full admin dashboard documentation (中�
 The following are **not** in the Celery beat schedule — they run via backend lifespan threads (startup + periodic). Celery tasks remain defined for manual invocation:
 - **Earnings** (`fetch_earnings`): startup + 2×/weekday (08:00 ET pre-market, 18:00 ET post-market). See `docs/earnings.md`.
 - **Celebrity holdings** (`fetch_congress_trades`, `fetch_13f_filings`, `fetch_ark_trades`): startup + daily 19:00 ET.
-- **News** (`data.news.scheduler`): startup full ingest + tier-1 (MAG7 + top ETFs) every 15 min + tier-2 (rest) every 60 min. Source priority: Massive (paid) → Google News RSS (free) → Finnhub (free tier, last resort). FinBERT scores each headline per ticker.
+- **News** (`data.news.scheduler`): startup full ingest + tier-1 (MAG7 + top ETFs) every 5 min + tier-2 (rest) every 20 min. Split-frequency, Google-primary: Google News RSS (free, near-real-time) merged every cycle as the freshness baseline; Massive (paid) layered on every ~60 min for summary/image/ticker tags; Finnhub (free tier) last resort for empty tickers. FinBERT scores each headline per ticker. `GET /api/news/{ticker}?fresh=true` overlays a live Google pull for the viewed ticker. See `docs/news-module.md`.
 
 ## Data Sources
 
@@ -373,8 +373,8 @@ The following are **not** in the Celery beat schedule — they run via backend l
 | SEC EDGAR 13F/13D | Institutional holdings (Buffett, Soros, Dalio, Ackman) + Trump DJT | `data/celebrity/sec_13f.py` | ✅ live (daily auto-fetch) |
 | Quiver Quant | Congressional trades (Pelosi, Tuberville, MTG, Crenshaw) | `data/celebrity/congress.py` | ✅ live (daily auto-fetch) |
 | arkfunds.io | ARK Invest daily trades (Cathie Wood) | `data/celebrity/ark.py` | ✅ live (daily auto-fetch) |
-| Massive — news | Hot-ticker news headlines + sentiment | `data/news/ingest.py` → `news_articles` hypertable | ✅ live (startup + tiered periodic) |
-| Google News RSS | Free news fallback (no API key, no sentiment) | `data/news/ingest.py`, `backend/app/api/routes/news.py` | ✅ live (fallback) |
+| Massive — news | Hot-ticker news enrichment: summary + image + ticker tags + sentiment | `data/news/ingest.py` → `news_articles` hypertable | ✅ live (low-freq enrichment, ~60 min) |
+| Google News RSS | Primary news source: free, no key, near-real-time (no summary/image) | `data/news/ingest.py`, `backend/app/api/routes/news.py` | ✅ live (baseline, every cycle) |
 | Finnhub — news | Company news (free tier, 60 req/min) | `data/news/ingest.py` (last resort only) | ✅ live (last resort) |
 | Federal Reserve | FOMC statements + hawk/dove scores (FinBERT) | `data/fomc/` (scraper + scorer + loader) → `fomc_statements` | ✅ live (`make fetch-fomc`) |
 | CNN — Fear & Greed | Stock-market Fear & Greed Index (7-factor) + VIX/VVIX volatility | `data/fear_greed/` (CNN + CBOE/Yahoo/FRED) → `fear_greed_index`/`volatility_index`; `fng-sched` thread (startup + session-aware: 8 min regular session, 15 min pre/after, 60 min off-session, forced pull at open/close boundaries; staleness guard; publishes health to `app.state.fng_health` → admin data-source panel, flags CNN-down/VIX-proxy fallback); multi-year real-CNN history backfilled via `scripts/backfill_fear_greed.py` (CNN graphdata serves history back to ~2020-09 when a start date is in the path) | ✅ live |

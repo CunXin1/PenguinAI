@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from typing import Literal
 
 from agents import Agent, RunContextWrapper, Runner, function_tool
@@ -61,12 +62,21 @@ def build_ticker_research_agent() -> Agent[ChatContext]:
 
 
 async def _research(ticker: str, ctx: ChatContext) -> dict | None:
-    """Run the research sub-agent for one ticker → verdict dict (or an error dict)."""
+    """Run the research sub-agent for one ticker → verdict dict (or an error dict).
+
+    The sub-agent runs on an ISOLATED context (``card_sink=None``) so its many data
+    fetches don't spam the UI. ``replace`` shares db / db_lock / user_id with the
+    orchestrator but gives the sub-agent its own card sink — so the orchestrator's
+    live ``card_sink`` list is never mutated, even when this runs CONCURRENTLY with
+    other orchestrator tool calls (which previously nulled the shared sink and could
+    crash the stream with ``len(None)`` / silently drop a sibling tool's card).
+    """
+    sub_ctx = replace(ctx, card_sink=None)
     try:
         result = await Runner.run(
             build_ticker_research_agent(),
             f"Analyze {ticker}.",
-            context=ctx,
+            context=sub_ctx,
             max_turns=RESEARCH_MAX_TURNS,
         )
         v = result.final_output
@@ -85,12 +95,9 @@ async def research_ticker(w: RunContextWrapper[ChatContext], ticker: str) -> dic
     ctx = w.context
     if ctx.db is None:
         return {"error": "unavailable", "detail": "no data connection"}
-    saved = ctx.card_sink
-    ctx.card_sink = None  # the sub-agent gathers lots of data; don't spam cards from it
-    try:
-        v = await _research(ticker.upper(), ctx)
-    finally:
-        ctx.card_sink = saved
+    # _research isolates card emission on its own sub-context; the orchestrator's
+    # card_sink is left untouched (no shared-state mutation, concurrency-safe).
+    v = await _research(ticker.upper(), ctx)
     return v or {"ticker": ticker.upper(), "error": "research_failed"}
 
 
@@ -105,23 +112,24 @@ async def analyze_watchlist(w: RunContextWrapper[ChatContext]) -> dict:
         return {"error": "auth_required", "detail": "log in to use your watchlist"}
     if ctx.db is None:
         return {"error": "unavailable", "detail": "no data connection"}
-    saved = ctx.card_sink
-    ctx.card_sink = None  # synthesis output, not cards
-    try:
-        async with ctx.db_lock:
-            wl = await _get_watchlist({}, ctx)
-        tickers = [r["ticker"] for r in wl.get("watchlist", [])]
-        if not tickers:
-            return {"error": "empty_watchlist", "detail": "your watchlist is empty"}
-        capped = tickers[:MAX_FANOUT]
-        verdicts = await asyncio.gather(*[_research(t, ctx) for t in capped])
-    finally:
-        ctx.card_sink = saved
+    async with ctx.db_lock:
+        wl = await _get_watchlist({}, ctx)
+    tickers = [r["ticker"] for r in wl.get("watchlist", [])]
+    if not tickers:
+        return {"error": "empty_watchlist", "detail": "your watchlist is empty"}
+    capped = tickers[:MAX_FANOUT]
+    # Each sub-agent runs on its own isolated context (see _research), so fanning out
+    # never touches the orchestrator's card_sink.
+    verdicts = await asyncio.gather(*[_research(t, ctx) for t in capped])
     ok = [v for v in verdicts if isinstance(v, dict) and not v.get("error")]
     return {
         "analyzed": len(ok),
         "total_in_watchlist": len(tickers),
-        "note": f"analyzed first {MAX_FANOUT}" if len(tickers) > MAX_FANOUT else "analyzed all",
+        "note": (
+            f"analyzed first {len(capped)} of {len(tickers)}"
+            if len(tickers) > MAX_FANOUT
+            else "analyzed all"
+        ),
         "verdicts": ok,
     }
 

@@ -113,8 +113,12 @@ async def run_stream(user_message: str, ctx: ChatContext, history: list[dict] | 
                     yield {"type": "tool", "name": name}
                 elif ev.item.type == "tool_call_output_item":
                     # The tool has run; flush any cards it recorded, in order.
-                    while emitted_cards < len(ctx.card_sink):
-                        card = ctx.card_sink[emitted_cards]
+                    # `or []` is defensive — a sub-agent runs on an isolated context,
+                    # so the orchestrator's sink is never None here, but never crash a
+                    # live stream on a card-sink toggle.
+                    sink = ctx.card_sink or []
+                    while emitted_cards < len(sink):
+                        card = sink[emitted_cards]
                         emitted_cards += 1
                         key = (card["card"], str(card["data"].get("ticker", "")))
                         if key in seen_cards:
