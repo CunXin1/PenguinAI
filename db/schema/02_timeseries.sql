@@ -84,6 +84,10 @@ CREATE TABLE IF NOT EXISTS bars_10m (
 );
 SELECT create_hypertable('bars_10m', by_range('ts', INTERVAL '1 week'), if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS bars_10m_instrument_ts_desc_idx ON bars_10m (instrument_id, ts DESC);
+-- bars_10m only backs the 1W chart range, which needs ~2 weeks of history. Drop
+-- older chunks so this rolled-forward table doesn't grow without bound (unlike the
+-- bulk-loaded bars_30m / bars_1d, which are kept indefinitely).
+SELECT add_retention_policy('bars_10m', INTERVAL '60 days', if_not_exists => TRUE);
 
 -- ── Daily bars + indicators + multi-horizon returns (macro context) ──────────
 CREATE TABLE IF NOT EXISTS bars_1d (

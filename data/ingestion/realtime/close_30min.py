@@ -1,10 +1,12 @@
-"""After-close + after-hours 30-min refresh.
+"""After-close + after-hours intraday-bar refresh (30-min AND 10-min).
 
-At ~16:05 and ~20:05 ET on weekdays, pull today's 30-min bars from Massive
-(raw via adjusted=false, split-adjusted via adjusted=true), upsert into bars_30m,
-recompute indicators over a recent window, and fall back to Yahoo if Massive
-returns nothing for a symbol. Keeps the imported 30-min table current with the
-just-closed session for the watched universe.
+At ~16:05 and ~20:05 ET on weekdays, pull today's bars from Massive (raw via
+adjusted=false, split-adjusted via adjusted=true), upsert into bars_30m AND
+bars_10m, recompute indicators over a recent window, and fall back to Yahoo if
+Massive returns nothing (30-min only — yfinance has no 10-min interval). Keeps
+both intraday tables current with the just-closed session for the watched
+universe. bars_10m backs the 1W chart range, which otherwise would not see the
+current session until the nightly freshness backfill at 18:30 ET.
 """
 
 from __future__ import annotations
@@ -27,34 +29,49 @@ _RUN_HOURS = (16, 20)  # ET hours to run (close + post-market close), minute :05
 _INSTR_SQL = text(
     "SELECT instrument_id FROM instruments WHERE symbol = :s ORDER BY instrument_id LIMIT 1"
 )
-_RECENT_SQL = text(
-    "SELECT ts AS time, adj_open AS open, adj_high AS high, adj_low AS low, "
-    "adj_close AS close, adj_volume AS volume FROM bars_30m "
-    "WHERE instrument_id = :iid ORDER BY ts DESC LIMIT 400"
+
+
+def _build_sql(table: str) -> tuple:
+    """(recent, upsert, ind_update) SQL for a bars_30m / bars_10m table — both share
+    the identical column layout, so the only difference is the table name."""
+    recent = text(
+        f"SELECT ts AS time, adj_open AS open, adj_high AS high, adj_low AS low, "
+        f"adj_close AS close, adj_volume AS volume FROM {table} "
+        f"WHERE instrument_id = :iid ORDER BY ts DESC LIMIT 400"
+    )
+    upsert = text(
+        f"""
+        INSERT INTO {table} (ts, instrument_id, rth,
+            raw_open, raw_high, raw_low, raw_close, raw_volume,
+            adj_open, adj_high, adj_low, adj_close, adj_volume)
+        VALUES (:ts, :iid, :rth,
+            :raw_open, :raw_high, :raw_low, :raw_close, :raw_volume,
+            :adj_open, :adj_high, :adj_low, :adj_close, :adj_volume)
+        ON CONFLICT (ts, instrument_id) DO UPDATE SET
+            rth = EXCLUDED.rth,
+            raw_open = EXCLUDED.raw_open, raw_high = EXCLUDED.raw_high,
+            raw_low = EXCLUDED.raw_low, raw_close = EXCLUDED.raw_close,
+            raw_volume = EXCLUDED.raw_volume,
+            adj_open = EXCLUDED.adj_open, adj_high = EXCLUDED.adj_high,
+            adj_low = EXCLUDED.adj_low, adj_close = EXCLUDED.adj_close,
+            adj_volume = EXCLUDED.adj_volume, updated_at = now()
+        """
+    )
+    ind_update = text(
+        f"UPDATE {table} SET "
+        + ", ".join(f"{c} = :{c}" for c in _IND_COLS if c != "rth")
+        + " WHERE instrument_id = :iid AND ts = :ts"
+    )
+    return recent, upsert, ind_update
+
+
+# (table, bucket-minutes, yahoo-interval | None). bars_10m has no Yahoo fallback —
+# yfinance offers no 10-minute interval, so it is Massive-only.
+_TABLES = (
+    ("bars_30m", 30, "30m"),
+    ("bars_10m", 10, None),
 )
-_UPSERT_SQL = text(
-    """
-    INSERT INTO bars_30m (ts, instrument_id, rth,
-        raw_open, raw_high, raw_low, raw_close, raw_volume,
-        adj_open, adj_high, adj_low, adj_close, adj_volume)
-    VALUES (:ts, :iid, :rth,
-        :raw_open, :raw_high, :raw_low, :raw_close, :raw_volume,
-        :adj_open, :adj_high, :adj_low, :adj_close, :adj_volume)
-    ON CONFLICT (ts, instrument_id) DO UPDATE SET
-        rth = EXCLUDED.rth,
-        raw_open = EXCLUDED.raw_open, raw_high = EXCLUDED.raw_high,
-        raw_low = EXCLUDED.raw_low, raw_close = EXCLUDED.raw_close,
-        raw_volume = EXCLUDED.raw_volume,
-        adj_open = EXCLUDED.adj_open, adj_high = EXCLUDED.adj_high,
-        adj_low = EXCLUDED.adj_low, adj_close = EXCLUDED.adj_close,
-        adj_volume = EXCLUDED.adj_volume, updated_at = now()
-    """
-)
-_IND_UPDATE_SQL = text(
-    "UPDATE bars_30m SET "
-    + ", ".join(f"{c} = :{c}" for c in _IND_COLS if c != "rth")
-    + " WHERE instrument_id = :iid AND ts = :ts"
-)
+_SQL = {table: _build_sql(table) for table, _, _ in _TABLES}
 
 
 def _rth(ts_utc: datetime) -> bool:
@@ -63,15 +80,16 @@ def _rth(ts_utc: datetime) -> bool:
     return 9 * 60 + 30 <= m < 16 * 60
 
 
-async def _massive_30m(client, base, key, sym, day) -> dict[int, dict]:
-    """{t_ms: {raw/adj OHLCV}} merging adjusted=false (raw) + adjusted=true (adj)."""
+async def _massive_agg(client, base, key, sym, day, mult: int) -> dict[int, dict]:
+    """{t_ms: {raw/adj OHLCV}} for `mult`-minute bars, merging adjusted=false (raw)
+    + adjusted=true (adj)."""
     # Trailing range (not single {day}/{day}): a no-data current day 403s; a few
     # days back always spans the latest session. ON CONFLICT dedupes re-fetched days.
     frm = (datetime.fromisoformat(day).date() - timedelta(days=3)).isoformat()
     out: dict[int, dict] = {}
     for adjusted, pfx in (("false", "raw"), ("true", "adj")):
         url = (
-            f"{base}/v2/aggs/ticker/{sym}/range/30/minute/{frm}/{day}"
+            f"{base}/v2/aggs/ticker/{sym}/range/{mult}/minute/{frm}/{day}"
             f"?adjusted={adjusted}&sort=asc&limit=50000&apiKey={key}"
         )
         try:
@@ -123,9 +141,9 @@ def _yahoo_30m(sym: str) -> dict[int, dict]:
     return out
 
 
-async def _refresh_indicators(engine, iid: int) -> None:
+async def _refresh_indicators(engine, iid: int, recent_sql, ind_sql) -> None:
     async with engine.connect() as conn:
-        rows = (await conn.execute(_RECENT_SQL, {"iid": iid})).mappings().all()
+        rows = (await conn.execute(recent_sql, {"iid": iid})).mappings().all()
     if len(rows) < 2:
         return
     df = pd.DataFrame(rows).iloc[::-1].reset_index(drop=True)
@@ -145,17 +163,14 @@ async def _refresh_indicators(engine, iid: int) -> None:
         params.append(rec)
     if params:
         async with engine.begin() as conn:
-            await conn.execute(_IND_UPDATE_SQL, params)
+            await conn.execute(ind_sql, params)
 
 
-async def refresh_symbol(engine, client, base, key, sym: str, day: str) -> int:
-    async with engine.connect() as conn:
-        iid = (await conn.execute(_INSTR_SQL, {"s": sym})).scalar()
-    if iid is None:
-        return 0
-    bars = await _massive_30m(client, base, key, sym, day)
-    if not bars:
-        bars = await asyncio.to_thread(_yahoo_30m, sym)  # fallback
+async def _refresh_table(engine, client, base, key, sym, day, iid, table, mult, yf_interval) -> int:
+    recent_sql, upsert_sql, ind_sql = _SQL[table]
+    bars = await _massive_agg(client, base, key, sym, day, mult)
+    if not bars and yf_interval:
+        bars = await asyncio.to_thread(_yahoo_30m, sym)  # 30m-only fallback
     rows = []
     for t_ms, v in sorted(bars.items()):
         ts = datetime.fromtimestamp(t_ms / 1000.0, tz=UTC)
@@ -176,9 +191,25 @@ async def refresh_symbol(engine, client, base, key, sym: str, day: str) -> int:
     if not rows:
         return 0
     async with engine.begin() as conn:
-        await conn.execute(_UPSERT_SQL, rows)
-    await _refresh_indicators(engine, iid)
+        await conn.execute(upsert_sql, rows)
+    await _refresh_indicators(engine, iid, recent_sql, ind_sql)
     return len(rows)
+
+
+async def refresh_symbol(engine, client, base, key, sym: str, day: str) -> int:
+    async with engine.connect() as conn:
+        iid = (await conn.execute(_INSTR_SQL, {"s": sym})).scalar()
+    if iid is None:
+        return 0
+    total = 0
+    for table, mult, yf_interval in _TABLES:
+        try:
+            total += await _refresh_table(
+                engine, client, base, key, sym, day, iid, table, mult, yf_interval
+            )
+        except Exception as exc:  # noqa: BLE001 — one table failing must not skip the other
+            logger.error("%s refresh %s: %r", table, sym, exc)
+    return total
 
 
 async def run_once(engine, settings, symbols: list[str]) -> int:
@@ -200,7 +231,9 @@ async def run_once(engine, settings, symbols: list[str]) -> int:
                     logger.error("30m refresh %s: %r", s, exc)
                     return 0
         total = sum(await asyncio.gather(*(one(s) for s in symbols)))
-    logger.info("30m refresh (%s): %d bars across %d symbols", day, total, len(symbols))
+    logger.info(
+        "intraday refresh (%s): %d bars (30m+10m) across %d symbols", day, total, len(symbols)
+    )
     return total
 
 
@@ -219,7 +252,7 @@ def _next_run_delay(now_et: datetime) -> float:
 async def run(engine, settings, stop, symbols_fn) -> None:
     """Sleep until the next scheduled ET slot, then refresh. symbols_fn() returns
     the watched symbols at run time."""
-    logger.info("30m close refresh scheduler up (runs %s:05 ET weekdays)", _RUN_HOURS)
+    logger.info("intraday (30m+10m) close refresh scheduler up (runs %s:05 ET weekdays)", _RUN_HOURS)
     while not stop.is_set():
         delay = _next_run_delay(datetime.now(ET))
         try:

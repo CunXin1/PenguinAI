@@ -436,6 +436,25 @@ async def check_and_backfill_once(stop: threading.Event) -> dict:
                         )
                     ).scalar()
 
+                    # A symbol whose live feed died days ago still HAS 1-min rows
+                    # (just old ones), so the rollup below produces nothing new and
+                    # it would silently stay stale forever. Detect that and fall
+                    # back to Massive too — `has_1min` alone is not "is fresh".
+                    if has_1min and await _is_stale(db, iid):
+                        try:
+                            m30, m1d = await _massive_fallback(db, sym, iid, stop)
+                            await db.commit()
+                            n30 += m30
+                            n1d += m1d
+                            if m30 or m1d:
+                                massive += 1
+                        except Exception:
+                            await db.rollback()
+                            logger.warning(
+                                "freshness: stale-feed Massive fallback failed for %s",
+                                sym, exc_info=True,
+                            )
+
                     if has_1min:
                         # 30-min, 10-min and daily commit independently so one
                         # failing never rolls back the others.

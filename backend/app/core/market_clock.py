@@ -10,10 +10,8 @@ endpoint and the heatmap so every surface agrees on ONE answer.
 from __future__ import annotations
 
 import logging
-import threading
 from datetime import UTC, datetime
 from datetime import time as dtime
-from time import monotonic
 from zoneinfo import ZoneInfo
 
 import exchange_calendars as xcals
@@ -116,36 +114,29 @@ def next_session_open(now_utc: datetime | None = None) -> datetime | None:
 
 
 _LIVE_WINDOW_S = 360.0
-_tick_lock = threading.Lock()
-
-
-class _TickState:
-    __slots__ = ("max_tick", "advanced_at")
-
-    def __init__(self):
-        self.max_tick: datetime | None = None
-        self.advanced_at: float | None = None
-
-
-_tick_state = _TickState()
 
 
 def ticks_advancing(latest_tick: datetime | None) -> bool:
-    """True if the newest minute bar grew within the last _LIVE_WINDOW_S seconds.
+    """True if the newest minute bar is recent — i.e. the live feed is flowing.
 
-    Thread-safe: uses a lock to ensure atomic read-modify-write of the shared state.
+    STATELESS: compares the bar's own timestamp to wall-clock now, so the answer
+    depends only on the DB row, not on per-process memory. Two consequences that
+    fix real bugs:
+      - every uvicorn worker (WEB_CONCURRENCY=4) computes the SAME answer from the
+        SAME ``max(time)`` row, so the LIVE/CLOSED badge can no longer flicker
+        depending on which worker served ``/market-data/status``;
+      - there is no cold-start blind spot — a fresh process reports "live"
+        immediately if the latest bar is recent, instead of waiting for the next
+        bar to print before it has a baseline.
+
+    A feed that stalls stops advancing ``latest_tick``, so it ages out of the
+    window naturally. Wall-clock dependence is acceptable: ``get_session_phase``
+    already relies on the system clock, so this introduces no new assumption.
     """
     if latest_tick is None:
         return False
-    mono = monotonic()
-    with _tick_lock:
-        if _tick_state.max_tick is None:
-            _tick_state.max_tick = latest_tick
-        elif latest_tick > _tick_state.max_tick:
-            _tick_state.max_tick = latest_tick
-            _tick_state.advanced_at = mono
-        at = _tick_state.advanced_at
-    return at is not None and (mono - at) <= _LIVE_WINDOW_S
+    now = datetime.now(latest_tick.tzinfo or UTC)
+    return (now - latest_tick).total_seconds() <= _LIVE_WINDOW_S
 
 
 async def get_market_status(db: AsyncSession) -> dict:
@@ -169,6 +160,11 @@ async def get_market_status(db: AsyncSession) -> dict:
         "market_active": is_active,
         "session_phase": phase,
         "session_open": session_open,
+        # Is the live minute feed actually flowing? During a regular session this
+        # is normally true; if both real-time sources die mid-session it goes false
+        # while `session_open` stays true — that gap is what the frontend renders as
+        # a "DELAYED" badge instead of a misleading green "LIVE".
+        "feed_live": advancing,
         "source": "session" if session_open else ("ticks" if advancing else phase.lower()),
         "as_of": now.isoformat(),
         "latest_tick": latest.isoformat() if latest is not None else None,

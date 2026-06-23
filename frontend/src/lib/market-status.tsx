@@ -21,6 +21,9 @@ interface MarketStatusValue {
   isOpen: boolean;
   /** Specific session phase for display (badge label). */
   sessionPhase: SessionPhase;
+  /** True when the session is open but the live feed has stalled/died — the UI
+   *  should show "DELAYED" instead of a misleading "LIVE". False when unknown. */
+  feedStale: boolean;
   /** Next regular open ISO (holiday-aware) when closed; null when open or unknown. */
   nextOpen: string | null;
   isLoading: boolean;
@@ -35,16 +38,26 @@ export function MarketStatusProvider({ children }: { children: React.ReactNode }
     queryKey: ["marketStatus"],
     queryFn: () => marketData.status(),
     refetchInterval: 60_000,
+    // Keep polling while the tab is backgrounded so the badge (and every hook
+    // gated on `isOpen`) is already correct on refocus, rather than lagging a
+    // full interval across an open/close transition.
+    refetchIntervalInBackground: true,
     staleTime: 50_000,
   });
 
   const fallbackPhase = getClientSessionPhase();
   const isOpen = data?.market_active ?? ACTIVE_PHASES.has(fallbackPhase);
   const sessionPhase: SessionPhase = data?.session_phase ?? fallbackPhase;
+  // Regular session per the calendar, but the live feed has stopped advancing →
+  // the data is stale even though the market is "open". Only asserted with real
+  // backend data (the client fallback can't observe the feed).
+  const feedStale = data ? data.session_open && !data.feed_live : false;
   const nextOpen = data?.next_open ?? null;
 
   return (
-    <MarketStatusContext.Provider value={{ status: data, isOpen, sessionPhase, nextOpen, isLoading }}>
+    <MarketStatusContext.Provider
+      value={{ status: data, isOpen, sessionPhase, feedStale, nextOpen, isLoading }}
+    >
       {children}
     </MarketStatusContext.Provider>
   );
@@ -58,6 +71,7 @@ export function useMarketStatus(): MarketStatusValue {
       status: undefined,
       isOpen: ACTIVE_PHASES.has(phase),
       sessionPhase: phase,
+      feedStale: false,
       nextOpen: null,
       isLoading: false,
     };

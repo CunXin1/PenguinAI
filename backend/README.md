@@ -172,7 +172,7 @@ backend/
 
 1. **`is_regular_session(now_utc)`** — Uses the `exchange_calendars` library (`XNYS` calendar) which knows about all NYSE holidays, early closes, and special sessions. Checks whether `now_utc` falls between session open and close times.
 
-2. **`ticks_advancing(latest_tick)`** — Clock-independent fallback. Tracks whether the newest minute bar from `market_data_1min` has actually advanced within the last 360 seconds of monotonic time. Robust to a wrong system clock and can't be fooled by stale data. Thread-safe (uses a lock for shared state).
+2. **`ticks_advancing(latest_tick)`** — Live-feed freshness check. **Stateless**: returns true when the newest `market_data_1min` bar is within the last 360 seconds of wall-clock time. Because the answer derives only from the DB row (no per-process tick memory), every uvicorn worker (`WEB_CONCURRENCY=4`) agrees, so the LIVE/CLOSED badge can't flicker between workers, and a freshly-started process reports correctly without waiting for the next bar. A stalled feed ages out of the window. (`get_market_status` also exposes this as `feed_live`, which the frontend renders as a "DELAYED" badge when the session is open but the feed has stalled.)
 
 **`is_early_close(date)`** — Returns true if a given date is an NYSE early-close session (close before 16:00 ET).
 
@@ -315,8 +315,8 @@ Key packages in `requirements.txt`:
 
 **市场状态检测**
 - 使用 `exchange_calendars` 库（XNYS 日历），包含所有 NYSE 假日、提前收盘等
-- `ticks_advancing` 提供时钟无关的后备检测：只要最新 1 分钟数据在单调时间内持续更新，即判定市场开放
-- `/api/market-data/status` 是前端 LIVE/CLOSED 徽章的唯一数据来源
+- `ticks_advancing` 为无状态实时性检测：最新 1 分钟数据在过去 360 秒内即判定 feed 存活；因结果只取决于数据库行，4 个 uvicorn worker 答案一致，徽章不会跳变
+- `/api/market-data/status` 是前端 LIVE/CLOSED 徽章的唯一数据来源；`feed_live=false`（开盘但 feed 停滞）时前端显示 DELAYED 徽章
 
 **实时数据采集监控 (SupervisorWatchdog)**
 - 在 FastAPI lifespan 中启动 `data.ingestion.realtime.supervisor` 子进程

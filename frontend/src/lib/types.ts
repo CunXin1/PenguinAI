@@ -368,6 +368,7 @@ export interface MarketStatus {
   market_active: boolean; // true during ANY session (pre/regular/after/overnight)
   session_phase: SessionPhase;
   session_open: boolean; // true only during the ET regular session (09:30–16:00)
+  feed_live: boolean; // is the live minute feed flowing (false = stale/dead feed)
   source: string;
   as_of: string;
   latest_tick: string | null;
