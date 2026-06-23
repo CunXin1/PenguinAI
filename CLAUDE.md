@@ -27,6 +27,7 @@ db/schema/  → TimescaleDB + pgvector SQL
 | `market_data_30min` *(view)* | adj OHLCV over `bars_30m` — compat name for app/ML |
 | `market_data_daily` *(view)* | adj OHLCV over `bars_1d` — compat name for macro context |
 | `indicators_30min` *(view)* | model-ready features over `bars_30m` (matches `FEATURE_COLS`) |
+| `indicators_daily` *(view)* | model-ready daily features over `bars_1d` (matches `DAILY_FEATURE_SQL`) — serves the 1m/3m basket models |
 | `market_data_1min`  | Real-time dual-source (IBKR + Finnhub) + Massive minute stream, accumulates forward from today (real table) |
 | `social_posts`      | Twitter VIPs + Reddit WSB, FinBERT-scored, pgvector-embedded |
 | `signal_cache`      | Computed signals with TTL (Top-100: 1h, cold: 4h) |
@@ -42,14 +43,16 @@ db/schema/  → TimescaleDB + pgvector SQL
 
 DuckDB is used ONLY for local ML feature engineering (reads Parquet exports). Never write user or live data to DuckDB.
 
-**Train/serve parity:** training reads the `data/30min_data` parquet via DuckDB; serving reads the `indicators_30min` view. Both derive features through the *same* SQL — `xgboost_trainer.FEATURE_SQL` mirrors `04_compat_views.sql:indicators_30min` — so there is no train/serve skew. Load the parquet into `bars_30m`/`bars_1d` with `make import-30min` (after `make db-init`).
+**Train/serve parity:** training reads the `data/30min_data` (and `data/daily_data`) parquet via DuckDB; serving reads the `indicators_30min` / `indicators_daily` views. Both derive features through the *same* SQL — `xgboost_trainer.FEATURE_SQL`/`DAILY_FEATURE_SQL` mirror `04_compat_views.sql:indicators_30min`/`indicators_daily` — so there is no train/serve skew. Load the parquet into `bars_30m`/`bars_1d` with `make import-30min` (after `make db-init`).
 
 ## Signal Generation Pipeline
 
 ```
-30-min bars → technical features → XGBoost + RF → FinBERT sentiment →
+30-min bars → technical features → XGBoost + RF (global ensemble) →
+multi-horizon basket models (1w / 1m / 3m) → FinBERT sentiment →
 RAG (pgvector, ticker+time filtered) → Gemma 4 Agent 1 (assemble) →
-Gemma 4 Agent 2 (reason, JSON mode locked) → FOMC filter → signal_cache
+Gemma 4 Agent 2 (reason + synthesize horizons, JSON mode locked) →
+FOMC filter → signal_cache
 ```
 
 **Critical:** In the *signal pipeline*, Gemma 4 prompts are 100% backend-assembled —
@@ -205,14 +208,20 @@ Full reference: `docs/ml-specialization.md`. Roadmap context: `docs/roadmap.md` 
     `{basket}__{timeframe}__{label}__{algo}.pkl`. Built: 1w (30m, direction), 1m/3m (1d,
     beat_spy). 1-day deferred until 1-min / aggregated-10-min data lands. Train:
     `python -m ml.scripts.train_basket_models`.
-- Hot-reload via `model_registry.reload()`. Models saved under `MODEL_DIR`.
-- **Known issue + go-forward (B-synthesis):** Top-Signal confidences cluster at ~50%
-  because the single global model's `ensemble_prob` itself clusters at 0.5 (stddev ~0.07).
-  The leakage fix does NOT decluster this (it is honest). The fix is to feed the keyed
-  horizon models into `signal_engine`/`gemma_agent` and have Gemma synthesize all horizons
-  + news/FinBERT + indicators + price/volume + earnings + macro into ONE signal, with
-  confidence = cross-source/cross-horizon agreement (NOT a single near-0.5 probability).
-  Never inflate confidence artificially. (Gemma-framework changes are owned elsewhere.)
+- Hot-reload via `model_registry.reload()` (clears the basket-model cache too). Models
+  saved under `MODEL_DIR`.
+- **Multi-horizon synthesis (B-synthesis, BUILT):** the single global `ensemble_prob`
+  honestly clusters at ~0.5 (stddev ~0.07) — for mega-caps short-horizon direction is
+  near-random — so a 0.55 LONG bar left almost everything NEUTRAL. Fixed by feeding the
+  keyed basket models into the signal path: `model_registry.predict_basket_horizons()`
+  returns `{1w: P(up), 1m/3m: P(beat SPY)}` for a ticker's basket; `signal_engine` loads
+  daily features from the new `indicators_daily` view and passes the horizons to
+  `gemma_agent`, which synthesizes ALL horizons + sentiment + macro into ONE direction
+  (narrowed band 0.52/0.48, NEUTRAL only on genuine cross-horizon conflict) with
+  confidence = cross-horizon/cross-source AGREEMENT (NOT a single near-0.5 prob). The
+  ML-only fallback blends the same horizons. Tickers in no basket (e.g. SPY/QQQ) keep the
+  global-ensemble path. Never inflate confidence artificially. Confidence is no longer
+  shown in the frontend (a high-confidence NEUTRAL read as contradictory to users).
 
 ## User Tiers
 
@@ -422,7 +431,8 @@ Finnhub free tier: 50 symbols, real-time US SIP trades, ~150ms latency.
 
 - **Dark theme only.** Background: zinc-950 (`#09090b`). Never use white backgrounds.
 - LONG signals: emerald green. SHORT signals: red. NEUTRAL: zinc gray.
-- Signal confidence shown as a progress bar, not just a number.
+- Signal confidence is NOT shown to users (a confident NEUTRAL reads as contradictory).
+  `confidence` stays in the API/types + signal_cache for internal use; just don't surface it.
 - TradingView Lightweight Charts for all candlestick charts (package: `lightweight-charts`).
 - API calls via `frontend/src/lib/api.ts` only — never fetch directly from components.
 - Types live in `frontend/src/lib/types.ts`. Keep in sync with backend Pydantic schemas.

@@ -67,6 +67,16 @@ class TestComplianceGuardrail:
         assert info["advice_language"] is False
         assert info["flagged"] is False
 
+    def test_softer_advice_phrasings_are_caught(self):
+        # The broadened patterns should flag these (all advice, no disclaimer).
+        for text in (
+            "Honestly you should consider buying NVDA here.",
+            "I'd buy TSLA before earnings.",
+            "You need to sell that position now.",
+            "Time to load up on AMD.",
+        ):
+            assert assess_compliance(text)["flagged"] is True, text
+
 
 class TestOrchestrator:
     def test_builds_with_full_toolset_and_guardrail(self):

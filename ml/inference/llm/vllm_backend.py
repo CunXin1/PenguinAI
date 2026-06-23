@@ -155,9 +155,14 @@ class VLLMBackend(LLMBackend):
                             slot["name"] = fn["name"]
                         if fn.get("arguments"):
                             slot["arguments"] += fn["arguments"]
+        # Synthesize a stable id when the stream never carried one (some tool parsers omit
+        # it) — an empty tool_call_id breaks correlation on the next round.
         tool_calls = [
-            {"id": s["id"], "function": {"name": s["name"], "arguments": s["arguments"]}}
-            for _, s in sorted(tool_acc.items())
+            {
+                "id": s["id"] or f"call_{idx}",
+                "function": {"name": s["name"], "arguments": s["arguments"]},
+            }
+            for idx, s in sorted(tool_acc.items())
         ]
         yield {
             "type": "final",

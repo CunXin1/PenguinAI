@@ -132,13 +132,20 @@ export default function ChatPage() {
   const removeConversation = useCallback(
     async (id: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      const prev = conversations;
+      const removed = conversations.find((c) => c.id === id);
       setConversations((cs) => cs.filter((c) => c.id !== id));
       if (id === activeId) newChat();
       try {
         await chatApi.deleteConversation(id);
       } catch {
-        setConversations(prev); // restore on failure
+        // Functional reinsert (not a stale snapshot) so a concurrent list update from an
+        // in-flight stream's onDone isn't clobbered. Re-sort by recency to restore order.
+        if (removed)
+          setConversations((cs) =>
+            cs.some((c) => c.id === id)
+              ? cs
+              : [...cs, removed].sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
+          );
       }
     },
     [conversations, activeId, newChat]

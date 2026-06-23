@@ -47,9 +47,13 @@ text-only (no HTML from the model) while the UI stays rich and safe.
 > (B1 as originally written) were **rejected** (overfit: ~16k bars/symbol, very low
 > signal-to-noise). Built instead: per-**basket** × horizon models (`ml/models/baskets.py`
 > `nasdaq10`; 1w on 30m direction, 1m/3m on daily beat-SPY). CV leakage was fixed
-> (`purged_walk_forward_splits`). Still open: registry multi-model serving + global
-> fallback, the 1-day tier (pending 1-min/10-min data), the Gemma multi-horizon
-> *synthesis* that fixes the ~50% confidence clustering, and the frontend horizon switcher.
+> (`purged_walk_forward_splits`). **Now built:** registry multi-model serving
+> (`model_registry.predict_basket_horizons`) + global fallback for non-basket tickers,
+> and the Gemma multi-horizon *synthesis* that fixes the ~50% confidence clustering
+> (`signal_engine` + `gemma_agent`; serves daily features via the `indicators_daily`
+> view; narrowed 0.52/0.48 band; confidence = cross-horizon agreement, no longer shown in
+> the frontend). Still open: the 1-day tier (pending 1-min/10-min data) and the frontend
+> horizon switcher (per-horizon probs are available but not yet surfaced as a UI toggle).
 
 Today there is one global classifier (`ml/models/xgboost_trainer.py`,
 `horizon_bars=16`, ~1.2 trading days). Extend to per-symbol and multi-horizon models.

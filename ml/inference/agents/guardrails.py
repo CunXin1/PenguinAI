@@ -21,10 +21,13 @@ from ml.inference.chat.context import ChatContext
 
 logger = logging.getLogger(__name__)
 
-# Imperative buy/sell direction aimed at the user — the thing we must not do.
+# Imperative buy/sell direction aimed at the user — the thing we must not do. Broad on
+# purpose (the guardrail is non-blocking, so false positives only over-log).
 _ADVICE_RE = re.compile(
-    r"\b(you should (buy|sell|short)|i('| a)?m? recommend(ing)? (buying|selling)|"
-    r"guaranteed|definitely (buy|sell)|can'?t lose|sure thing|you must (buy|sell))\b",
+    r"\b(you (should|ought to|need to|must)( consider)? (buy|sell|short)(ing)?|"
+    r"i('| a)?m? recommend(ing)? (buying|selling|shorting)|i('?d| would) (buy|sell|short)|"
+    r"load up on|back up the truck|"
+    r"guaranteed|definitely (buy|sell)|can'?t lose|sure thing)\b",
     re.IGNORECASE,
 )
 # Any acknowledgement that this is not personalized advice. "not ... advice" tolerates a

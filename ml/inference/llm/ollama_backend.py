@@ -186,14 +186,20 @@ class OllamaBackend(LLMBackend):
                         args = json.loads(args)
                     except (json.JSONDecodeError, TypeError):
                         args = {}
-                calls.append({"function": {"name": fn.get("name", ""), "arguments": args}})
+                call: dict = {"function": {"name": fn.get("name", ""), "arguments": args}}
+                if tc.get("id"):
+                    call["id"] = tc["id"]  # keep id so the tool result can correlate
+                calls.append(call)
             return {"role": "assistant", "content": msg.get("content") or "", "tool_calls": calls}
         if msg.get("role") == "tool":
-            return {
+            out: dict = {
                 "role": "tool",
                 "tool_name": msg.get("name") or msg.get("tool_name") or "",
                 "content": msg.get("content", ""),
             }
+            if msg.get("tool_call_id"):
+                out["tool_call_id"] = msg["tool_call_id"]  # preserve correlation id
+            return out
         return msg
 
     async def health(self) -> bool:

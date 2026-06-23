@@ -111,9 +111,24 @@ dishonest. The real fix is twofold:
    indicators + price/volume + earnings + FOMC/macro — with confidence reflecting
    cross-source agreement, not any single near-0.5 probability.
 
-This is the next build (B-synthesis): feed the keyed horizon models into
-`signal_engine`/`gemma_agent` and recalibrate confidence as agreement across horizons
-and sources. The same per-horizon predictions also back the frontend horizon switcher.
+**Built (B-synthesis).** The keyed horizon models are now wired into the signal path:
+
+- `model_registry.predict_basket_horizons(ticker, feats_by_tf)` resolves the ticker's
+  basket (`baskets.basket_for`) and returns `{1w: P(up), 1m: P(beat SPY), 3m: P(beat SPY)}`,
+  each model predicted via its OWN saved `feature_names_in_`. Empty for non-basket tickers.
+- `signal_engine` loads daily features from the new `indicators_daily` view (mirrors
+  `DAILY_FEATURE_SQL`) and passes the horizons to `gemma_agent`.
+- `gemma_agent` synthesizes ALL horizons + FinBERT + macro into ONE direction with a
+  narrowed band (LONG ≥0.52 / SHORT ≤0.48; NEUTRAL only on genuine cross-horizon
+  conflict) and confidence = cross-horizon/cross-source AGREEMENT. The ML-only fallback
+  averages the same horizon probs and sets confidence from the agreement fraction.
+- Non-basket tickers (e.g. SPY/QQQ) keep the global-ensemble path unchanged.
+
+Why this de-NEUTRALs the homepage: the 9 defaults are mega-caps whose 1-week prob sits
+in the 0.50–0.55 dead zone (all → NEUTRAL under the old 0.55 bar), but their 1m/3m
+beat-SPY models carry real signal (e.g. AAPL 1w≈0.51 but 1m≈0.68), so synthesis produces
+a decisive, honestly-confident call. Confidence is no longer surfaced in the frontend (a
+high-confidence NEUTRAL read as a contradiction to users); it remains in the API/cache.
 
 ### 7. Files
 

@@ -17,11 +17,17 @@ const SENT: Record<NewsArticle["sentiment"], { label: string; chip: string }> = 
 
 const FILTERS = ["all", "positive", "negative", "neutral"] as const;
 
-// Minimum natural resolution for an image to be allowed in the featured hero slot.
-// The hero renders at ~800x192; anything smaller is a thumbnail/tracking pixel and
-// looks pixelated stretched across the card, so we drop it and feature another story.
+// The featured hero renders at ~800x192 — the ONLY image on the news page, so we always
+// want one there. Two thresholds:
+//   IDEAL  — preferred hero image; crisp at that size.
+//   FLOOR  — minimum we'll still show rather than go imageless; below this an image is a
+//            thumbnail/tracking pixel and looks broken stretched, so it's never used.
+// Hero selection prefers an IDEAL image (+ a summary), but falls back to the largest
+// FLOOR-passing image so the hero always shows a picture when the feed has any usable one.
 const MIN_IMG_W = 400;
 const MIN_IMG_H = 200;
+const FLOOR_IMG_W = 200;
+const FLOOR_IMG_H = 120;
 
 const MAJOR_TICKERS = new Set([
   "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "NVDA", "META", "TSLA",
@@ -146,32 +152,31 @@ export default function NewsPage() {
   const total = allNews.length;
   const net = counts.positive >= counts.negative ? "Bullish" : "Bearish";
 
-  // Probe candidate images for real resolution. An image only becomes eligible for the
-  // featured hero once it loads at >= MIN_IMG_W x MIN_IMG_H; low-res or broken images
-  // are excluded so the headline slot never shows a pixelated thumbnail. Runs only when
-  // showing the market feed (featured is hidden in single-ticker view).
-  const [goodImages, setGoodImages] = useState<Set<string>>(new Set());
+  // Probe candidate images for their real natural size. Broken images never load, so they
+  // simply never enter the map; loaded ones record {w,h} and we rank by it. Runs only for
+  // the market feed (featured is hidden in single-ticker view).
+  const [imageDims, setImageDims] = useState<Map<string, { w: number; h: number }>>(new Map());
   useEffect(() => {
     if (activeTicker) return;
     const candidates = allNews.filter((a) => a.image);
     if (candidates.length === 0) {
-      setGoodImages(new Set());
+      setImageDims(new Map());
       return;
     }
     let cancelled = false;
-    const good = new Set<string>();
+    const dims = new Map<string, { w: number; h: number }>();
     let pending = candidates.length;
     const settle = () => {
       pending -= 1;
-      if (pending === 0 && !cancelled) setGoodImages(good);
+      if (pending === 0 && !cancelled) setImageDims(new Map(dims));
     };
     for (const a of candidates) {
       const img = new window.Image();
       img.onload = () => {
-        if (img.naturalWidth >= MIN_IMG_W && img.naturalHeight >= MIN_IMG_H) good.add(a.id);
+        dims.set(a.id, { w: img.naturalWidth, h: img.naturalHeight });
         settle();
       };
-      img.onerror = settle;
+      img.onerror = settle; // broken image → never recorded → never used
       img.src = a.image!;
     }
     return () => {
@@ -181,19 +186,34 @@ export default function NewsPage() {
 
   const featured = useMemo(() => {
     if (activeTicker || allNews.length < 4) return [];
+    const isIdeal = (a: NewsArticle) => {
+      const d = imageDims.get(a.id);
+      return !!d && d.w >= MIN_IMG_W && d.h >= MIN_IMG_H;
+    };
+    const isUsable = (a: NewsArticle) => {
+      const d = imageDims.get(a.id);
+      return !!d && d.w >= FLOOR_IMG_W && d.h >= FLOOR_IMG_H;
+    };
+    const area = (a: NewsArticle) => {
+      const d = imageDims.get(a.id);
+      return d ? d.w * d.h : 0;
+    };
+
     const sorted = [...allNews].sort(
-      (a, b) => scoreFeatured(b, goodImages.has(b.id)) - scoreFeatured(a, goodImages.has(a.id)),
+      (a, b) => scoreFeatured(b, isIdeal(b)) - scoreFeatured(a, isIdeal(a)),
     );
-    // The hero (featured[0], the only slot that renders an image) must have a validated
-    // high-res image; prefer one that also has a real summary so the large card isn't bare.
+    // Hero (featured[0]) is the only slot that renders an image, so guarantee it has one:
+    // ideal+summary → ideal → largest usable image → (only if none load) text-only.
     const hero =
-      sorted.find((a) => a.image && goodImages.has(a.id) && (a.summary?.length ?? 0) > 40) ??
-      sorted.find((a) => a.image && goodImages.has(a.id)) ??
+      sorted.find((a) => isIdeal(a) && (a.summary?.length ?? 0) > 40) ??
+      sorted.find((a) => isIdeal(a)) ??
+      [...sorted].filter(isUsable).sort((a, b) => area(b) - area(a))[0] ??
       sorted[0];
     const ordered = [hero, ...sorted.filter((a) => a.id !== hero.id)].slice(0, 3);
-    // Never hand a low-res/broken image to a card — strip it so it renders text-only.
-    return ordered.map((a) => (a.image && goodImages.has(a.id) ? a : { ...a, image: undefined }));
-  }, [allNews, activeTicker, goodImages]);
+    // Keep the image only when it actually loaded at a usable size; strip broken/tiny ones
+    // so a card never shows a stretched pixel (hero already preferred a usable image above).
+    return ordered.map((a) => (isUsable(a) ? a : { ...a, image: undefined }));
+  }, [allNews, activeTicker, imageDims]);
 
   const featuredIds = useMemo(() => new Set(featured.map((a) => a.id)), [featured]);
 

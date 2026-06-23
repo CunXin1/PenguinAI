@@ -186,29 +186,36 @@ class ChatAgent:
             content_parts: list[str] = []
             turn: AssistantTurn | None = None
 
-            if stream_fn is not None:
-                async for ev in stream_fn(
-                    messages,
-                    tools=tools,
-                    temperature=ml_settings.CHAT_TEMPERATURE,
-                    max_tokens=ml_settings.CHAT_MAX_TOKENS,
-                ):
-                    if ev["type"] == "delta":
-                        content_parts.append(ev["text"])
-                        yield {"type": "delta", "text": ev["text"]}
-                    elif ev["type"] == "final":
-                        turn = ev["turn"]
-            else:  # backend has no streaming — one non-streamed round, emit as a delta
-                turn = await self.backend.chat_tools(
-                    messages,
-                    tools=tools,
-                    temperature=ml_settings.CHAT_TEMPERATURE,
-                    max_tokens=ml_settings.CHAT_MAX_TOKENS,
-                )
-                if not turn.tool_calls and turn.content:
-                    yield {"type": "delta", "text": turn.content}
+            try:
+                if stream_fn is not None:
+                    async for ev in stream_fn(
+                        messages,
+                        tools=tools,
+                        temperature=ml_settings.CHAT_TEMPERATURE,
+                        max_tokens=ml_settings.CHAT_MAX_TOKENS,
+                    ):
+                        if ev["type"] == "delta":
+                            content_parts.append(ev["text"])
+                            yield {"type": "delta", "text": ev["text"]}
+                        elif ev["type"] == "final":
+                            turn = ev["turn"]
+                else:  # backend has no streaming — one non-streamed round, emit as a delta
+                    turn = await self.backend.chat_tools(
+                        messages,
+                        tools=tools,
+                        temperature=ml_settings.CHAT_TEMPERATURE,
+                        max_tokens=ml_settings.CHAT_MAX_TOKENS,
+                    )
+                    if not turn.tool_calls and turn.content:
+                        yield {"type": "delta", "text": turn.content}
+            except Exception as e:  # noqa: BLE001 — transport drop mid-stream → error event
+                logger.warning("chat stream backend failed: %s", e)
+                yield {"type": "error", "detail": "The assistant is temporarily unavailable."}
+                return
 
-            assert turn is not None
+            if turn is None:  # stream ended without a final turn — treat as a transport failure
+                yield {"type": "error", "detail": "The assistant returned an empty response."}
+                return
             if not turn.tool_calls:
                 yield {
                     "type": "done",
