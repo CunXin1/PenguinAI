@@ -2,8 +2,8 @@
 
 Schedule:
   - Startup: ingest all hot tickers immediately
-  - Tier-1 (MAG7 + top ETFs): every NEWS_TIER1_INTERVAL_MIN (default 15 min)
-  - Tier-2 (rest of hot tickers): every NEWS_TIER2_INTERVAL_MIN (default 60 min)
+  - Tier-1 (MAG7 + top ETFs): every NEWS_TIER1_INTERVAL_MIN (default 5 min)
+  - Tier-2 (rest of hot tickers): every NEWS_TIER2_INTERVAL_MIN (default 20 min)
 """
 
 import asyncio

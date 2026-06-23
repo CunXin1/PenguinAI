@@ -1,9 +1,13 @@
 """Shared constants for the news module.
 
 Three fetch tiers:
-  TIER1 — MAG7 + top ETFs: every 15 min during market hours
-  TIER2 — rest of hot tickers: every 60 min
+  TIER1 — MAG7 + top ETFs: every 5 min
+  TIER2 — rest of hot tickers: every 20 min
   COLD  — everything else: on-demand only (no DB storage)
+
+Cadence was tightened (15/60 -> 5/20 min) once Google News RSS was merged in on
+every cycle: re-polls are near-free because store_articles dedups by (url, ticker),
+so only genuinely new rows are written. Override via the env vars below.
 """
 
 HOT_ETFS = [
@@ -34,8 +38,8 @@ HOT_TICKERS_SET = frozenset(HOT_TICKERS_LIST)
 
 import os as _os
 
-TIER1_INTERVAL_SEC = int(_os.getenv("NEWS_TIER1_INTERVAL_MIN", "15")) * 60
-TIER2_INTERVAL_SEC = int(_os.getenv("NEWS_TIER2_INTERVAL_MIN", "60")) * 60
+TIER1_INTERVAL_SEC = int(_os.getenv("NEWS_TIER1_INTERVAL_MIN", "5")) * 60
+TIER2_INTERVAL_SEC = int(_os.getenv("NEWS_TIER2_INTERVAL_MIN", "20")) * 60
 
 MAX_ARTICLES_PER_TICKER = int(_os.getenv("NEWS_MAX_PER_TICKER", "50"))
 MAX_PER_TICKER_FEED = int(_os.getenv("NEWS_MAX_PER_TICKER_FEED", "3"))

@@ -78,9 +78,9 @@ def _is_english(article: dict) -> bool:
 
 # ── In-memory cache ──────────────────────────────────────────────────
 _cache: dict[str, tuple[float, list]] = {}
-_MARKET_TTL = 300.0  # 5 minutes (market feed — API-sourced, not affected by ingest)
+_MARKET_TTL = 120.0  # 2 minutes — API-sourced; also dropped by invalidate after each ingest
 _HOT_TTL = 120.0  # 2 minutes — DB-backed hot news; short backstop for out-of-process ingest
-_COMPANY_TTL = 600.0  # 10 minutes
+_COMPANY_TTL = 300.0  # 5 minutes
 
 
 def _get_cached(key: str, ttl: float) -> list | None:
@@ -102,14 +102,16 @@ def invalidate_news_cache() -> None:
     """Drop cached hot-ticker responses so freshly ingested news is served immediately.
 
     Called by the news scheduler (an in-process daemon thread) after each ingest cycle
-    that produced new articles. Clears ``hot:*`` keys and ``company:*`` keys for hot
-    tickers, while leaving ``market:*`` (API-sourced) and cold-ticker company caches
-    intact to avoid needless re-fetches. Safe to call from another thread: it snapshots
-    the keys and uses ``pop(..., None)`` so it can't race the request handlers.
+    that produced new articles. Clears ``hot:*`` keys, ``market:*`` keys, and
+    ``company:*`` keys for hot tickers, while leaving cold-ticker company caches intact
+    to avoid needless re-fetches. ``market:*`` is API-sourced rather than DB-backed, but
+    a completed ingest cycle means the upstream APIs also have fresher headlines, so
+    dropping it forces the next request to re-pull live. Safe to call from another
+    thread: it snapshots the keys and uses ``pop(..., None)`` so it can't race handlers.
     """
     cleared = 0
     for key in list(_cache.keys()):
-        if key.startswith("hot:"):
+        if key.startswith("hot:") or key.startswith("market:"):
             if _cache.pop(key, None) is not None:
                 cleared += 1
         elif key.startswith("company:"):
@@ -452,6 +454,32 @@ async def _fetch_finnhub_news(
         return None
 
 
+async def _overlay_live_google(existing: list[dict], ticker: str, limit: int) -> list[dict]:
+    """Overlay a live Google News RSS fetch on top of DB/cached articles.
+
+    Gives the viewed ticker near-real-time freshness (the same Google News RSS source
+    the chat agent's ``web_fetch_news`` uses) without waiting for the next scheduled
+    ingest cycle. Live items are FinBERT-scored on the fly and merged by URL with the
+    existing rows winning (they already carry stored scores). Result is newest-first,
+    capped at ``limit``. Best-effort: returns ``existing`` unchanged on any failure.
+    """
+    live = await _fetch_google_rss(query=f"{ticker} stock", limit=limit)
+    if not live:
+        return existing
+    live = [a for a in live if _is_english(a)]
+    live = await _score_articles(live, ticker)
+
+    seen = {a.get("url") for a in existing if a.get("url")}
+    merged = list(existing)
+    for a in live:
+        url = a.get("url")
+        if url and url not in seen:
+            seen.add(url)
+            merged.append(a)
+    merged.sort(key=lambda a: -(a.get("datetime") or 0))
+    return merged[:limit]
+
+
 # ── Endpoints ────────────────────────────────────────────────────────
 
 
@@ -582,12 +610,19 @@ async def get_company_news(
     db: Annotated[AsyncSession, Depends(get_db)],
     days: int = Query(default=7, ge=1, le=30),
     limit: int = Query(default=20, ge=1, le=50),
+    fresh: bool = Query(
+        default=False,
+        description="Overlay a live Google News RSS fetch for near-real-time headlines "
+        "(used by the News page for the ticker the user is actively viewing).",
+    ),
 ):
     """
     News for a specific ticker.
 
-    Hot tickers are served from the DB (pre-fetched by Celery).
-    Cold tickers are fetched on-demand via the 3-tier fallback and cached for 10 minutes.
+    Hot tickers are served from the DB (pre-fetched by the news scheduler).
+    Cold tickers are fetched on-demand via the 3-tier fallback and cached.
+    ``fresh=true`` overlays a live Google News RSS pull so the viewed ticker is as
+    up-to-date as the chat agent, bypassing the cache on the on-demand path.
     """
     t = ticker.upper()
     if not _TICKER_RE.match(t):
@@ -611,15 +646,17 @@ async def get_company_news(
             )
             result = [a for a in (_map_db_row(r) for r in rows.mappings()) if _is_english(a)]
             if result:
-                return result
+                return await _overlay_live_google(result, t, limit) if fresh else result
         except Exception as exc:
             logger.warning("DB query for hot ticker %s failed: %r", t, exc)
 
     # ── On-demand fetch with in-memory cache (hot fallback + cold) ──
+    # fresh=true skips the cache read so the user gets a live pull, not a stale entry.
     cache_key = f"company:{t}"
-    cached = _get_cached(cache_key, _COMPANY_TTL)
-    if cached is not None:
-        return cached[:limit]
+    if not fresh:
+        cached = _get_cached(cache_key, _COMPANY_TTL)
+        if cached is not None:
+            return cached[:limit]
 
     # Tier 1: Massive (paid — primary)
     articles = await _fetch_massive_news(ticker=t, limit=limit)

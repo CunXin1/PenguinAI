@@ -286,9 +286,13 @@ export const news = {
     return apiFetch<NewsApiArticle[]>(`/news/hot?${params}`);
   },
 
-  /** Company news for a single ticker. */
-  byTicker: (ticker: string, days = 7) =>
-    apiFetch<NewsApiArticle[]>(`/news/${ticker.toUpperCase()}?days=${days}`),
+  /** Company news for a single ticker. ``fresh`` overlays a live Google News RSS
+   *  pull so the viewed ticker is as up-to-date as the chat agent. */
+  byTicker: (ticker: string, days = 7, fresh = false) => {
+    const params = new URLSearchParams({ days: String(days) });
+    if (fresh) params.set("fresh", "true");
+    return apiFetch<NewsApiArticle[]>(`/news/${ticker.toUpperCase()}?${params}`);
+  },
 };
 
 // ── FOMC API ────────────────────────────────────────────────────────────────

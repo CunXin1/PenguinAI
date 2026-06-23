@@ -1,10 +1,13 @@
 """Fetch news for hot tickers, score with FinBERT, store in news_articles hypertable.
 
-Source priority:
-  1. Massive API (paid) — primary, no artificial rate limit needed
-  2. Google News RSS     — free, no key, no sentiment, general market headlines
-  3. Finnhub REST        — FREE TIER, 60 req/min — last resort only (save quota for
-                           earnings, realtime, and other Finnhub-only features)
+Sources (merged every cycle, deduped by (url, ticker) downstream):
+  1. Massive API (paid)  — ticker-tagged, carries summary/image/sentiment insights
+  2. Google News RSS     — free, no key, near-real-time (the SAME source the chat
+                           agent's web_fetch_news uses); fetched per ticker on EVERY
+                           cycle, not just as a fallback, so the DB tracks the chat
+                           agent's freshness instead of lagging behind it
+  3. Finnhub REST        — FREE TIER, 60 req/min — last resort only, for tickers that
+                           got nothing from Massive or Google (save quota)
 
 One row per (article, ticker) — same article can have different FinBERT scores for
 different tickers because we prepend the ticker to the headline before scoring.
@@ -415,43 +418,55 @@ async def ingest_tickers(
 
     try:
         async with httpx.AsyncClient(timeout=20.0) as client:
-            # Fetch in batches via Massive (supports comma-separated tickers)
             all_articles: dict[str, list[dict]] = {t: [] for t in tickers}
 
             for i in range(0, len(tickers), _BATCH_SIZE):
                 batch = tickers[i:i + _BATCH_SIZE]
 
-                # Priority 1: Massive (paid, no rate limit concern)
-                articles = await fetch_massive(client, batch, limit=50)
+                # Fetch both primary sources concurrently and MERGE (not fallback):
+                #   - Massive: one batched call (ticker.any_of), articles carry tags.
+                #   - Google RSS: one ticker-scoped query per ticker — free and
+                #     near-real-time, the same source the chat agent uses. Running it
+                #     every cycle is what keeps the DB as fresh as the chat agent.
+                # Overlap is cheap: store_articles dedups by (url, ticker).
+                massive_articles, *google_per_ticker = await asyncio.gather(
+                    fetch_massive(client, batch, limit=50),
+                    *(fetch_google_rss(client, [t], limit=15) for t in batch),
+                )
 
-                # Priority 2: Google News RSS (free, no key)
-                if not articles:
-                    articles = await fetch_google_rss(client, batch, limit=30)
-
-                # Priority 3: Finnhub (FREE tier — last resort, save quota)
-                if not articles:
-                    for t in batch:
-                        fh = await fetch_finnhub(client, t, days=7)
-                        all_articles[t].extend(fh[:20])
-                    logger.info("Batch %s: Finnhub fallback", ",".join(batch))
-                    continue
-
-                # Distribute articles to the tickers they mention
-                for article in articles:
-                    mentioned = set(t.upper() for t in _article_tickers(article))
+                # Massive: distribute by each article's ticker tags (headline-scan
+                # only as a fallback for the rare untagged article).
+                for article in massive_articles or []:
+                    mentioned = {t.upper() for t in _article_tickers(article)}
                     if mentioned:
                         for t in batch:
                             if t.upper() in mentioned:
                                 all_articles[t].append(article)
                     else:
-                        # Google RSS: no ticker tags — scan headline for ticker symbols
                         headline = _article_headline(article).upper()
                         for t in batch:
                             if t.upper() in headline:
                                 all_articles[t].append(article)
 
-                src = "Massive" if articles and articles[0].get("_source") != "google" else "Google RSS"
-                logger.info("Fetched %d articles for batch %s via %s", len(articles), ",".join(batch), src)
+                # Google RSS: each query is ticker-scoped, so map results straight to it.
+                for t, g_articles in zip(batch, google_per_ticker, strict=False):
+                    all_articles[t].extend(g_articles)
+
+                # Finnhub: last resort — only for tickers still empty after both sources.
+                starved = [t for t in batch if not all_articles[t]]
+                if starved:
+                    for t in starved:
+                        fh = await fetch_finnhub(client, t, days=7)
+                        all_articles[t].extend(fh[:20])
+                    logger.info(
+                        "Batch %s: Finnhub fallback for %d ticker(s)", ",".join(batch), len(starved)
+                    )
+
+                n_google = sum(len(g) for g in google_per_ticker)
+                logger.info(
+                    "Fetched batch %s — Massive=%d, Google RSS=%d",
+                    ",".join(batch), len(massive_articles or []), n_google,
+                )
 
             # Score + store per ticker
             for ticker, articles in all_articles.items():

@@ -96,11 +96,14 @@ export default function NewsPage() {
     queryKey: ["tickerNews", activeTicker],
     queryFn: async () => {
       if (!activeTicker) return [];
-      const raw = await newsApi.byTicker(activeTicker, 7);
+      // fresh=true overlays a live Google News RSS pull for the ticker the user is
+      // actively viewing — near-real-time, matching the chat agent's freshness.
+      const raw = await newsApi.byTicker(activeTicker, 7, true);
       return raw.map(mapApiArticle);
     },
     enabled: !!activeTicker,
-    staleTime: 5 * 60 * 1000,
+    staleTime: 60 * 1000,
+    refetchOnWindowFocus: true,
   });
 
   const isLoading = activeTicker ? tickerLoading : hotLoading;
