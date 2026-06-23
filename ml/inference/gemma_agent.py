@@ -39,23 +39,35 @@ AGENT2_OUTPUT_SCHEMA = {
 }
 
 AGENT2_SYSTEM_PROMPT = """You are a strict quantitative analyst AI. Synthesize the provided
-structured signals into a final investment signal JSON. Use ONLY the data given.
+structured signals across MULTIPLE TIME HORIZONS into one final investment signal JSON.
+Use ONLY the data given.
 
 Reading the inputs:
-- *_prob_up = P(price RISES), 0–1. >0.5 bullish, <0.5 bearish, ≈0.5 no edge; farther
-  from 0.5 = stronger. e.g. ensemble_prob_up=0.38 is BEARISH (~62% chance it falls),
-  NOT "slightly up". finbert_mean_score: +bullish/−bearish. fomc_hawk_dove_score:
-  higher = hawkish (LONG headwind).
+- ensemble_prob_up = short-term (~1 bar) P(price RISES), 0–1. >0.5 bullish, <0.5 bearish.
+- ml_horizons holds longer views (may be absent for non-basket tickers):
+  - h1w_prob_up = P(price RISES) over ~1 week. >0.5 bullish.
+  - h1m_beat_spy / h3m_beat_spy = P(this stock BEATS SPY) over ~1 / ~3 months.
+    >0.5 = outperforms the market (bullish lean); <0.5 = lags it (bearish lean).
+  For ALL of these, farther from 0.5 = stronger. e.g. 0.38 is BEARISH (~62% the other way),
+  NOT "slightly up".
+- finbert_mean_score: +bullish/−bearish. fomc_hawk_dove_score: higher = hawkish (LONG headwind).
 
-Direction (ensemble_prob_up leads; other factors only confirm/temper):
-- LONG if ensemble_prob_up >= 0.55; SHORT if <= 0.45; NEUTRAL only if 0.46–0.54.
-  Do not default to NEUTRAL when the ensemble clearly leans.
+Direction — SYNTHESIZE all available horizons + sentiment + macro; do NOT key off the
+short-term prob alone (it sits near 0.5 for mega-caps and is the WEAKEST signal):
+- Lean LONG when the balance of horizons is bullish (most probs > ~0.52); SHORT when
+  most are bearish (< ~0.48).
+- NEUTRAL ONLY when horizons genuinely CONFLICT (e.g. 1m bullish but 3m bearish with no
+  tie-breaker) or all sit ~0.50. Do NOT default to NEUTRAL just because the 1-week prob
+  is ~0.5 — the 1m/3m views frequently carry the real signal.
 
-Confidence (must vary, never fixed): ≈ 0.5 + |ensemble_prob_up − 0.5| * 4, clamped
-[0.5, 0.95]; raise when other factors agree, lower when they conflict. Null ML ⇒ NEUTRAL 0.5.
+Confidence (must vary, never fixed) = cross-horizon + cross-source AGREEMENT, NOT a single
+prob: HIGH (→0.9) when horizons, sentiment and macro all align in one direction; LOW
+(→0.5) when they conflict or are all near 0.5. A NEUTRAL call from conflicting horizons is
+LOW confidence by definition. Clamp [0.5, 0.95]. Null ML ⇒ NEUTRAL 0.5.
 
-Output: ai_attribution ≤150 chars (1–2 key drivers); ai_analysis ≤300 chars, data-driven,
-cite the ensemble prob correctly (<0.5 = bearish), no disclaimers. ONLY the schema JSON."""
+Output: ai_attribution ≤150 chars (1–2 key drivers, name the decisive horizon);
+ai_analysis ≤300 chars, data-driven, cite the horizon probs correctly (<0.5 = bearish),
+no disclaimers. ONLY the schema JSON."""
 
 
 @dataclass
@@ -98,6 +110,7 @@ class GemmaAgent:
         celebrity_actions: list[dict],  # [{"who": "cathie_wood", "action": "BUY", "date": "..."}]
         earnings_surprise_pct: float | None,
         pe_ratio: float | None,
+        ml_horizons: dict[str, dict] | None = None,
     ) -> dict:
         """Agent 1: pure data assembly, no LLM call. Returns structured context."""
         ensemble = None
@@ -113,6 +126,7 @@ class GemmaAgent:
                 "rf_prob_up": rf_prob_up,
                 "ensemble_prob_up": ensemble,
             },
+            "ml_horizons": _summarize_horizons(ml_horizons),
             "sentiment": {
                 "finbert_mean_score": finbert_score,
                 "post_count_72h": post_count,
@@ -196,6 +210,29 @@ class GemmaAgent:
         """End-to-end: assemble context then reason."""
         context = self.assemble_context(**kwargs)
         return await self.reason(context)
+
+
+def _summarize_horizons(horizons: dict[str, dict] | None) -> dict:
+    """Map basket horizon probs → prompt-friendly keys + a one-line interpretation.
+
+    1w is P(up); 1m/3m are P(beat SPY). Empty/None for tickers in no basket — the
+    reasoner then leans on the single short-term ensemble alone.
+    """
+    if not horizons:
+        return {"available": False}
+    key = {"1w": "h1w_prob_up", "1m": "h1m_beat_spy", "3m": "h3m_beat_spy"}
+    out: dict[str, object] = {"available": True}
+    leans: list[str] = []
+    for label, h in horizons.items():
+        ens = h.get("ensemble")
+        if ens is None:
+            continue
+        out[key.get(label, label)] = ens
+        lean = "bullish" if ens > 0.52 else "bearish" if ens < 0.48 else "flat"
+        unit = "up" if label == "1w" else "vs SPY"
+        leans.append(f"{label} {lean} ({unit})")
+    out["interpretation"] = "; ".join(leans) if leans else "no horizon models"
+    return out
 
 
 def _interpret_hawk_dove(score: float | None) -> str:

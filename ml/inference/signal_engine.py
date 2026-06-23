@@ -42,10 +42,18 @@ class SignalEngine:
 
         # ── 2. Technical features (already model-ready; no recomputation) ──────
         feature_dict = features_to_dict(feature_row)
+        daily_dict = await self._load_daily_features(ticker, db_session)
 
         # ── 3. ML model inference ─────────────────────────────────────────────
         xgb_prob_up = model_registry.predict_xgb(ticker, feature_dict)
         rf_prob_up = model_registry.predict_rf(ticker, feature_dict)
+
+        # Multi-horizon basket models (1w direction, 1m/3m beat-SPY). Empty for
+        # tickers in no basket — those fall back to the single global ensemble.
+        feats_by_tf = {"30m": feature_dict}
+        if daily_dict:
+            feats_by_tf["1d"] = daily_dict
+        horizons = model_registry.predict_basket_horizons(ticker, feats_by_tf)
 
         # ── 4. Sentiment (FinBERT aggregated from social_posts) ───────────────
         finbert_score, post_count = await get_ticker_sentiment(ticker, db_session, hours=72)
@@ -73,10 +81,13 @@ class SignalEngine:
                 celebrity_actions=celebrity_actions,
                 earnings_surprise_pct=earnings_surprise,
                 pe_ratio=pe_ratio,
+                ml_horizons=horizons,
             )
         except Exception as e:
             logger.warning("Gemma unavailable for %s: %s — using ML-only signal", ticker, e)
-            gemma_output = self._fallback_gemma_output(xgb_prob_up, rf_prob_up, finbert_score)
+            gemma_output = self._fallback_gemma_output(
+                xgb_prob_up, rf_prob_up, finbert_score, horizons
+            )
 
         # ── 9. Apply global FOMC override ────────────────────────────────────
         direction, confidence = self._apply_macro_filter(
@@ -113,15 +124,31 @@ class SignalEngine:
         xgb_prob: float | None,
         rf_prob: float | None,
         finbert_score: float | None,
+        horizons: dict[str, dict] | None = None,
     ) -> GemmaSignalOutput:
-        """ML-only signal when Gemma is unavailable."""
+        """ML-only signal when Gemma is unavailable.
+
+        Synthesizes the global 30-min ensemble with the per-horizon basket models
+        (1w direction, 1m/3m beat-SPY). Each prob is "bullish if >0.5"; we average
+        the available probs into one score (narrow LONG/SHORT band 0.52/0.48) and
+        set confidence from cross-horizon AGREEMENT, not a single near-0.5 prob —
+        so disagreeing horizons honestly read as low confidence, not inflated.
+        """
         ensemble = None
         if xgb_prob is not None and rf_prob is not None:
             ensemble = xgb_prob * 0.6 + rf_prob * 0.4
         elif xgb_prob is not None:
             ensemble = xgb_prob
 
-        if ensemble is None:
+        # Collect every bullish-probability signal (global + each horizon).
+        probs: list[float] = []
+        if ensemble is not None:
+            probs.append(ensemble)
+        for h in (horizons or {}).values():
+            if h.get("ensemble") is not None:
+                probs.append(float(h["ensemble"]))
+
+        if not probs:
             return GemmaSignalOutput(
                 direction="NEUTRAL",
                 confidence=0.5,
@@ -135,7 +162,7 @@ class SignalEngine:
         if finbert_score is not None and abs(finbert_score) > 0.2:
             sent_nudge = finbert_score * 0.02
 
-        score = ensemble + sent_nudge
+        score = sum(probs) / len(probs) + sent_nudge
 
         if score > 0.52:
             direction = "LONG"
@@ -144,22 +171,30 @@ class SignalEngine:
         else:
             direction = "NEUTRAL"
 
-        confidence = round(min(1.0, max(0.5, abs(score - 0.5) * 4 + 0.5)), 4)
+        # Agreement: fraction of signals on the majority side (0.5 = split → 1.0 = unanimous).
+        above = sum(1 for p in probs if p > 0.5)
+        below = sum(1 for p in probs if p < 0.5)
+        agree = max(above, below) / len(probs) if (above or below) else 0.5
+        strength = min(1.0, max(0.5, abs(score - 0.5) * 4 + 0.5))
+        confidence = round(min(0.95, max(0.5, strength * agree)), 4)
 
-        drivers = []
-        if ensemble is not None:
-            drivers.append(f"ML ensemble {'bullish' if ensemble > 0.5 else 'bearish'}")
+        horizon_note = ", ".join(
+            f"{k}={h['ensemble']:.2f}" for k, h in (horizons or {}).items() if h.get("ensemble")
+        )
+        drivers = [f"{len(probs)} ML signals {'bullish' if score > 0.5 else 'bearish'}"]
         if finbert_score is not None and abs(finbert_score) > 0.2:
             drivers.append(f"sentiment {'positive' if finbert_score > 0 else 'negative'}")
-        attribution = " + ".join(drivers) if drivers else "ML ensemble"
+        attribution = " + ".join(drivers)
 
-        sentiment_note = f", FinBERT={finbert_score:.2f}" if finbert_score is not None else ""
         return GemmaSignalOutput(
             direction=direction,
             confidence=confidence,
             holding_period="SHORT_TERM",
+            ai_analysis=(
+                f"Blended ML score {score:.2f} from {len(probs)} signals"
+                f"{f' (horizons {horizon_note})' if horizon_note else ''}. LLM reasoning unavailable."
+            ),
             ai_attribution=attribution,
-            ai_analysis=f"XGB={xgb_prob}, RF={rf_prob}{sentiment_note}. LLM reasoning unavailable.",
         )
 
     def _apply_macro_filter(
@@ -207,6 +242,30 @@ class SignalEngine:
             text(f"""
                 SELECT {", ".join(FEATURE_COLS)}
                 FROM indicators_30min
+                WHERE ticker = :ticker
+                ORDER BY time DESC
+                LIMIT 1
+            """),
+            {"ticker": ticker},
+        )
+        mapping = row.mappings().first()
+        return dict(mapping) if mapping is not None else None
+
+    async def _load_daily_features(self, ticker: str, db_session) -> dict | None:
+        """Latest daily feature row from indicators_daily (for the 1m/3m basket models).
+
+        Mirrors xgboost_trainer.DAILY_FEATURE_SQL; returns None when the ticker has
+        no daily bars (the multi-horizon step is then simply skipped for it).
+        """
+        from sqlalchemy import text
+
+        from ml.models.xgboost_trainer import DAILY_FEATURE_SQL
+
+        cols = ", ".join(DAILY_FEATURE_SQL.keys())
+        row = await db_session.execute(
+            text(f"""
+                SELECT {cols}
+                FROM indicators_daily
                 WHERE ticker = :ticker
                 ORDER BY time DESC
                 LIMIT 1

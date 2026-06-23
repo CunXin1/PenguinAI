@@ -345,8 +345,9 @@ def _curate_market_feed(
     """Turn a raw, newest-first article pool into the market-wide "look through" feed.
 
     Three passes, in order:
-      1. Dedup by URL (fallback: headline), merging the ticker lists of duplicates so one
-         story shared across several tickers appears once.
+      1. Dedup by normalized headline (fallback: URL), merging the ticker lists of duplicates
+         so one story shared across several tickers appears once; the richest (Massive) copy
+         wins.
       2. Skew toward technology names: tech-tagged stories sort ahead of the rest, recency
          breaking ties within each group.
       3. Cap each ticker at ``per_ticker_cap`` so a single loud sector (e.g. energy/XOM)

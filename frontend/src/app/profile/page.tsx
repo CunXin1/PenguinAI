@@ -175,12 +175,7 @@ export default function ProfilePage() {
                     {t}
                   </span>
                   {sig ? (
-                    <div className="flex items-center gap-3">
-                      <span className="text-xs font-mono text-zinc-600 dark:text-zinc-400">
-                        {Math.round(sig.confidence * 100)}%
-                      </span>
-                      <DirectionBadge direction={sig.direction} />
-                    </div>
+                    <DirectionBadge direction={sig.direction} />
                   ) : (
                     <span className="text-xs text-zinc-400 dark:text-zinc-600">no signal yet</span>
                   )}

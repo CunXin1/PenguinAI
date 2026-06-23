@@ -95,6 +95,9 @@ feeds the result back — multi-turn loop until a final answer.
 | `get_news(ticker)` | `news_articles` (incl. Google News RSS) | built |
 | `get_signal(ticker)` | `signal_cache` (ML scores) | built (SDK path) — agent explains bull/bear from the ML models |
 | `web_fetch_news(query)` | Google News RSS (live, no key) | built (SDK path) — external content sandboxed as untrusted |
+| `get_smart_money(ticker)` | `celebrity_holdings` (13F/ARK/Congress/Trump) | built (SDK + hand-rolled + research sub-agent) — "what is Buffett/Pelosi doing in X?" |
+| `get_market_mood()` | `fear_greed_index` + `volatility_index` (VIX/VVIX) | built — market-wide sentiment, no ticker ("risk-on or risk-off?") |
+| `screen_signals(direction?, limit?)` | `signal_cache` ranked by confidence | built — cross-ticker discovery ("strongest LONG signals today") |
 | `research_ticker(ticker)` | sub-agent over all read tools → structured verdict | built (SDK path) — powers "should I buy X?" |
 | `analyze_watchlist()` | fan-out: one research sub-agent per watchlist ticker | built (SDK path) — parallel multi-agent, capped at 6 |
 | `get_portfolio(user)` | portfolio table | **NOT built** — needs new `portfolio`/`positions` table + ingestion |
@@ -106,7 +109,12 @@ the hosted API backend degrades to non-streamed. NOTE: Ollama's Gemma 4 tool-cal
 works reliably as of Ollama 0.22.1 — the earlier "must use vLLM" caveat is obsolete. Two
 Gemma-4 gotchas, both handled: send `"think": false` (else the reasoning phase empties
 the output), and Ollama needs object (not JSON-string) tool-call `arguments` on replay
-(`OllamaBackend._to_ollama_msg` normalizes).
+(`OllamaBackend._to_ollama_msg` normalizes). **Context window:** Ollama defaults `num_ctx`
+to 4096 and silently truncates from the left (drops the system prompt + tool schemas);
+`CHAT_NUM_CTX` (default 16384) is wired into the hand-rolled `options` and the SDK
+`ModelSettings.extra_body`, but the guaranteed knob for the `/v1` path is the
+`OLLAMA_CONTEXT_LENGTH` env var on `ollama serve`. `get_history` returns the model a digest
+(summary + last 30 bars), not the full series — the chart card self-fetches the full data.
 
 **Security (this is a NEW attack surface — all mandatory):**
 - `user_id` is ALWAYS injected server-side from the auth token, **never** from the model.

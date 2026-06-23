@@ -26,6 +26,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -344,6 +345,18 @@ def _is_massive(article: dict) -> bool:
     return article.get("_source") not in ("google", "finnhub")
 
 
+def _headline_mentions(headline: str, ticker: str) -> bool:
+    """Whole-symbol match for a ticker in a headline.
+
+    Used only to attribute the rare *untagged* Massive article. A plain ``ticker in
+    headline`` substring test mis-fires on short symbols ("V" in "REVENUE", "MA" in
+    "MARKET", "KO" in "TOKYO"), so we require word boundaries (and don't treat a dot,
+    letter, or digit as a boundary, so "BRK.B" still matches cleanly).
+    """
+    pattern = rf"(?<![A-Za-z0-9.]){re.escape(ticker)}(?![A-Za-z0-9.])"
+    return re.search(pattern, headline, re.IGNORECASE) is not None
+
+
 def _dedup_articles(articles: list[dict]) -> list[dict]:
     """Collapse the same story across sources, keeping the Massive copy when duplicated.
 
@@ -492,9 +505,9 @@ async def ingest_tickers(
                             if t.upper() in mentioned:
                                 all_articles[t].append(article)
                     else:
-                        headline = _article_headline(article).upper()
+                        headline = _article_headline(article)
                         for t in batch:
-                            if t.upper() in headline:
+                            if _headline_mentions(headline, t):
                                 all_articles[t].append(article)
 
                 # Google RSS: each query is ticker-scoped, so map results straight to it.

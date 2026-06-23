@@ -117,7 +117,7 @@ export default function ChatPage() {
     } finally {
       setLoadingThread(false);
     }
-  }, []);
+  }, [abortStream]);
 
   const newChat = useCallback(() => {
     abortStream();

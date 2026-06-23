@@ -22,7 +22,6 @@ const PERIOD_LABEL: Record<string, string> = {
 
 export function SignalCard({ signal }: Props) {
   const dirStyle = DIRECTION_STYLE[signal.direction] ?? DIRECTION_STYLE.NEUTRAL;
-  const confidencePct = Math.round(signal.confidence * 100);
 
   return (
     <div className="rounded-xl border border-zinc-200 dark:border-zinc-700/60 bg-white dark:bg-zinc-900 p-5 space-y-4">
@@ -37,23 +36,6 @@ export function SignalCard({ signal }: Props) {
         <span className={`px-3 py-1 rounded-full text-sm font-semibold border ${dirStyle}`}>
           {signal.direction}
         </span>
-      </div>
-
-      {/* Confidence meter */}
-      <div className="space-y-1">
-        <div className="flex justify-between text-xs text-zinc-500">
-          <span>Confidence</span>
-          <span className="font-mono text-zinc-900 dark:text-white">{confidencePct}%</span>
-        </div>
-        <div className="h-1.5 bg-zinc-200 dark:bg-zinc-800 rounded-full overflow-hidden">
-          <div
-            className={`h-full rounded-full transition-all duration-700 ${
-              signal.direction === "LONG"  ? "bg-emerald-500" :
-              signal.direction === "SHORT" ? "bg-red-500"     : "bg-zinc-500 dark:bg-zinc-600"
-            }`}
-            style={{ width: `${confidencePct}%` }}
-          />
-        </div>
       </div>
 
       {/* ML Scores */}

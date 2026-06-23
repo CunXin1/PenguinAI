@@ -7,7 +7,6 @@ import { useTopSignals } from "@/hooks/useTopSignals";
 import { usePinnedSignals } from "@/hooks/usePinnedSignals";
 import { Card } from "@/components/ui/Card";
 import { DirectionBadge } from "@/components/ui/Badge";
-import { ConfidenceBar } from "@/components/ui/ConfidenceBar";
 import { Sparkline } from "@/components/ui/Sparkline";
 import { signedPct, money } from "@/lib/utils";
 import { tickers as tickersApi } from "@/lib/api";
@@ -162,21 +161,7 @@ function SignalTile({
                 </p>
               )}
             </div>
-            <div className="text-right">
-              <p className="text-[10px] text-zinc-500 uppercase tracking-wide">
-                Conf
-              </p>
-              <p className="text-sm font-mono font-bold text-zinc-800 dark:text-zinc-200">
-                {Math.round(s.confidence * 100)}%
-              </p>
-            </div>
           </div>
-
-          <ConfidenceBar
-            value={s.confidence}
-            direction={s.direction}
-            className="mt-2"
-          />
         </>
       )}
     </Card>

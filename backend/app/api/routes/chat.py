@@ -184,7 +184,10 @@ async def send_message(
         await db.execute(
             select(ChatMessage)
             .where(ChatMessage.conversation_id == conv.id)
-            .order_by(ChatMessage.created_at.desc())
+            # role ASC tiebreaker: a turn's user+assistant share created_at (same txn
+            # server_default now()); in this desc fetch 'assistant' sorts before 'user',
+            # so after reversed() the pair reads user→assistant. Deterministic ordering.
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.role.asc())
             .limit(settings.CHAT_MAX_HISTORY)
         )
     ).scalars().all()
@@ -256,7 +259,10 @@ async def send_message_stream(
         await db.execute(
             select(ChatMessage)
             .where(ChatMessage.conversation_id == conv.id)
-            .order_by(ChatMessage.created_at.desc())
+            # role ASC tiebreaker: a turn's user+assistant share created_at (same txn
+            # server_default now()); in this desc fetch 'assistant' sorts before 'user',
+            # so after reversed() the pair reads user→assistant. Deterministic ordering.
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.role.asc())
             .limit(settings.CHAT_MAX_HISTORY)
         )
     ).scalars().all()

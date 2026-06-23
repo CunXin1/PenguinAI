@@ -10,8 +10,10 @@ full stack: database, backend, ML agent, streaming, and the per-backend behavior
 ### Overview
 
 Users chat with an AI that can fetch live market data through read-only tools
-(quotes, indicators, earnings, fundamentals, news, watchlist). Conversations are
-persisted per user and reload across devices. Replies stream token-by-token over
+(quotes, indicators, earnings, fundamentals, news, watchlist, ML signals, smart-money
+13F/Congress/ARK trades, market mood (Fear & Greed + VIX), and a cross-ticker signal
+screen). Conversations are persisted per user and reload across devices. Replies stream
+token-by-token over
 Server-Sent Events (SSE). The LLM transport is swappable: Ollama on macOS, vLLM on
 a Linux/Windows GPU host, or a hosted API.
 
@@ -148,9 +150,29 @@ Backend-specific notes:
 | `VLLM_BASE_URL` | `http://localhost:8080/v1` | GPU host |
 | `CHAT_LIMIT_FREE / PRO / PREMIUM` | 5 / 100 / 0 | messages per window; 0 = unlimited |
 | `CHAT_MAX_INPUT_CHARS` | 2000 | per-message cap |
-| `CHAT_MAX_HISTORY` | 20 | context turns kept |
+| `CHAT_MAX_HISTORY` | 20 | context turns kept (the MOST RECENT N) |
 | `CHAT_MAX_TOKENS` | 1024 | output cap |
 | `CHAT_TEMPERATURE` | 0.7 | conversational |
+| `CHAT_NUM_CTX` | 16384 | LLM context window (Ollama `num_ctx`); see "Context window" below |
+
+### Context window and token economy
+
+Ollama defaults `num_ctx` to **4096 tokens** regardless of the model's real window (E4B
+handles ~32k) and **silently truncates from the left** when exceeded — dropping the system
+prompt + tool schemas first, which looks like the model "forgetting" rules or ignoring
+tools. With the system prompt + ~14 tool schemas + a fat tool result this is easy to hit.
+
+- `CHAT_NUM_CTX` (default 16384) is applied directly on the hand-rolled `/api/chat` path
+  (`OllamaBackend` `options.num_ctx`) and passed on the SDK `/v1` path via
+  `ModelSettings.extra_body={"options":{"num_ctx":N}}` (`provider.chat_model_settings`).
+- Whether the OpenAI-compatible `/v1` endpoint honors `options.num_ctx` is server-dependent;
+  the **guaranteed** knob is the `OLLAMA_CONTEXT_LENGTH` env var on `ollama serve` (covers
+  both paths). Set it regardless. Don't raise far above 16k locally — KV cache eats VRAM.
+- `get_history` returns the MODEL a digest (`summary` + last 30 `recent_bars`), not the full
+  series — the chart card self-fetches the full data by ticker+range, so sending up to 1000
+  bars would only waste context.
+- History is the **most recent** `CHAT_MAX_HISTORY` turns (ordered desc + limit, then
+  reversed); an ascending limit would keep the oldest turns and starve long threads.
 
 ### Key files
 
@@ -186,10 +208,17 @@ Agents SDK** (`openai-agents`). It reuses the same read-only `_get_*` handlers a
 content), and points the SDK at the SAME vLLM/Ollama `/v1` endpoints — no LiteLLM. The flag
 selects it in `chat_agent.py`; route/quota/persistence are shared. What it adds:
 
+- **Extra data tools.** Beyond the core read tools: `get_smart_money(ticker)`
+  (`celebrity_holdings` — 13F/ARK/Congress/Trump), `get_market_mood()` (Fear & Greed + VIX/VVIX,
+  no ticker), and `screen_signals(direction?, limit?)` (`signal_cache` ranked by confidence —
+  cross-ticker discovery). All read-only; `get_smart_money` is also wired into the research
+  sub-agent.
 - **Multi-agent.** A single-ticker research sub-agent (`research_ticker`) on the narrow model
   tier returns a structured `TickerVerdict`; `analyze_watchlist` fans it out over the user's
   watchlist with `asyncio.gather` (capped at 6) and the orchestrator ranks the verdicts.
-  "Compare A vs B" deliberately stays single-agent.
+  "Compare A vs B" deliberately stays single-agent. Sub-agents run on an isolated
+  `ChatContext` (`replace(ctx, card_sink=None)`) so they never mutate the orchestrator's live
+  card sink — concurrency-safe even when fanned out.
 - **Rich cards.** Tools record card payloads on `ChatContext.card_sink`; the runner streams
   them as `{type:"card", card:"chart"|"news", data:{…}}` SSE events and persists them to
   `chat_messages.cards` (JSONB). The frontend renders charts via the existing `PriceChart`.
@@ -228,7 +257,8 @@ then a `done` frame.
 
 PREMIUM 对话助手:分用户、带工具调用的聊天界面,底层是 Gemma 4。与信号管线的
 Gemma agent 是两个独立面;它们只共用 `ml/inference/llm/` 这一层传输。用户可以让
-AI 通过只读工具拉取实时行情(报价、指标、财报、基本面、新闻、自选股)。会话按用户
+AI 通过只读工具拉取实时行情(报价、指标、财报、基本面、新闻、自选股、ML 信号、聪明钱
+13F/国会/ARK 交易、市场情绪 Fear&Greed+VIX、跨票信号筛选)。会话按用户
 持久化、跨设备可重载。回复通过 SSE 逐 token 流式返回。LLM 传输可切换:macOS 用
 Ollama,Linux/Windows GPU 用 vLLM,或托管 API。
 
@@ -349,9 +379,27 @@ agent 的流式方法 `ChatAgent.chat_stream` 会检测后端有没有 `chat_too
 | `VLLM_BASE_URL` | `http://localhost:8080/v1` | GPU 主机 |
 | `CHAT_LIMIT_FREE / PRO / PREMIUM` | 5 / 100 / 0 | 每窗口消息数;0 = 不限 |
 | `CHAT_MAX_INPUT_CHARS` | 2000 | 单条上限 |
-| `CHAT_MAX_HISTORY` | 20 | 保留的上下文轮数 |
+| `CHAT_MAX_HISTORY` | 20 | 保留的上下文轮数(取**最近** N 条) |
 | `CHAT_MAX_TOKENS` | 1024 | 输出上限 |
 | `CHAT_TEMPERATURE` | 0.7 | 对话型 |
+| `CHAT_NUM_CTX` | 16384 | LLM 上下文窗口(Ollama `num_ctx`);见下方"上下文窗口" |
+
+### 上下文窗口与 token 经济
+
+Ollama 默认 `num_ctx` 为 **4096 token**(无视模型真实窗口,E4B 可达 ~32k),超出时**从左侧
+静默截断**——先丢掉 system prompt + 工具 schema,表现为模型"忘记"规则或忽略工具。system
+prompt + ~14 个工具 schema + 一个大工具结果很容易触顶。
+
+- `CHAT_NUM_CTX`(默认 16384)在手写 `/api/chat` 路径直接写进 `OllamaBackend` 的
+  `options.num_ctx`;SDK `/v1` 路径通过 `ModelSettings.extra_body={"options":{"num_ctx":N}}`
+  (`provider.chat_model_settings`)传入。
+- `/v1` 端点是否真正生效 `options.num_ctx` 取决于服务端版本;**100% 可靠**的开关是
+  `ollama serve` 的 `OLLAMA_CONTEXT_LENGTH` 环境变量(覆盖两条路径),建议无论如何都设。
+  本地别远超 16k——KV cache 吃显存。
+- `get_history` 给**模型**返回的是摘要(`summary` + 最近 30 根 `recent_bars`),而非完整
+  序列——图表卡片按 ticker+range 自取全量数据,所以发最多 1000 根 bar 只是浪费上下文。
+- 历史取的是**最近** `CHAT_MAX_HISTORY` 轮(desc + limit 后反转);升序 limit 会保留最旧
+  的轮、让长对话"失忆"。
 
 ### 关键文件
 
@@ -371,9 +419,15 @@ macOS(Ollama):后端连宿主机原生 Ollama
 (`user_id` 服务端注入、只读工具、外部内容当数据),并把 SDK 指向**同一个** vLLM/Ollama
 `/v1` 端点——不经过 LiteLLM。由 `chat_agent.py` 按开关切换;路由/配额/持久化共用。新增能力:
 
+- **额外数据工具。** 在核心只读工具之外:`get_smart_money(ticker)`(`celebrity_holdings`——
+  13F/ARK/国会/Trump)、`get_market_mood()`(Fear & Greed + VIX/VVIX,无 ticker)、
+  `screen_signals(direction?, limit?)`(`signal_cache` 按置信度排序——跨票发现)。全部只读;
+  `get_smart_money` 也接进了研究 sub-agent。
 - **多 agent。** 单票研究 sub-agent(`research_ticker`,narrow 档模型)返回结构化
   `TickerVerdict`;`analyze_watchlist` 用 `asyncio.gather` 对 watchlist 并行 fan-out
-  (上限 6),由 orchestrator 排序综合。"对比 A/B" 故意保持单 agent。
+  (上限 6),由 orchestrator 排序综合。"对比 A/B" 故意保持单 agent。sub-agent 跑在隔离的
+  `ChatContext`(`replace(ctx, card_sink=None)`)上,绝不改 orchestrator 的实时 card sink——
+  并发 fan-out 也安全。
 - **富卡片。** 工具把卡片写入 `ChatContext.card_sink`,runner 以
   `{type:"card", card:"chart"|"news", data:{…}}` SSE 事件流式下发,并持久化到
   `chat_messages.cards`(JSONB);前端复用现有 `PriceChart` 渲染图表。
