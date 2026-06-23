@@ -109,8 +109,11 @@ export default function SignalDetailPage({ params }: Props) {
 
   const { data: tickerNews } = useQuery({
     queryKey: ["tickerNews", T],
-    queryFn: () => news.byTicker(T, 7),
-    staleTime: 5 * 60 * 1000,
+    // fresh=true overlays a live Google News RSS pull so opening a stock's news triggers
+    // a fetch of the latest headlines for that ticker.
+    queryFn: () => news.byTicker(T, 7, true),
+    staleTime: 60 * 1000,
+    refetchOnMount: "always",
     enabled: covered,
   });
 

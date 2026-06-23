@@ -29,6 +29,8 @@ Handler = Callable[[dict, ChatContext], Awaitable[dict]]
 
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
 _HISTORY_RANGES = {"1W": 5, "1M": 21, "3M": 63, "6M": 126, "1Y": 252, "MAX": 1000}
+_DIRECTIONS = {"LONG", "SHORT", "NEUTRAL"}
+_SCREEN_MAX = 25  # cap rows a single screen returns
 
 
 # ── helpers ──────────────────────────────────────────────────────────────────
@@ -227,6 +229,78 @@ async def _get_watchlist(args: dict, ctx: ChatContext) -> dict:
     return {"watchlist": _rows(res)}
 
 
+# ── T1: smart money — institutions / insiders / Congress (celebrity_holdings) ─
+async def _get_smart_money(args: dict, ctx: ChatContext) -> dict:
+    from sqlalchemy import text
+
+    t = _ticker(args)
+    res = await ctx.db.execute(
+        text("""
+            SELECT reported_at, celebrity, action, shares, value_usd, source_type, filing_url
+            FROM celebrity_holdings WHERE ticker = :t
+            ORDER BY reported_at DESC LIMIT 12
+        """),
+        {"t": t},
+    )
+    return {"ticker": t, "smart_money": _rows(res)}
+
+
+# ── T2: market mood — Fear & Greed + VIX/VVIX (no ticker) ─────────────────────
+async def _get_market_mood(args: dict, ctx: ChatContext) -> dict:
+    from sqlalchemy import text
+
+    fng = (
+        await ctx.db.execute(
+            text("SELECT time, score, rating FROM fear_greed_index ORDER BY time DESC LIMIT 1")
+        )
+    ).mappings().first()
+    vol = await ctx.db.execute(
+        text("""
+            SELECT DISTINCT ON (symbol) symbol, close, time
+            FROM volatility_index WHERE symbol IN ('VIX', 'VVIX')
+            ORDER BY symbol, time DESC
+        """)
+    )
+    volatility = {m["symbol"]: _jsonable(m["close"]) for m in vol.mappings().all()}
+    return {
+        "fear_greed": {k: _jsonable(v) for k, v in fng.items()} if fng else None,
+        "volatility": volatility,
+        "_note": "market-wide context, not ticker-specific",
+    }
+
+
+# ── T4: screen current ML signals by confidence (signal_cache) ────────────────
+async def _screen_signals(args: dict, ctx: ChatContext) -> dict:
+    from sqlalchemy import text
+
+    try:
+        limit = int(args.get("limit", 10))
+    except (TypeError, ValueError) as e:
+        raise ValueError("limit must be an integer") from e
+    limit = max(1, min(limit, _SCREEN_MAX))
+
+    where = ["expires_at > NOW()"]
+    params: dict = {"n": limit}
+    direction = args.get("direction")
+    if direction is not None:
+        d = str(direction).strip().upper()
+        if d not in _DIRECTIONS:
+            raise ValueError(f"invalid direction {direction!r}; one of {sorted(_DIRECTIONS)}")
+        where.append("direction = :d")
+        params["d"] = d
+    else:
+        where.append("direction <> 'NEUTRAL'")  # a screen surfaces actionable setups
+
+    # WHERE fragments come from a fixed whitelist; values are bound params (:d/:n).
+    sql = f"""
+        SELECT ticker, direction, confidence, holding_period, ensemble_prob, ai_attribution
+        FROM signal_cache WHERE {" AND ".join(where)}
+        ORDER BY confidence DESC LIMIT :n
+    """
+    res = await ctx.db.execute(text(sql), params)
+    return {"signals": _rows(res), "filter": {"direction": params.get("d"), "limit": limit}}
+
+
 async def _get_portfolio(args: dict, ctx: ChatContext) -> dict:
     # NOT BUILT — no portfolio/positions table yet (see CLAUDE.md: LLM Chat Agent).
     return {"error": "not_available", "detail": "portfolio tracking is not built yet"}
@@ -304,6 +378,44 @@ def build_default_registry() -> ToolRegistry:
             _NO_ARGS,
             _get_watchlist,
             requires_user=True,
+        )
+    )
+    reg.register(
+        Tool(
+            "get_smart_money",
+            "Recent smart-money trades (institutions 13F, ARK, Congress) for a ticker.",
+            _TICKER_ARG,
+            _get_smart_money,
+        )
+    )
+    reg.register(
+        Tool(
+            "get_market_mood",
+            "Current market-wide sentiment: CNN Fear & Greed + VIX/VVIX. No ticker.",
+            _NO_ARGS,
+            _get_market_mood,
+        )
+    )
+    reg.register(
+        Tool(
+            "screen_signals",
+            "Top current ML signals ranked by confidence (optional LONG/SHORT filter).",
+            {
+                "type": "object",
+                "properties": {
+                    "direction": {
+                        "type": "string",
+                        "enum": sorted(_DIRECTIONS),
+                        "description": "optional direction filter",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": f"max rows (1-{_SCREEN_MAX}, default 10)",
+                    },
+                },
+                "additionalProperties": False,
+            },
+            _screen_signals,
         )
     )
     reg.register(

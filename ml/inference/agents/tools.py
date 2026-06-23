@@ -26,10 +26,13 @@ from ml.inference.chat.tools import (
     _get_fundamentals,
     _get_history,
     _get_indicators,
+    _get_market_mood,
     _get_news,
     _get_quote,
+    _get_smart_money,
     _get_watchlist,
     _jsonable,
+    _screen_signals,
     _ticker,
 )
 
@@ -130,6 +133,38 @@ async def get_watchlist(w: RunContextWrapper[ChatContext]) -> dict:
     return await _safe(_get_watchlist, {}, w.context, requires_user=True)
 
 
+@function_tool
+async def get_smart_money(w: RunContextWrapper[ChatContext], ticker: str) -> dict:
+    """Recent smart-money trades for a ticker — institutions (Buffett/Soros/Dalio/Ackman 13F),
+    ARK (Cathie Wood), Congress (Pelosi/Tuberville/…), and Trump DJT. Research data, not advice.
+    """
+    return await _safe(_get_smart_money, {"ticker": ticker}, w.context)
+
+
+@function_tool
+async def get_market_mood(w: RunContextWrapper[ChatContext]) -> dict:
+    """Current market-wide sentiment: CNN Fear & Greed index + VIX/VVIX volatility.
+
+    No ticker — use for "how's the market?", "risk-on or risk-off?", overall conditions.
+    """
+    return await _safe(_get_market_mood, {}, w.context)
+
+
+@function_tool
+async def screen_signals(
+    w: RunContextWrapper[ChatContext], direction: str | None = None, limit: int = 10
+) -> dict:
+    """Top current PenguinAI ML signals ranked by confidence — surfaces ideas across tickers.
+
+    ``direction`` optionally filters to "LONG" or "SHORT". Use for "strongest signals",
+    "what looks bullish/bearish today?". These are research signals, never advice.
+    """
+    args: dict = {"limit": limit}
+    if direction:
+        args["direction"] = direction
+    return await _safe(_screen_signals, args, w.context)
+
+
 # ── get_signal — explain the ML bull/bear from signal_cache ───────────────────
 async def _get_signal(args: dict, ctx: ChatContext) -> dict:
     from sqlalchemy import text
@@ -204,7 +239,7 @@ async def web_fetch_news(w: RunContextWrapper[ChatContext], query: str) -> dict:
     return result
 
 
-# The standard read-only tool set. Last two are Phase 3 additions.
+# The standard read-only tool set.
 CHAT_TOOLS = [
     get_quote,
     get_history,
@@ -215,4 +250,7 @@ CHAT_TOOLS = [
     get_watchlist,
     get_signal,
     web_fetch_news,
+    get_smart_money,
+    get_market_mood,
+    screen_signals,
 ]

@@ -480,6 +480,30 @@ async def _overlay_live_google(existing: list[dict], ticker: str, limit: int) ->
     return merged[:limit]
 
 
+async def _overlay_live_market(existing: list[dict], limit: int) -> list[dict]:
+    """Overlay a live Google News RSS market pull on top of the DB/cached market feed.
+
+    The market-wide counterpart of ``_overlay_live_google``: gives the News page a fresh
+    pull the moment a user opens it, rather than only what the last ingest cycle stored.
+    Merged by URL/headline (existing rows win), newest-first, capped at ``limit``. Live
+    market headlines have no single ticker so they are left unscored (neutral), matching
+    the existing ``/market`` behaviour. Best-effort: returns ``existing`` on failure.
+    """
+    live = await _fetch_google_rss(query="stock market finance", limit=limit)
+    if not live:
+        return existing
+    live = [a for a in live if _is_english(a)]
+    seen = {(a.get("url") or a.get("headline")) for a in existing}
+    merged = list(existing)
+    for a in live:
+        key = a.get("url") or a.get("headline")
+        if key and key not in seen:
+            seen.add(key)
+            merged.append(a)
+    merged.sort(key=lambda a: -(a.get("datetime") or 0))
+    return merged[:limit]
+
+
 # ── Endpoints ────────────────────────────────────────────────────────
 
 
@@ -524,12 +548,19 @@ async def get_hot_news(
     db: Annotated[AsyncSession, Depends(get_db)],
     limit: int = Query(default=50, ge=1, le=200),
     ticker: str | None = Query(default=None),
+    fresh: bool = Query(
+        default=False,
+        description="Overlay a live Google News RSS pull on top of the DB result so the "
+        "feed is up-to-the-minute when the user opens the News page. Bypasses the cache.",
+    ),
 ):
     """
     Pre-stored hot news from the DB (for dashboard + ML pipeline).
 
     Returns recent articles for hot tickers from the last 7 days.
     Optionally filtered by ticker. Falls back to on-demand API fetch if DB is empty.
+    ``fresh=true`` skips the cache and overlays a live Google News RSS pull (per-ticker
+    when ``ticker`` is set, market-wide otherwise) — used by the News page on open/search.
     """
     t = ticker.upper() if ticker else None
     if t and not _TICKER_RE.match(t):
@@ -539,9 +570,10 @@ async def get_hot_news(
         )
 
     cache_key = f"hot:{t or 'all'}:{limit}"
-    cached = _get_cached(cache_key, _HOT_TTL)
-    if cached is not None:
-        return cached[:limit]
+    if not fresh:
+        cached = _get_cached(cache_key, _HOT_TTL)
+        if cached is not None:
+            return cached[:limit]
 
     result: list[dict] = []
     try:
@@ -579,6 +611,12 @@ async def get_hot_news(
         logger.warning("news /hot DB query failed, falling back to API fetch: %s", exc)
 
     if result:
+        if fresh:
+            result = (
+                await _overlay_live_google(result, t, limit)
+                if t
+                else await _overlay_live_market(result, limit)
+            )
         _set_cache(cache_key, result)
         return result
 

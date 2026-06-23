@@ -90,13 +90,16 @@ export default function NewsPage() {
     queryKey: ["hotNews"],
     queryFn: async () => {
       try {
-        const raw = await newsApi.hot(100);
+        // fresh=true overlays a live Google News RSS pull so opening the page triggers a
+        // fetch of the latest headlines, not just whatever the last ingest cycle stored.
+        const raw = await newsApi.hot(100, undefined, true);
         if (raw.length > 0) return raw.map(mapApiArticle);
       } catch { /* fall through */ }
       const raw = await newsApi.market();
       return raw.map(mapApiArticle);
     },
-    staleTime: 5 * 60 * 1000,
+    staleTime: 60 * 1000,
+    refetchOnMount: "always",
   });
 
   const { data: tickerArticles, isLoading: tickerLoading } = useQuery<NewsArticle[]>({

@@ -74,8 +74,93 @@ class TestOrchestrator:
 
         agent = build_orchestrator()
         names = {t.name for t in agent.tools}
-        assert {"get_quote", "get_signal", "web_fetch_news", "research_ticker", "analyze_watchlist"} <= names
+        assert {
+            "get_quote",
+            "get_signal",
+            "web_fetch_news",
+            "research_ticker",
+            "analyze_watchlist",
+            "get_smart_money",
+            "get_market_mood",
+            "screen_signals",
+        } <= names
         assert len(agent.output_guardrails) == 1
+
+
+class _FakeMappings:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
+
+    def first(self):
+        return self._rows[0] if self._rows else None
+
+
+class _FakeResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def mappings(self):
+        return _FakeMappings(self._rows)
+
+
+class _FakeDB:
+    """Records executed SQL + params; returns canned rows (no real DB)."""
+
+    def __init__(self, rows=None):
+        self.calls: list = []
+        self._rows = rows or []
+
+    async def execute(self, stmt, params=None):
+        self.calls.append((str(stmt), params or {}))
+        return _FakeResult(self._rows)
+
+
+class TestScreenSignals:
+    async def test_clamps_limit_to_max(self):
+        from ml.inference.chat.tools import _SCREEN_MAX, _screen_signals
+
+        db = _FakeDB()
+        await _screen_signals({"limit": 999}, ChatContext(user_id="u1", db=db))
+        assert db.calls[0][1]["n"] == _SCREEN_MAX
+
+    async def test_floors_limit_to_one(self):
+        from ml.inference.chat.tools import _screen_signals
+
+        db = _FakeDB()
+        await _screen_signals({"limit": 0}, ChatContext(user_id="u1", db=db))
+        assert db.calls[0][1]["n"] == 1
+
+    async def test_direction_filter_is_bound(self):
+        from ml.inference.chat.tools import _screen_signals
+
+        db = _FakeDB()
+        await _screen_signals({"direction": "long"}, ChatContext(user_id="u1", db=db))
+        sql, params = db.calls[0]
+        assert params["d"] == "LONG" and "direction = :d" in sql
+
+    async def test_no_direction_excludes_neutral(self):
+        from ml.inference.chat.tools import _screen_signals
+
+        db = _FakeDB()
+        await _screen_signals({}, ChatContext(user_id="u1", db=db))
+        assert "direction <> 'NEUTRAL'" in db.calls[0][0]
+
+    async def test_bad_direction_via_safe_is_bad_arguments(self):
+        from ml.inference.chat.tools import _screen_signals
+
+        out = await _safe(_screen_signals, {"direction": "UP"}, ChatContext(user_id="u1", db=_FakeDB()))
+        assert out["error"] == "bad_arguments"
+
+
+class TestMarketMood:
+    async def test_handles_empty_tables(self):
+        from ml.inference.chat.tools import _get_market_mood
+
+        out = await _get_market_mood({}, ChatContext(user_id="u1", db=_FakeDB()))
+        assert out["fear_greed"] is None and out["volatility"] == {}
 
 
 class TestResearchCardIsolation:

@@ -1,11 +1,12 @@
 """News ingestion scheduler — runs as a backend lifespan thread.
 
-Schedule (two axes — which tickers, and whether to layer Massive on top):
-  - Startup: full ingest of all hot tickers WITH Massive (rich summary/image baseline)
+Schedule:
+  - Startup: full ingest of all hot tickers
   - Tier-1 (MAG7 + top ETFs): every NEWS_TIER1_INTERVAL_MIN (default 5 min)
   - Tier-2 (rest of hot tickers): every NEWS_TIER2_INTERVAL_MIN (default 20 min)
-  - Google News RSS runs on EVERY cycle (free, near-real-time — the freshness baseline)
-  - Massive (paid) is layered on only every NEWS_MASSIVE_INTERVAL_MIN (default 60 min)
+
+Every cycle fetches BOTH peer sources (Massive + Google News RSS) and merges them, so the
+feed stays at full volume; Finnhub is a last resort for tickers that came back empty.
 """
 
 import asyncio
@@ -13,11 +14,7 @@ import logging
 import threading
 from collections.abc import Callable
 
-from data.news.constants import (
-    MASSIVE_INTERVAL_SEC,
-    TIER1_INTERVAL_SEC,
-    TIER2_INTERVAL_SEC,
-)
+from data.news.constants import TIER1_INTERVAL_SEC, TIER2_INTERVAL_SEC
 
 logger = logging.getLogger("news.scheduler")
 
@@ -36,7 +33,6 @@ def run_scheduler(
     from data.news.ingest import ingest_all, ingest_tier1, ingest_tier2
 
     tier2_every_n = max(1, round(TIER2_INTERVAL_SEC / TIER1_INTERVAL_SEC))
-    massive_every_n = max(1, round(MASSIVE_INTERVAL_SEC / TIER1_INTERVAL_SEC))
 
     def _notify(new_count: int) -> None:
         if new_count > 0 and on_new_articles is not None:
@@ -46,16 +42,15 @@ def run_scheduler(
                 logger.warning("news scheduler: cache-invalidation callback failed", exc_info=True)
 
     logger.info(
-        "news scheduler: tier-1 every %ds, tier-2 every %d ticks (%ds), "
-        "Massive enrichment every %d ticks (%ds); Google RSS every cycle",
+        "news scheduler: tier-1 every %ds, tier-2 every %d ticks (%ds); "
+        "Massive + Google merged every cycle",
         TIER1_INTERVAL_SEC, tier2_every_n, TIER2_INTERVAL_SEC,
-        massive_every_n, MASSIVE_INTERVAL_SEC,
     )
 
-    # Startup: fetch everything once, WITH Massive, so summaries/images are populated.
-    logger.info("news scheduler: initial full ingest on startup (with Massive)")
+    # Startup: fetch everything once (both sources merged).
+    logger.info("news scheduler: initial full ingest on startup")
     try:
-        count = asyncio.run(ingest_all(db_url, include_massive=True))
+        count = asyncio.run(ingest_all(db_url))
         logger.info("news scheduler: startup ingest done — %d new articles", count)
         _notify(count)
     except Exception:
@@ -67,19 +62,16 @@ def run_scheduler(
             break
 
         tick += 1
-        # Google runs every cycle; Massive is layered on only on its slower cadence.
-        with_massive = tick % massive_every_n == 0
-        src = "Google+Massive" if with_massive else "Google-only"
         try:
             if tick % tier2_every_n == 0:
-                logger.info("news scheduler: tier-1 + tier-2 cycle (tick %d, %s)", tick, src)
-                count1 = asyncio.run(ingest_tier1(db_url, include_massive=with_massive))
-                count2 = asyncio.run(ingest_tier2(db_url, include_massive=with_massive))
+                logger.info("news scheduler: tier-1 + tier-2 cycle (tick %d)", tick)
+                count1 = asyncio.run(ingest_tier1(db_url))
+                count2 = asyncio.run(ingest_tier2(db_url))
                 logger.info("news scheduler: tier-1=%d, tier-2=%d new articles", count1, count2)
                 _notify(count1 + count2)
             else:
-                logger.info("news scheduler: tier-1 cycle (tick %d, %s)", tick, src)
-                count = asyncio.run(ingest_tier1(db_url, include_massive=with_massive))
+                logger.info("news scheduler: tier-1 cycle (tick %d)", tick)
+                count = asyncio.run(ingest_tier1(db_url))
                 logger.info("news scheduler: tier-1=%d new articles", count)
                 _notify(count)
         except Exception:

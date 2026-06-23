@@ -414,11 +414,11 @@ async def ingest_tickers(
 ) -> int:
     """Fetch + score + store news for a list of tickers. Returns total new rows.
 
-    ``include_massive`` controls the split-frequency strategy: Google News RSS (free,
-    near-real-time) is the high-frequency baseline and runs every cycle; Massive (paid,
-    rich summary/image/ticker tags) is a low-frequency enrichment layer the scheduler
-    only switches on every Nth cycle. With ``include_massive=False`` this is a pure
-    Google pass (plus Finnhub last-resort for tickers that came back empty).
+    Massive and Google News RSS are PEER sources: both are fetched and merged on every
+    cycle (the scheduler always enables Massive), so the feed has full volume — Massive
+    adds summary/image/ticker tags, Google adds free, near-real-time breadth. Overlap is
+    deduped downstream by (url, ticker). ``include_massive=False`` is only for the
+    ``--google-only`` CLI / manual runs (pure Google pass + Finnhub last-resort).
     """
     engine = create_async_engine(db_url or DATABASE_URL)
     session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -431,11 +431,12 @@ async def ingest_tickers(
             for i in range(0, len(tickers), _BATCH_SIZE):
                 batch = tickers[i:i + _BATCH_SIZE]
 
-                # Google RSS is the always-on baseline: one ticker-scoped query per
-                # ticker — free and near-real-time (the same source the chat agent uses).
-                # Massive is the low-frequency enrichment layer (rich summary/image/tags),
-                # fetched only when the scheduler turns it on. Overlap is cheap:
-                # store_articles dedups by (url, ticker).
+                # Peer sources, merged every cycle (not fallback-ranked):
+                #   - Google RSS: one ticker-scoped query per ticker — free, near-real-time
+                #     (the same source the chat agent uses); maps straight to each ticker.
+                #   - Massive: one batched call (ticker.any_of), rich summary/image/tags.
+                # Both run every cycle so the feed has full volume; overlap is cheap because
+                # store_articles dedups by (url, ticker). include_massive=False is CLI-only.
                 if include_massive:
                     massive_articles, *google_per_ticker = await asyncio.gather(
                         fetch_massive(client, batch, limit=50),

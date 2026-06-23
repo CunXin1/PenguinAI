@@ -284,10 +284,12 @@ export const news = {
   market: (limit = 30) =>
     apiFetch<NewsApiArticle[]>(`/news/market?limit=${limit}`),
 
-  /** Hot ticker news from DB (pre-fetched Nasdaq-100 + key ETFs). */
-  hot: (limit = 50, ticker?: string) => {
+  /** Hot ticker news from DB (pre-fetched Nasdaq-100 + key ETFs). ``fresh`` overlays a
+   *  live Google News RSS pull (per-ticker or market-wide) for up-to-the-minute results. */
+  hot: (limit = 50, ticker?: string, fresh = false) => {
     const params = new URLSearchParams({ limit: String(limit) });
     if (ticker) params.set("ticker", ticker.toUpperCase());
+    if (fresh) params.set("fresh", "true");
     return apiFetch<NewsApiArticle[]>(`/news/hot?${params}`);
   },
 

@@ -1,13 +1,17 @@
-"""Fetch market cap for the universe from Massive and store it.
+"""Fetch market cap + SIC sector/industry for the universe from Massive and store it.
 
 Sizes the market-map / heatmap tiles and gives the screener a real sort key.
 Massive's per-ticker details endpoint (``/v3/reference/tickers/{sym}``) returns
-``market_cap`` + shares outstanding (the bulk listing does not), so this makes
-one call per symbol, concurrently and rate-limited.
+``market_cap`` + shares outstanding + ``sic_code``/``sic_description`` (the bulk
+listing does not), so this makes one call per symbol, concurrently and
+rate-limited. The same response also classifies the company, so we capture the
+SIC fields here for free → ``tickers.sector`` (coarse bucket) + ``industry``
+(verbatim SIC description), which were previously empty for all but ~36 tickers.
 
 Writes BOTH:
-  1. DB   — ``tickers.market_cap`` (BIGINT).
-  2. File — ``data/reference/market_cap.parquet`` (symbol, market_cap, shares).
+  1. DB   — ``tickers.market_cap`` (BIGINT), ``tickers.sector``, ``tickers.industry``.
+  2. File — ``data/reference/market_cap.parquet`` (symbol, market_cap, shares,
+            sic_code, sic_description, sector).
 
 RUN (repo root; needs MASSIVE_API_KEY in .env):
     backend/.venv/Scripts/python -m data.ingestion.massive_marketcap
@@ -25,6 +29,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from data.ingestion.massive_reference import _get_json, _RateLimiter, _with_key, settings
+from data.ingestion.sic_sectors import sic_to_sector
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("massive_marketcap")
@@ -41,16 +46,22 @@ async def _fetch_one(
     limiter: _RateLimiter,
     sem: asyncio.Semaphore,
     symbol: str,
-) -> tuple[str, float | None, float | None]:
+) -> dict:
     async with sem:
         url = _with_key(f"{base}/v3/reference/tickers/{symbol}", key)
         try:
             j = await _get_json(client, url, limiter)
         except httpx.HTTPStatusError:
-            return symbol, None, None  # 404 etc. → no market cap
+            return {"symbol": symbol}  # 404 etc. → no details
         r = (j or {}).get("results") or {}
         shares = r.get("share_class_shares_outstanding") or r.get("weighted_shares_outstanding")
-        return symbol, r.get("market_cap"), shares
+        return {
+            "symbol": symbol,
+            "market_cap": r.get("market_cap"),
+            "shares": shares,
+            "sic_code": r.get("sic_code"),
+            "sic_description": r.get("sic_description"),
+        }
 
 
 async def run(dry_run: bool = False) -> None:
@@ -72,7 +83,7 @@ async def run(dry_run: bool = False) -> None:
     limiter = _RateLimiter(_RATE_PER_SEC)
     sem = asyncio.Semaphore(_CONCURRENCY)
     done = 0
-    results: list[tuple[str, float | None, float | None]] = []
+    results: list[dict] = []
 
     async with httpx.AsyncClient(
         timeout=30.0, headers={"Authorization": f"Bearer {key}"}
@@ -86,10 +97,22 @@ async def run(dry_run: bool = False) -> None:
             if done % 500 == 0:
                 logger.info("  %d / %d fetched", done, len(symbols))
 
-    records = [{"symbol": s, "market_cap": mc, "shares": sh} for s, mc, sh in results]
+    records = [
+        {
+            "symbol": r["symbol"],
+            "market_cap": r.get("market_cap"),
+            "shares": r.get("shares"),
+            "sic_code": r.get("sic_code"),
+            "sic_description": r.get("sic_description"),
+            "sector": sic_to_sector(r.get("sic_code")),
+        }
+        for r in results
+    ]
     df = pd.DataFrame(records).sort_values("symbol").reset_index(drop=True)
     have = int(df["market_cap"].notna().sum())
+    sectored = int(df["sector"].notna().sum())
     logger.info("market_cap resolved: %d / %d (%.1f%%)", have, len(df), 100.0 * have / len(df))
+    logger.info("sector classified: %d / %d (%.1f%%)", sectored, len(df), 100.0 * sectored / len(df))
 
     _OUT.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(_OUT, index=False)
@@ -101,22 +124,50 @@ async def run(dry_run: bool = False) -> None:
         return
 
     # market_cap is BIGINT — round floats to int; skip rows without a value.
-    params = [
+    mcap_params = [
         {"symbol": r["symbol"], "mcap": int(r["market_cap"])}
         for r in records
         if r["market_cap"]
     ]
+    # sector/industry: COALESCE so we never overwrite an existing value with NULL
+    # (ETFs and unmapped SIC codes resolve to None and are left untouched).
+    class_params = [
+        {
+            "symbol": r["symbol"],
+            "sector": r["sector"],
+            "industry": r["sic_description"],
+        }
+        for r in records
+        if r["sector"] or r["sic_description"]
+    ]
     async with SessionLocal() as db:
-        await db.execute(
-            text("UPDATE tickers SET market_cap = :mcap WHERE ticker = :symbol"), params
-        )
+        if mcap_params:
+            await db.execute(
+                text("UPDATE tickers SET market_cap = :mcap WHERE ticker = :symbol"), mcap_params
+            )
+        if class_params:
+            await db.execute(
+                text(
+                    "UPDATE tickers SET "
+                    "sector = COALESCE(:sector, sector), "
+                    "industry = COALESCE(:industry, industry) "
+                    "WHERE ticker = :symbol"
+                ),
+                class_params,
+            )
         await db.commit()
-    logger.info("updated %d tickers.market_cap rows in DB", len(params))
+    logger.info(
+        "updated DB: %d market_cap rows, %d sector/industry rows",
+        len(mcap_params),
+        len(class_params),
+    )
     await engine.dispose()
 
 
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Fetch universe market cap from Massive.")
+    ap = argparse.ArgumentParser(
+        description="Fetch universe market cap + SIC sector/industry from Massive."
+    )
     ap.add_argument("--dry-run", action="store_true", help="write parquet only; no DB update")
     args = ap.parse_args()
     asyncio.run(run(dry_run=args.dry_run))

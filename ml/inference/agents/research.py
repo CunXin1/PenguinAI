@@ -25,6 +25,7 @@ from ml.inference.agents.tools import (
     get_news,
     get_quote,
     get_signal,
+    get_smart_money,
 )
 from ml.inference.chat.context import ChatContext
 from ml.inference.chat.tools import _get_watchlist
@@ -56,7 +57,15 @@ def build_ticker_research_agent() -> Agent[ChatContext]:
         name="ticker-research",
         instructions=RESEARCH_PROMPT,
         model=narrow_model(),
-        tools=[get_quote, get_indicators, get_news, get_earnings, get_fundamentals, get_signal],
+        tools=[
+            get_quote,
+            get_indicators,
+            get_news,
+            get_earnings,
+            get_fundamentals,
+            get_signal,
+            get_smart_money,
+        ],
         output_type=TickerVerdict,
     )
 

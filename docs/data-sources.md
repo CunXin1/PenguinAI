@@ -226,21 +226,21 @@ with FinBERT-based hawk/dove scoring, consumed by
 **Files**: `data/news/ingest.py` (fetch + FinBERT score + store) · `data/news/scheduler.py`
 (lifespan thread) · `data/news/constants.py` (tier definitions)
 
-**Source strategy** (split-frequency, Google-primary): Google News RSS (free, near-real-time)
-is the always-on freshness baseline, merged every cycle; Massive API (paid) is a
-low-frequency enrichment layer (~60 min) that adds summary/image/ticker tags; Finnhub REST
-(free tier) is the last resort for tickers that came back empty — save quota for
-earnings/realtime. See `docs/news-module.md`.
+**Source strategy** (peer sources, merged every cycle): Massive API (paid — summary/image/
+ticker tags) and Google News RSS (free, near-real-time breadth) are peers, both fetched and
+merged on every cycle so the feed has full volume; Finnhub REST (free tier) is the last
+resort for tickers that came back empty — save quota for earnings/realtime. On user entry
+points the API overlays a live Google pull via `?fresh=true`. See `docs/news-module.md`.
 
 **Storage**: `news_articles` hypertable — one row per (article, ticker). Same article
 can have different `finbert_score` for different tickers (e.g. "Intel surges on
 Google order" is negative for NVDA, positive for INTC). FinBERT prepends the ticker
 to the headline before scoring.
 
-**Schedule**: Backend lifespan thread — full ingest on startup (with Massive), then tier-1
-(MAG7 + top ETFs, 12 tickers) every 5 min, tier-2 (remaining ~81 hot tickers) every 20 min;
-Google runs every cycle, Massive layered on every ~60 min. Cold tickers are fetched
-on-demand via the API, cached 5 min, not stored.
+**Schedule**: Backend lifespan thread — full ingest on startup, then tier-1 (MAG7 + top
+ETFs, 12 tickers) every 5 min, tier-2 (remaining ~81 hot tickers) every 20 min. Every cycle
+merges both peer sources (Massive + Google). Cold tickers are fetched on-demand via the API,
+cached 5 min, not stored.
 
 **Retention**: TimescaleDB `drop_chunks` auto-prunes at 90 days. Per-ticker limit of
 20 articles per fetch to avoid bloat.

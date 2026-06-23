@@ -1,20 +1,16 @@
 """Shared constants for the news module.
 
-Two-axis schedule — WHICH tickers, and WHICH source:
+Fetch tiers (which tickers, how often):
+  TIER1 — MAG7 + top ETFs: every 5 min
+  TIER2 — rest of hot tickers: every 20 min
+  COLD  — everything else: on-demand only (no DB storage)
 
-  Tickers:
-    TIER1 — MAG7 + top ETFs: every 5 min
-    TIER2 — rest of hot tickers: every 20 min
-    COLD  — everything else: on-demand only (no DB storage)
+Sources are PEERS, merged on every cycle (not fallback-ranked): Massive (paid — summary/
+image/ticker tags) + Google News RSS (free — near-real-time breadth), then Finnhub as a
+last resort for tickers that came back empty. Running both keeps the feed at full volume.
 
-  Source (split-frequency, Google-primary):
-    Google News RSS — free, near-real-time: runs EVERY cycle (the freshness baseline).
-    Massive (paid)  — rich summary/image/ticker tags: only every MASSIVE_INTERVAL_MIN
-                      (default 60 min), as a low-frequency enrichment layer.
-
-Cadence was tightened (15/60 -> 5/20 min) once Google was merged in on every cycle:
-re-polls are near-free because store_articles dedups by (url, ticker), so only
-genuinely new rows are written. Override via the env vars below.
+Cadence was tightened (15/60 -> 5/20 min): re-polls are near-free because store_articles
+dedups by (url, ticker), so only genuinely new rows are written. Override via env below.
 """
 
 HOT_ETFS = [
@@ -47,8 +43,6 @@ import os as _os
 
 TIER1_INTERVAL_SEC = int(_os.getenv("NEWS_TIER1_INTERVAL_MIN", "5")) * 60
 TIER2_INTERVAL_SEC = int(_os.getenv("NEWS_TIER2_INTERVAL_MIN", "20")) * 60
-# Massive enrichment cadence — how often the paid source is layered on top of Google.
-MASSIVE_INTERVAL_SEC = int(_os.getenv("NEWS_MASSIVE_INTERVAL_MIN", "60")) * 60
 
 MAX_ARTICLES_PER_TICKER = int(_os.getenv("NEWS_MAX_PER_TICKER", "50"))
 MAX_PER_TICKER_FEED = int(_os.getenv("NEWS_MAX_PER_TICKER_FEED", "3"))
