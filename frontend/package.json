@@ -12,7 +12,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "next": "15.5.19",
+    "next": "15.5.20",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "lightweight-charts": "^5.0.0",
