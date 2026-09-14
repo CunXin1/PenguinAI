@@ -13,8 +13,8 @@
   },
   "dependencies": {
     "next": "15.5.25",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
     "lightweight-charts": "^5.2.1",
     "@tanstack/react-query": "^5.62.0",
     "clsx": "^2.1.1",
