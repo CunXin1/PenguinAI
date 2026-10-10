@@ -5,7 +5,7 @@
 transformers==4.47.1
 sentence-transformers==3.3.1
 xgboost==2.1.3
-scikit-learn==1.5.2
+scikit-learn==1.9.0
 # pandas-ta removed: never imported by any code (technical.py computes features
 # in numpy; serving uses the indicators_30min SQL view).
 # pandas pinned <3: the dependabot bump to 3.0.3 conflicts with mlflow 3.13
